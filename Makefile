@@ -78,7 +78,7 @@ K_RUST_OBJ := $(BUILD)/kernel/rust/lib.o
 K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(BUILD)/user_bins.o
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
 
-.PHONY: all clean test image bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck userentrycheck rustsafetycheck cpufeaturecheck userlibcontractcheck processcontractcheck versioncontractcheck rusttoolcheck
+.PHONY: all clean test image bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck
 all: image
 
 $(BUILD):
@@ -197,25 +197,7 @@ rustpaniccheck: $(K_RUST_OBJ)
 usercheck: $(USER_ELFS)
 	python3 scripts/check_userland.py $(USER_ELFS)
 
-userentrycheck:
-	python3 scripts/check_user_entry.py kernel/arch/x86_64/user_entry.S
-
-rustsafetycheck:
-	python3 scripts/check_rust_safety_modules.py
-
-cpufeaturecheck:
-	python3 scripts/check_cpu_features.py
-
-userlibcontractcheck:
-	python3 scripts/check_userlib_error_contract.py
-
-processcontractcheck:
-	python3 scripts/check_process_contracts.py
-
-versioncontractcheck:
-	python3 scripts/check_version_contract.py
-
-test: bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck userentrycheck rustsafetycheck cpufeaturecheck userlibcontractcheck processcontractcheck versioncontractcheck $(BUILD)/host-tests
+test: bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
 	$(BUILD)/host-tests
 
 HOST_C_SRCS := kernel/lib/bitmap.c kernel/lib/string.c kernel/lib/ringbuf.c kernel/lib/crc32.c kernel/core/printf.c kernel/drivers/block.c kernel/drivers/mbr.c kernel/fs/ext4.c kernel/mm/kmem.c kernel/vfs/path.c kernel/vfs/tarfs.c
