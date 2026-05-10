@@ -1,0 +1,87 @@
+name: Build and release image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-image.yml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "boot/**"
+      - "include/**"
+      - "kernel/**"
+      - "scripts/**"
+      - "tests/**"
+      - "tools/**"
+      - "user/**"
+      - "userlib/**"
+      - "vmware/aurora-legacy.vmx.example"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aurora-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm python3 make
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal --component rust-src --target x86_64-unknown-linux-gnu
+          rustup default 1.94.1
+
+      - name: Check release version
+        id: version
+        run: python3 scripts/check_release_version.py --github-output
+
+      - name: Check release tag is new
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Release tag ${{ steps.version.outputs.tag }} already exists. Bump include/aurora/version.h before publishing code changes."
+            exit 1
+          fi
+
+      - name: Build and test image
+        run: |
+          make clean
+          make test
+          make image
+
+      - name: Prepare release files
+        run: |
+          mkdir -p dist
+          cp build/aurora.img "dist/aurora-${{ steps.version.outputs.version }}.img"
+          sha256sum "dist/aurora-${{ steps.version.outputs.version }}.img" > "dist/aurora-${{ steps.version.outputs.version }}.img.sha256"
+          cat > dist/release-notes.md <<EOF
+          AuroraOS ${{ steps.version.outputs.version }} automated raw disk image.
+
+          Built from commit $GITHUB_SHA.
+
+          The image targets VMware Legacy BIOS on x86_64.
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "dist/aurora-${{ steps.version.outputs.version }}.img" \
+            "dist/aurora-${{ steps.version.outputs.version }}.img.sha256" \
+            --title "AuroraOS ${{ steps.version.outputs.version }}" \
+            --notes-file dist/release-notes.md
