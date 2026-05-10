@@ -168,6 +168,11 @@ KTEST_STATUS: PASS
 
 `ktest` covers the kernel libraries, heap, VMM, VFS, ramfs, devfs, tarfs, block layer, MBR reader, EXT4 reader, syscall dispatcher, PIT timer, ELF validation, process paths, user-mode transition, and logging path.
 
+## Docs
+
+- [Current status](docs/STATUS.md)
+- [Release notes](docs/RELEASES.md)
+
 ## Source layout
 
 ```text
