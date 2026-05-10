@@ -2,6 +2,14 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.14
+
+VMM regression update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.14` / `0x0000010e`.
+- Fixed page-table creation so intermediate paging tables receive only valid table-level flags, while leaf entries keep leaf-level permissions.
+- Refreshed the README to match the current release line.
+
 ## 0.0.1.13
 
 Hardening update over the `0.0.1.12` baseline.

@@ -72,14 +72,15 @@ static void split_indices(uptr virt, usize *pml4i, usize *pdpti, usize *pdi, usi
 bool vmm_space_map_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     pte_t *pml4 = space_pml4(space);
     if (!pml4 || (virt & (PAGE_SIZE - 1u)) || (phys & (PAGE_SIZE - 1u)) || (flags & ~VMM_ALLOWED_LEAF_FLAGS)) return false;
+    u64 table_flags = flags & VMM_ALLOWED_TABLE_FLAGS;
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
-    pte_t *pdpt = next_table(space, pml4, a, true, flags);
+    pte_t *pdpt = next_table(space, pml4, a, true, table_flags);
     if (!pdpt) return false;
-    pte_t *pd = next_table(space, pdpt, b, true, flags);
+    pte_t *pd = next_table(space, pdpt, b, true, table_flags);
     if (!pd) return false;
     if (pd[c] & VMM_HUGE) return false;
-    pte_t *pt = next_table(space, pd, c, true, flags);
+    pte_t *pt = next_table(space, pd, c, true, table_flags);
     if (!pt || (pt[d] & VMM_PRESENT)) return false;
     pt[d] = (phys & PTE_ADDR_MASK) | flags | VMM_PRESENT;
     stats.mapped_4k_pages++;
@@ -93,12 +94,13 @@ bool vmm_map_4k(uptr virt, uptr phys, u64 flags) {
 bool vmm_map_2m(uptr virt, uptr phys, u64 flags) {
     pte_t *pml4 = space_pml4(&kernel_space_obj);
     if (!pml4 || (virt & ((2ull * 1024 * 1024) - 1u)) || (phys & ((2ull * 1024 * 1024) - 1u)) || (flags & ~VMM_ALLOWED_LEAF_FLAGS)) return false;
+    u64 table_flags = flags & VMM_ALLOWED_TABLE_FLAGS;
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     (void)d;
-    pte_t *pdpt = next_table(&kernel_space_obj, pml4, a, true, flags);
+    pte_t *pdpt = next_table(&kernel_space_obj, pml4, a, true, table_flags);
     if (!pdpt) return false;
-    pte_t *pd = next_table(&kernel_space_obj, pdpt, b, true, flags);
+    pte_t *pd = next_table(&kernel_space_obj, pdpt, b, true, table_flags);
     if (!pd || (pd[c] & VMM_PRESENT)) return false;
     pd[c] = (phys & PTE_ADDR_MASK) | flags | VMM_PRESENT | VMM_HUGE;
     stats.mapped_2m_pages++;
