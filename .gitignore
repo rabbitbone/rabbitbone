@@ -1,0 +1,57 @@
+# Build output
+/build/
+/dist/
+
+# Compiler and linker artifacts
+*.o
+*.obj
+*.d
+*.elf
+*.bin
+*.img
+*.iso
+*.map
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# Rust scratch output
+/target/
+Cargo.lock
+
+# Host test and temporary output
+*.log
+*.tmp
+*.temp
+*.out
+*.stackdump
+
+# VMware runtime state
+/vmware/*.log
+/vmware/*.vmdk
+/vmware/*.vmem
+/vmware/*.vmsn
+/vmware/*.vmss
+/vmware/*.vmsd
+/vmware/*.vmxf
+/vmware/*.scoreboard
+/vmware/*.lck/
+/vmware/nvram
+/vmware/AuroraOS.vmx
+
+# Keep hand-written VMware helpers
+!/vmware/Makefile
+!/vmware/*.example
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
