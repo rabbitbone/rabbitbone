@@ -10,6 +10,21 @@ static vfs_mount_t mounts[VFS_MAX_MOUNTS];
 static u32 next_fs_id;
 static bool ready;
 
+static bool fs_id_in_use(u32 id) {
+    if (id == 0) return true;
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) if (mounts[i].ops && mounts[i].fs_id == id) return true;
+    return false;
+}
+
+static u32 alloc_fs_id(void) {
+    for (u32 tries = 0; tries < 0xffffffffu; ++tries) {
+        u32 id = next_fs_id++;
+        if (next_fs_id == 0) next_fs_id = 1;
+        if (!fs_id_in_use(id)) return id;
+    }
+    return 0;
+}
+
 typedef struct vfs_route {
     bool found;
     usize mount_index;
@@ -87,6 +102,7 @@ void vfs_init(void) {
 vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops, void *ctx, bool writable) {
     if (!ready) vfs_init();
     if (!path || !name || !ops) return VFS_ERR_INVAL;
+    if (strnlen(name, VFS_NAME_MAX) >= VFS_NAME_MAX) return VFS_ERR_INVAL;
     if (!aurora_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
     char norm[VFS_PATH_MAX];
     if (!path_normalize(path, norm, sizeof(norm))) return VFS_ERR_INVAL;
@@ -100,7 +116,8 @@ vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops,
             strncpy(mounts[i].name, name, sizeof(mounts[i].name) - 1u);
             mounts[i].ops = ops;
             mounts[i].ctx = ctx;
-            mounts[i].fs_id = next_fs_id++;
+            mounts[i].fs_id = alloc_fs_id();
+            if (mounts[i].fs_id == 0) { memset(&mounts[i], 0, sizeof(mounts[i])); return VFS_ERR_NOSPC; }
             mounts[i].writable = writable;
             KLOG(LOG_INFO, "vfs", "mounted %s at %s writable=%u", mounts[i].name, mounts[i].path, writable ? 1u : 0u);
             return VFS_OK;
@@ -113,6 +130,7 @@ vfs_status_t vfs_unmount(const char *path) {
     if (!aurora_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
     char norm[VFS_PATH_MAX];
     if (!path_normalize(path, norm, sizeof(norm))) return VFS_ERR_INVAL;
+    if (strcmp(norm, "/") == 0) return VFS_ERR_PERM;
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
         if (mounts[i].ops && strcmp(mounts[i].path, norm) == 0) {
             memset(&mounts[i], 0, sizeof(mounts[i]));

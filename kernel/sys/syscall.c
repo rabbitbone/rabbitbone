@@ -15,6 +15,7 @@
 #define SYSCALL_MAX_HANDLES 32u
 #define SYSCALL_PATH_MAX VFS_PATH_MAX
 #define SYSCALL_IO_CHUNK 4096u
+#define SYSCALL_MAX_IO_BYTES (1024u * 1024u)
 #define SYSCALL_VERSION_VALUE AURORA_SYSCALL_ABI_VERSION
 
 typedef struct sys_handle {
@@ -213,10 +214,12 @@ syscall_result_t aurora_sys_close(u64 handle) {
 }
 
 syscall_result_t aurora_sys_read(u64 handle, u64 buf, u64 len) {
+    if (len > SYSCALL_MAX_IO_BYTES || (usize)len != len) return err(VFS_ERR_INVAL);
     return sys_read_impl(active_handles(), (usize)handle, buf, (usize)len);
 }
 
 syscall_result_t aurora_sys_write(u64 handle, u64 buf, u64 len) {
+    if (len > SYSCALL_MAX_IO_BYTES || (usize)len != len) return err(VFS_ERR_INVAL);
     return sys_write_impl(active_handles(), (usize)handle, buf, (usize)len);
 }
 
@@ -289,6 +292,11 @@ syscall_result_t aurora_sys_procinfo(u64 pid64, u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
     process_info_t info;
     u32 pid = (u32)pid64;
+    if (process_user_active()) {
+        u32 self = process_current_pid();
+        if (pid == 0) pid = self;
+        if (pid != self) return err(VFS_ERR_PERM);
+    }
     bool found = false;
     if (pid == 0) {
         found = process_current_info(&info);
@@ -296,6 +304,7 @@ syscall_result_t aurora_sys_procinfo(u64 pid64, u64 out_ptr) {
         found = process_lookup(pid, &info);
     }
     if (!found) return err(VFS_ERR_NOENT);
+    info.address_space = 0;
     if (!copy_out_buf(out_ptr, &info, sizeof(info))) return err(VFS_ERR_INVAL);
     return ok(0);
 }
@@ -357,6 +366,7 @@ static i64 process_status_to_vfs_error(process_status_t st) {
         case PROC_ERR_IO: return VFS_ERR_IO;
         case PROC_ERR_FORMAT: return VFS_ERR_IO;
         case PROC_ERR_FAULT: return VFS_ERR_IO;
+        case PROC_ERR_BUSY: return VFS_ERR_INVAL;
         default: return VFS_ERR_IO;
     }
 }
@@ -388,11 +398,12 @@ syscall_result_t aurora_sys_wait(u64 pid64, u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
     process_info_t info;
     u32 pid = (u32)pid64;
+    if (process_user_active()) {
+        if (process_async_scheduler_active() && process_request_wait(pid, (uptr)out_ptr)) return ok(0);
+        return err(VFS_ERR_NOENT);
+    }
     if (process_wait(pid, &info)) {
         return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
-    }
-    if (process_async_scheduler_active() && process_request_wait(pid, (uptr)out_ptr)) {
-        return ok(0);
     }
     return err(VFS_ERR_NOENT);
 }

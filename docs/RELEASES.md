@@ -2,6 +2,18 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.13
+
+Hardening update over the `0.0.1.12` baseline.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.13` / `0x0000010d`.
+- Added safer numeric parsing for shell commands that accept PIDs or run counts.
+- Hardened process initialization, wait handling, address-space generation, and deadlock reporting.
+- Hid raw process address-space pointers from user-visible process info.
+- Added size limits for syscall read/write requests.
+- Tightened VFS mount IDs, root unmount behavior, ramfs inode allocation, and ramfs growth checks.
+- Added small driver and timer guardrails around PIT, serial, ATA, and block I/O paths.
+
 ## 0.0.1.12
 
 Rust boundary reproducibility fix over the Stage 9 hardening baseline.

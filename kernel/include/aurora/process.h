@@ -19,6 +19,7 @@ typedef enum process_status {
     PROC_ERR_NOMEM = -4,
     PROC_ERR_RANGE = -5,
     PROC_ERR_FAULT = -6,
+    PROC_ERR_BUSY = -7,
 } process_status_t;
 
 typedef enum process_lifecycle {

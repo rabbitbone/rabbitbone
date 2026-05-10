@@ -67,8 +67,14 @@ static process_result_t last_result;
 static process_info_t *process_table;
 static usize process_table_len;
 static usize process_table_next;
+static bool process_initialized;
 
 void process_init(void) {
+    if (process_initialized) {
+        KLOG(LOG_WARN, "process", "process_init ignored after initialization");
+        return;
+    }
+    process_initialized = true;
     memset(&current_proc, 0, sizeof(current_proc));
     memset(&last_result, 0, sizeof(last_result));
     if (!process_table) process_table = (process_info_t *)kmalloc(sizeof(process_info_t) * PROCESS_TABLE_CAP);
@@ -109,6 +115,7 @@ const char *process_status_name(process_status_t st) {
         case PROC_ERR_NOMEM: return "no memory";
         case PROC_ERR_RANGE: return "range";
         case PROC_ERR_FAULT: return "fault";
+        case PROC_ERR_BUSY: return "busy";
         default: return "unknown";
     }
 }
@@ -140,7 +147,7 @@ static void fill_info_from_result(process_info_t *info, const process_result_t *
     info->entry = r->entry;
     info->user_stack_top = r->user_stack_top;
     info->mapped_pages = r->mapped_pages;
-    info->address_space = r->address_space;
+    info->address_space = 0;
     info->address_space_generation = r->address_space_generation;
     info->faulted = r->faulted ? 1u : 0u;
     info->fault_vector = r->fault_vector;
@@ -165,6 +172,16 @@ static bool process_state_terminal(u32 state) {
 
 static bool process_state_live(u32 state) {
     return state == PROCESS_STATE_READY || state == PROCESS_STATE_RUNNING || state == PROCESS_STATE_SLEEPING || state == PROCESS_STATE_WAITING;
+}
+
+static u64 alloc_address_space_generation(void) {
+    u64 g = next_address_space_generation++;
+    if (next_address_space_generation == 0) next_address_space_generation = 1;
+    if (g == 0) {
+        g = next_address_space_generation++;
+        if (next_address_space_generation == 0) next_address_space_generation = 1;
+    }
+    return g ? g : 1;
 }
 
 static active_process_t *slot_by_pid(u32 pid, usize *idx_out) {
@@ -624,7 +641,7 @@ static process_status_t prepare_process(active_process_t *p, const char *path, i
     p->result.pid = next_user_pid++;
     p->result.started_ticks = pit_ticks();
     p->result.address_space = p->space.pml4_physical;
-    p->result.address_space_generation = next_address_space_generation++;
+    p->result.address_space_generation = alloc_address_space_generation();
     strncpy(p->result.name, path, sizeof(p->result.name) - 1u);
     memset(p->fd_snapshot, 0, sizeof(p->fd_snapshot));
 
@@ -673,7 +690,7 @@ static process_status_t prepare_exec_replacement(active_process_t *dst, const ch
     dst->result.fault_rip = 0;
     dst->result.fault_addr = 0;
     dst->result.address_space = dst->space.pml4_physical;
-    dst->result.address_space_generation = next_address_space_generation++;
+    dst->result.address_space_generation = alloc_address_space_generation();
     dst->result.mapped_pages = 0;
     memset(dst->result.name, 0, sizeof(dst->result.name));
     strncpy(dst->result.name, path, sizeof(dst->result.name) - 1u);
@@ -770,7 +787,7 @@ static bool clone_current_address_space(active_process_t *child) {
     child->result.fault_addr = 0;
     child->result.exit_code = 0;
     child->result.address_space = child->space.pml4_physical;
-    child->result.address_space_generation = next_address_space_generation++;
+    child->result.address_space_generation = alloc_address_space_generation();
     child->mapping_count = 0;
     for (usize i = 0; i < current_proc.mapping_count; ++i) {
         void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
@@ -866,6 +883,32 @@ static bool any_live_process(void) {
     return false;
 }
 
+static bool any_sleeping_process(void) {
+    if (!async_slots) return false;
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+        if (async_slots[i].active && async_slots[i].state == PROCESS_STATE_SLEEPING) return true;
+    }
+    return false;
+}
+
+static void fault_wait_deadlock(void) {
+    if (!async_slots) return;
+    u64 now = pit_ticks();
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+        active_process_t *p = &async_slots[i];
+        if (p->active && p->state == PROCESS_STATE_WAITING) {
+            p->state = PROCESS_STATE_FAULTED;
+            p->result.exit_code = -127;
+            p->result.faulted = true;
+            p->result.fault_vector = 0xfeu;
+            p->result.fault_rip = p->regs.rip;
+            p->result.fault_addr = p->wait_pid;
+            p->result.finished_ticks = now;
+            record_process_result(&p->result, PROC_ERR_FAULT, p->result.started_ticks, now);
+        }
+    }
+}
+
 static bool pick_ready_slot(usize *idx_out) {
     if (!async_slots || !idx_out) return false;
     wake_sleepers();
@@ -907,6 +950,10 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
         usize idx = 0;
         if (!pick_ready_slot(&idx)) {
             if (!any_live_process()) break;
+            if (!any_sleeping_process()) {
+                fault_wait_deadlock();
+                continue;
+            }
             cpu_sti();
             cpu_hlt();
             continue;
@@ -943,6 +990,9 @@ process_status_t process_exec(const char *path, int argc, const char *const *arg
     if (!path || !*path || argc < 0 || argc > (int)PROCESS_ARG_MAX) return PROC_ERR_INVAL;
     if (async_scheduler_active || current_proc.active) return PROC_ERR_INVAL;
     if (!async_slots) return PROC_ERR_NOMEM;
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+        if (async_slots[i].active) return PROC_ERR_BUSY;
+    }
     memset(async_slots, 0, sizeof(active_process_t) * PROCESS_ASYNC_CAP);
     async_next_rr = 0;
     u32 pid = 0;
@@ -965,9 +1015,15 @@ process_status_t process_exec(const char *path, int argc, const char *const *arg
 
 process_status_t process_spawn(const char *path, int argc, const char *const *argv, u32 *pid_out, process_result_t *out) {
     process_result_t tmp;
+    memset(&tmp, 0, sizeof(tmp));
     process_status_t st = process_exec(path, argc, argv, &tmp);
-    if (pid_out) *pid_out = tmp.pid;
-    if (out) *out = tmp;
+    if (st == PROC_OK) {
+        if (pid_out) *pid_out = tmp.pid;
+        if (out) *out = tmp;
+    } else {
+        if (pid_out) *pid_out = 0;
+        if (out) memset(out, 0, sizeof(*out));
+    }
     return st;
 }
 
@@ -1006,6 +1062,8 @@ bool process_request_wait(u32 pid, uptr out_ptr) {
     if (!process_validate_user_range(out_ptr, sizeof(process_info_t), true)) return false;
     process_info_t info;
     if (!process_lookup(pid, &info)) return false;
+    active_process_t *target = slot_by_pid(pid, 0);
+    if (!target || target->parent_pid != current_proc.result.pid) return false;
     if (!process_state_live(info.state)) return false;
     current_proc.state = PROCESS_STATE_WAITING;
     current_proc.wait_pid = pid;

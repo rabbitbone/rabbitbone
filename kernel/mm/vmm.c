@@ -8,6 +8,8 @@
 #define PT_ENTRIES 512u
 #define PTE_ADDR_MASK 0x000ffffffffff000ull
 #define VMM_KERNEL_DIRECT_LIMIT MEMORY_KERNEL_DIRECT_LIMIT
+#define VMM_ALLOWED_LEAF_FLAGS (VMM_WRITE | VMM_USER | VMM_WRITETHR | VMM_NOCACHE | VMM_GLOBAL | VMM_NX)
+#define VMM_ALLOWED_TABLE_FLAGS (VMM_WRITE | VMM_USER | VMM_WRITETHR | VMM_NOCACHE | VMM_NX)
 
 typedef u64 pte_t;
 
@@ -48,9 +50,9 @@ static pte_t *alloc_kernel_table(void) {
 }
 
 static pte_t *next_table(vmm_space_t *space, pte_t *parent, usize idx, bool create, u64 flags) {
+    if ((flags & ~(VMM_ALLOWED_TABLE_FLAGS)) != 0) return 0;
     if (parent[idx] & VMM_PRESENT) {
         (void)create;
-        (void)flags;
         return (pte_t *)(uptr)(parent[idx] & PTE_ADDR_MASK);
     }
     if (!create) return 0;
@@ -69,7 +71,7 @@ static void split_indices(uptr virt, usize *pml4i, usize *pdpti, usize *pdi, usi
 
 bool vmm_space_map_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     pte_t *pml4 = space_pml4(space);
-    if (!pml4 || (virt & (PAGE_SIZE - 1u)) || (phys & (PAGE_SIZE - 1u))) return false;
+    if (!pml4 || (virt & (PAGE_SIZE - 1u)) || (phys & (PAGE_SIZE - 1u)) || (flags & ~VMM_ALLOWED_LEAF_FLAGS)) return false;
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     pte_t *pdpt = next_table(space, pml4, a, true, flags);
@@ -90,7 +92,7 @@ bool vmm_map_4k(uptr virt, uptr phys, u64 flags) {
 
 bool vmm_map_2m(uptr virt, uptr phys, u64 flags) {
     pte_t *pml4 = space_pml4(&kernel_space_obj);
-    if (!pml4 || (virt & ((2ull * 1024 * 1024) - 1u)) || (phys & ((2ull * 1024 * 1024) - 1u))) return false;
+    if (!pml4 || (virt & ((2ull * 1024 * 1024) - 1u)) || (phys & ((2ull * 1024 * 1024) - 1u)) || (flags & ~VMM_ALLOWED_LEAF_FLAGS)) return false;
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     (void)d;
@@ -115,13 +117,14 @@ bool vmm_space_unmap_4k(vmm_space_t *space, uptr virt) {
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) return false;
     pt[d] = 0;
+    if (stats.mapped_4k_pages) --stats.mapped_4k_pages;
     if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     return true;
 }
 
 bool vmm_space_protect_4k(vmm_space_t *space, uptr virt, u64 flags) {
     pte_t *pml4 = space_pml4(space);
-    if (!pml4 || (virt & (PAGE_SIZE - 1u))) return false;
+    if (!pml4 || (virt & (PAGE_SIZE - 1u)) || (flags & ~VMM_ALLOWED_LEAF_FLAGS)) return false;
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     pte_t *pdpt = next_table(space, pml4, a, false, 0);
@@ -205,7 +208,10 @@ void vmm_space_destroy(vmm_space_t *space) {
     if (space == current_space_obj) vmm_switch_kernel();
     for (usize i = space->owned_count; i > 0; --i) {
         uptr p = space->owned_tables[i - 1u];
-        if (p) memory_free_page((void *)p);
+        if (p) {
+            memory_free_page((void *)p);
+            if (stats.table_pages) --stats.table_pages;
+        }
     }
     memset(space, 0, sizeof(*space));
     stats.spaces_destroyed++;

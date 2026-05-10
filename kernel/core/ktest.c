@@ -428,10 +428,13 @@ static void test_syscall_task_timer_elf(void) {
     hdr.e_phoff = sizeof(elf64_ehdr_t);
     hdr.e_ehsize = sizeof(elf64_ehdr_t);
     hdr.e_phentsize = sizeof(elf64_phdr_t);
+    hdr.e_phnum = 1;
+    check(elf64_validate_header(&hdr, sizeof(hdr) + sizeof(elf64_phdr_t)) == ELF_OK, "ELF64 validates minimal amd64 executable header with program header");
     hdr.e_phnum = 0;
-    check(elf64_validate_header(&hdr, sizeof(hdr)) == ELF_OK, "ELF64 validates minimal amd64 executable header");
+    check(elf64_validate_header(&hdr, sizeof(hdr)) == ELF_ERR_FORMAT, "ELF64 rejects executable header without program headers");
+    hdr.e_phnum = 1;
     hdr.e_machine = 3;
-    check(elf64_validate_header(&hdr, sizeof(hdr)) == ELF_ERR_UNSUPPORTED, "ELF64 rejects non-amd64 machine");
+    check(elf64_validate_header(&hdr, sizeof(hdr) + sizeof(elf64_phdr_t)) == ELF_ERR_UNSUPPORTED, "ELF64 rejects non-amd64 machine");
     suite_end();
 }
 

@@ -24,6 +24,19 @@
 #define LINE_MAX 192u
 #define CAT_BUF 256u
 
+static bool parse_u64_dec_checked(const char *s, u64 *out) {
+    if (!s || !*s || !out) return false;
+    u64 v = 0;
+    for (const char *p = s; *p; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        u64 d = (u64)(*p - '0');
+        if (v > (0xffffffffffffffffull - d) / 10ull) return false;
+        v = v * 10ull + d;
+    }
+    *out = v;
+    return true;
+}
+
 static void print_help(void) {
     kprintf("commands:\n");
     kprintf("  help              show this help\n");
@@ -162,6 +175,7 @@ static void cmd_write(const char *arg, bool create) {
     char path[VFS_PATH_MAX];
     usize i = 0;
     while (arg[i] && arg[i] != ' ' && i + 1u < sizeof(path)) { path[i] = arg[i]; ++i; }
+    if (arg[i] && arg[i] != ' ') { kprintf("%s: path too long\n", create ? "touch" : "write"); return; }
     path[i] = 0;
     while (arg[i] == ' ') ++i;
     const char *text = arg + i;
@@ -195,11 +209,15 @@ static void cmd_fdprobe(const char *path) {
     if (r.error) { kprintf("fdprobe open failed: %lld\n", (long long)r.error); return; }
     u64 h = (u64)r.value;
     aurora_fdinfo_t info;
+    memset(&info, 0, sizeof(info));
     r = syscall_dispatch(AURORA_SYS_FDINFO, h, (u64)(uptr)&info, 0, 0, 0, 0);
-    if (!r.error) {
-        kprintf("fd=%u type=%u offset=%llu size=%llu inode=%u fs=%u path=%s\n", info.handle, info.type,
-                (unsigned long long)info.offset, (unsigned long long)info.size, info.inode, info.fs_id, info.path);
+    if (r.error) {
+        kprintf("fdprobe fdinfo failed: %lld\n", (long long)r.error);
+        syscall_dispatch(AURORA_SYS_CLOSE, h, 0, 0, 0, 0, 0);
+        return;
     }
+    kprintf("fd=%u type=%u offset=%llu size=%llu inode=%u fs=%u path=%s\n", info.handle, info.type,
+            (unsigned long long)info.offset, (unsigned long long)info.size, info.inode, info.fs_id, info.path);
     if (info.type == VFS_NODE_DIR) {
         for (u64 i = 0; i < 8; ++i) {
             aurora_dirent_t de;
@@ -252,7 +270,8 @@ static void cmd_spawn(char *arg) {
 
 static void cmd_wait(const char *arg) {
     if (!arg || !*arg) { kprintf("usage: wait PID\n"); return; }
-    u64 raw = strtou64(arg, 0, 0);
+    u64 raw = 0;
+    if (!parse_u64_dec_checked(arg, &raw)) { kprintf("wait: invalid PID\n"); return; }
     process_info_t info;
     if (!process_wait((u32)raw, &info)) { kprintf("wait: no completed process %llu\n", (unsigned long long)raw); return; }
     kprintf("pid=%u state=%u exit=%d status=%s asid=%llu name=%s\n", info.pid, info.state, info.exit_code, process_status_name((process_status_t)info.status), (unsigned long long)info.address_space_generation, info.name);
@@ -270,7 +289,11 @@ static void cmd_qspawn(char *arg) {
 
 static void cmd_runq(const char *arg) {
     u32 max = 0;
-    if (arg && *arg) max = (u32)strtou64(arg, 0, 0);
+    if (arg && *arg) {
+        u64 raw = 0;
+        if (!parse_u64_dec_checked(arg, &raw) || raw > 0xffffffffu) { kprintf("runq: invalid count\n"); return; }
+        max = (u32)raw;
+    }
     u32 ran = scheduler_run_ready(max);
     kprintf("scheduler dispatched %u job(s)\n", ran);
 }

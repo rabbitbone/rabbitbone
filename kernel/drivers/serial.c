@@ -19,8 +19,12 @@ void serial_init(void) {
 
 void serial_putc(char c) {
     if (c == '\n') serial_putc('\r');
-    for (u32 spin = 0; spin < 100000 && !tx_empty(); ++spin) {}
-    outb(COM1, (u8)c);
+    for (u32 spin = 0; spin < 100000; ++spin) {
+        if (tx_empty()) {
+            outb(COM1, (u8)c);
+            return;
+        }
+    }
 }
 
 void serial_write_n(const char *s, usize n) { for (usize i = 0; i < n; ++i) serial_putc(s[i]); }

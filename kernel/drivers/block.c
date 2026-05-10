@@ -7,6 +7,7 @@ static usize device_count;
 
 void block_register(block_device_t *dev) {
     if (!dev || !dev->read || device_count >= MAX_BLOCK_DEVS) return;
+    if (dev->sector_count == 0 || dev->sector_size != BLOCKDEV_SECTOR_SIZE) return;
     devices[device_count++] = dev;
 }
 
@@ -15,11 +16,9 @@ usize block_count(void) { return device_count; }
 
 block_status_t block_read(block_device_t *dev, u64 lba, u32 count, void *buffer) {
     if (!dev || !dev->read || !buffer || count == 0) return BLOCK_ERR_INVALID;
-    if (dev->sector_size && dev->sector_size != BLOCKDEV_SECTOR_SIZE) return BLOCK_ERR_INVALID;
-    if (dev->sector_count) {
-        if (lba >= dev->sector_count) return BLOCK_ERR_RANGE;
-        if ((u64)count > dev->sector_count - lba) return BLOCK_ERR_RANGE;
-    }
+    if (dev->sector_size != BLOCKDEV_SECTOR_SIZE || dev->sector_count == 0) return BLOCK_ERR_INVALID;
+    if (lba >= dev->sector_count) return BLOCK_ERR_RANGE;
+    if ((u64)count > dev->sector_count - lba) return BLOCK_ERR_RANGE;
     return dev->read(dev, lba, count, buffer);
 }
 

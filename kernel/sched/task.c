@@ -25,6 +25,13 @@ static u64 now_tick(void) {
 #endif
 }
 
+static bool task_table_has_live(void) {
+    for (usize i = 0; i < TASK_MAX; ++i) {
+        if (tasks[i].info.state == TASK_READY || tasks[i].info.state == TASK_RUNNING || tasks[i].info.state == TASK_BLOCKED) return true;
+    }
+    return false;
+}
+
 const char *task_state_name(task_state_t state) {
     switch (state) {
         case TASK_UNUSED: return "unused";
@@ -37,6 +44,7 @@ const char *task_state_name(task_state_t state) {
 }
 
 void task_init(void) {
+    if (initialized && task_table_has_live()) return;
     memset(tasks, 0, sizeof(tasks));
     current = 0;
     next_pid = 1;

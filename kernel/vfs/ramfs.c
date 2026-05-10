@@ -26,12 +26,30 @@ struct ramfs {
     u32 next_inode;
 };
 
+static bool inode_exists_in(ramfs_node_t *n, u32 ino) {
+    if (!n) return false;
+    if (n->inode == ino) return true;
+    for (ramfs_node_t *c = n->children; c; c = c->next) if (inode_exists_in(c, ino)) return true;
+    return false;
+}
+
+static u32 ramfs_alloc_inode(ramfs_t *fs) {
+    if (!fs) return 0;
+    for (u32 tries = 0; tries < 0xffffffffu; ++tries) {
+        u32 ino = fs->next_inode++;
+        if (fs->next_inode == 0) fs->next_inode = 1;
+        if (ino != 0 && !inode_exists_in(fs->root, ino)) return ino;
+    }
+    return 0;
+}
+
 static ramfs_node_t *node_create(ramfs_t *fs, const char *name, vfs_node_type_t type) {
     ramfs_node_t *n = (ramfs_node_t *)kcalloc(1, sizeof(*n));
     if (!n) return 0;
     strncpy(n->name, name ? name : "", sizeof(n->name) - 1u);
     n->type = type;
-    n->inode = fs->next_inode++;
+    n->inode = ramfs_alloc_inode(fs);
+    if (n->inode == 0) { kfree(n); return 0; }
     n->mode = type == VFS_NODE_DIR ? 0755u : 0644u;
     return n;
 }
@@ -193,8 +211,10 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
     if (end > n->capacity) {
         usize cap = n->capacity ? n->capacity : 64u;
         while (cap < end) {
+            if (cap >= RAMFS_MAX_FILE_SIZE) return VFS_ERR_NOMEM;
             if (cap > ((usize)-1) / 2u) return VFS_ERR_NOMEM;
             cap *= 2u;
+            if (cap > RAMFS_MAX_FILE_SIZE) cap = RAMFS_MAX_FILE_SIZE;
         }
         u8 *new_data = (u8 *)kmalloc(cap);
         if (!new_data) return VFS_ERR_NOMEM;

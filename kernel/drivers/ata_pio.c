@@ -22,6 +22,7 @@
 #define ATA_SR_DF 0x20
 #define ATA_SR_DRQ 0x08
 #define ATA_SR_ERR 0x01
+#define ATA_LBA48_LIMIT (1ull << 48)
 
 static block_device_t primary_master;
 static u16 identify_data[256];
@@ -99,6 +100,7 @@ static block_status_t ata_read28(block_device_t *dev, u64 lba, u32 count, void *
 static block_status_t ata_read48(block_device_t *dev, u64 lba, u32 count, void *buffer) {
     (void)dev;
     if (count == 0 || count > 65536u || !buffer) return BLOCK_ERR_INVALID;
+    if (lba >= ATA_LBA48_LIMIT || (u64)count > ATA_LBA48_LIMIT - lba) return BLOCK_ERR_RANGE;
     u8 *out = (u8 *)buffer;
     while (count) {
         u16 chunk = count > 256u ? 256u : (u16)count;
@@ -135,6 +137,7 @@ static block_status_t ata_read48(block_device_t *dev, u64 lba, u32 count, void *
 
 static block_status_t ata_read(block_device_t *dev, u64 lba, u32 count, void *buffer) {
     if (!dev || !buffer || count == 0) return BLOCK_ERR_INVALID;
+    if (primary_supports_lba48 && (lba >= ATA_LBA48_LIMIT || (u64)count > ATA_LBA48_LIMIT - lba)) return BLOCK_ERR_RANGE;
     if (lba < 0x10000000ull && (u64)count <= 0x10000000ull - lba) return ata_read28(dev, lba, count, buffer);
     if (!primary_supports_lba48) return BLOCK_ERR_RANGE;
     return ata_read48(dev, lba, count, buffer);
