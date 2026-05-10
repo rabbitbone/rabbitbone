@@ -56,6 +56,8 @@ pub enum SyscallNo {
     Fork = 29,
     Exec = 30,
     ExecV = 31,
+    FdCtl = 32,
+    ExecVe = 33,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -71,6 +73,10 @@ const MAX_CREATE_BYTES: u64 = 65_536;
 const MAX_HANDLES: u64 = 32;
 const MAX_SLEEP_TICKS: u64 = 10_000;
 const MAX_PROCESS_ARGS: u64 = 8;
+const MAX_PROCESS_ENVS: u64 = 8;
+const FD_CLOEXEC: u64 = 1;
+const FDCTL_GET: u64 = 0;
+const FDCTL_SET: u64 = 1;
 
 impl SyscallNo {
     pub const fn decode(raw: u64) -> Result<Self, DecodeError> {
@@ -107,6 +113,8 @@ impl SyscallNo {
             29 => Ok(Self::Fork),
             30 => Ok(Self::Exec),
             31 => Ok(Self::ExecV),
+            32 => Ok(Self::FdCtl),
+            33 => Ok(Self::ExecVe),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -145,6 +153,8 @@ impl SyscallNo {
             Self::Fork => b"fork\0",
             Self::Exec => b"exec\0",
             Self::ExecV => b"execv\0",
+            Self::FdCtl => b"fdctl\0",
+            Self::ExecVe => b"execve\0",
         }
     }
 }
@@ -182,6 +192,8 @@ extern "C" {
     fn aurora_sys_fork() -> SyscallResult;
     fn aurora_sys_exec(path: u64) -> SyscallResult;
     fn aurora_sys_execv(path: u64, argc: u64, argv: u64) -> SyscallResult;
+    fn aurora_sys_fdctl(handle: u64, op: u64, flags: u64) -> SyscallResult;
+    fn aurora_sys_execve(path: u64, argc: u64, argv: u64, envc: u64, envp: u64) -> SyscallResult;
 }
 
 fn valid_handle(h: u64) -> bool { h > 0 && h < MAX_HANDLES }
@@ -197,6 +209,9 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         }
         SyscallNo::SpawnV | SyscallNo::ExecV => {
             if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PROCESS_ARGS || a.a2 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::ExecVe => {
+            if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PROCESS_ARGS || a.a2 == 0 || a.a3 > MAX_PROCESS_ENVS || (a.a3 != 0 && a.a4 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell => {
             if valid_handle(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
@@ -231,6 +246,9 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         }
         SyscallNo::ReadDir => {
             if !valid_handle(a.a0) || a.a2 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::FdCtl => {
+            if !valid_handle(a.a0) || (a.a1 != FDCTL_GET && a.a1 != FDCTL_SET) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
     }
 }
@@ -278,6 +296,8 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::Fork => aurora_sys_fork(),
             SyscallNo::Exec => aurora_sys_exec(args.a0),
             SyscallNo::ExecV => aurora_sys_execv(args.a0, args.a1, args.a2),
+            SyscallNo::FdCtl => aurora_sys_fdctl(args.a0, args.a1, args.a2),
+            SyscallNo::ExecVe => aurora_sys_execve(args.a0, args.a1, args.a2, args.a3, args.a4),
         }
     }
 }
@@ -311,7 +331,9 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(29) != Ok(SyscallNo::Fork) { return false; }
     if SyscallNo::decode(30) != Ok(SyscallNo::Exec) { return false; }
     if SyscallNo::decode(31) != Ok(SyscallNo::ExecV) { return false; }
-    if SyscallNo::decode(32) != Err(DecodeError::Unsupported) { return false; }
+    if SyscallNo::decode(32) != Ok(SyscallNo::FdCtl) { return false; }
+    if SyscallNo::decode(33) != Ok(SyscallNo::ExecVe) { return false; }
+    if SyscallNo::decode(34) != Err(DecodeError::Unsupported) { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
@@ -334,6 +356,9 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::ExecV, SysArgs { a0: 1, a1: MAX_PROCESS_ARGS + 1, a2: 0x10000, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::ExecV, SysArgs { a0: 1, a1: 2, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::ExecV, SysArgs { a0: 1, a1: 2, a2: 0x10000, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::ExecVe, SysArgs { a0: 1, a1: 2, a2: 0x10000, a3: MAX_PROCESS_ENVS + 1, a4: 0x20000, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::ExecVe, SysArgs { a0: 1, a1: 2, a2: 0x10000, a3: 1, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::ExecVe, SysArgs { a0: 1, a1: 2, a2: 0x10000, a3: 1, a4: 0x20000, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Wait, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Wait, SysArgs { a0: 1, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Sleep, SysArgs { a0: MAX_SLEEP_TICKS + 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
@@ -344,6 +369,8 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::PreemptInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Dup, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Dup, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::FdCtl, SysArgs { a0: 1, a1: FDCTL_SET, a2: FD_CLOEXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::FdCtl, SysArgs { a0: 1, a1: 7, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Fstat, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::FdInfo, SysArgs { a0: 1, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::ReadDir, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }

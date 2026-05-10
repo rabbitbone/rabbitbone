@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 #define PROCESS_ARG_MAX 8u
+#define PROCESS_ENV_MAX AURORA_ENV_MAX
 #define PROCESS_NAME_MAX AURORA_PROCESS_NAME_MAX
 #define PROCESS_TABLE_CAP 64u
 
@@ -54,6 +55,7 @@ typedef aurora_procinfo_t process_info_t;
 
 void process_init(void);
 process_status_t process_exec(const char *path, int argc, const char *const *argv, process_result_t *out);
+process_status_t process_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp, process_result_t *out);
 process_status_t process_spawn(const char *path, int argc, const char *const *argv, u32 *pid_out, process_result_t *out);
 bool process_wait(u32 pid, process_info_t *out);
 process_status_t process_spawn_async(const char *path, int argc, const char *const *argv, u32 *pid_out);
@@ -69,6 +71,7 @@ void process_request_sleep(u64 ticks);
 bool process_request_wait(u32 pid, uptr out_ptr);
 bool process_request_fork(void);
 process_status_t process_request_exec(const char *path, int argc, const char *const *argv);
+process_status_t process_request_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp);
 const char *process_status_name(process_status_t st);
 bool process_selftest(void);
 bool process_user_active(void);

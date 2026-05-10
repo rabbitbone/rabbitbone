@@ -590,8 +590,8 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
     return PROC_OK;
 }
 
-static process_status_t build_user_stack(active_process_t *p, int argc, const char *const *argv, u64 *rsp_out, u64 *argv_out) {
-    if (argc < 0 || argc > (int)PROCESS_ARG_MAX) return PROC_ERR_INVAL;
+static process_status_t build_user_stack(active_process_t *p, int argc, const char *const *argv, int envc, const char *const *envp, u64 *rsp_out, u64 *argv_out, u64 *envp_out) {
+    if (argc < 0 || argc > (int)PROCESS_ARG_MAX || envc < 0 || envc > (int)PROCESS_ENV_MAX) return PROC_ERR_INVAL;
     uptr stack_base = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
     for (usize i = 0; i < USER_STACK_PAGES; ++i) {
         process_status_t st = map_user_page(p, stack_base + i * PAGE_SIZE, VMM_WRITE | VMM_NX);
@@ -599,7 +599,18 @@ static process_status_t build_user_stack(active_process_t *p, int argc, const ch
     }
     uptr sp = USER_STACK_TOP;
     u64 arg_ptrs[PROCESS_ARG_MAX + 1u];
+    u64 env_ptrs[PROCESS_ENV_MAX + 1u];
     memset(arg_ptrs, 0, sizeof(arg_ptrs));
+    memset(env_ptrs, 0, sizeof(env_ptrs));
+    for (int i = envc - 1; i >= 0; --i) {
+        const char *s = envp && envp[i] ? envp[i] : "";
+        usize len = strnlen(s, USER_ARG_STRING_MAX);
+        if (len >= USER_ARG_STRING_MAX || len == 0) return PROC_ERR_RANGE;
+        sp -= len + 1u;
+        process_status_t cs = copy_to_user_space(p, sp, s, len + 1u);
+        if (cs != PROC_OK) return cs;
+        env_ptrs[i] = sp;
+    }
     for (int i = argc - 1; i >= 0; --i) {
         const char *s = argv && argv[i] ? argv[i] : "";
         usize len = strnlen(s, USER_ARG_STRING_MAX);
@@ -610,10 +621,15 @@ static process_status_t build_user_stack(active_process_t *p, int argc, const ch
         arg_ptrs[i] = sp;
     }
     sp &= ~0xfull;
+    sp -= (u64)(envc + 1) * sizeof(u64);
+    process_status_t ps = copy_to_user_space(p, sp, env_ptrs, (usize)(envc + 1) * sizeof(u64));
+    if (ps != PROC_OK) return ps;
+    u64 env_user = sp;
     sp -= (u64)(argc + 1) * sizeof(u64);
-    process_status_t ps = copy_to_user_space(p, sp, arg_ptrs, (usize)(argc + 1) * sizeof(u64));
+    ps = copy_to_user_space(p, sp, arg_ptrs, (usize)(argc + 1) * sizeof(u64));
     if (ps != PROC_OK) return ps;
     *argv_out = sp;
+    *envp_out = env_user;
     *rsp_out = sp & ~0xfull;
     return PROC_OK;
 }
@@ -631,8 +647,8 @@ static void init_user_regs(cpu_regs_t *regs, u64 entry, u64 user_rsp, u64 argc, 
     regs->rdx = aux;
 }
 
-static process_status_t prepare_process(active_process_t *p, const char *path, int argc, const char *const *argv, u32 parent_pid) {
-    if (!p || !path || !*path || argc < 0 || argc > (int)PROCESS_ARG_MAX) return PROC_ERR_INVAL;
+static process_status_t prepare_process_env(active_process_t *p, const char *path, int argc, const char *const *argv, int envc, const char *const *envp, u32 parent_pid) {
+    if (!p || !path || !*path || argc < 0 || argc > (int)PROCESS_ARG_MAX || envc < 0 || envc > (int)PROCESS_ENV_MAX) return PROC_ERR_INVAL;
     memset(p, 0, sizeof(*p));
     if (!vmm_space_create_user(&p->space)) return PROC_ERR_NOMEM;
     p->active = true;
@@ -650,11 +666,12 @@ static process_status_t prepare_process(active_process_t *p, const char *path, i
     if (st == PROC_OK) {
         u64 user_rsp = 0;
         u64 user_argv = 0;
-        st = build_user_stack(p, argc, argv, &user_rsp, &user_argv);
+        u64 user_envp = 0;
+        st = build_user_stack(p, argc, argv, envc, envp, &user_rsp, &user_argv, &user_envp);
         if (st == PROC_OK) {
             p->result.entry = entry;
             p->result.user_stack_top = USER_STACK_TOP;
-            init_user_regs(&p->regs, entry, user_rsp, (u64)argc, user_argv, 0);
+            init_user_regs(&p->regs, entry, user_rsp, (u64)argc, user_argv, user_envp);
             KLOG(LOG_INFO, "process", "prepared pid=%u path=%s pml4=%p entry=%p rsp=%p argc=%d pages=%llu",
                  p->result.pid, path, (void *)p->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, argc,
                  (unsigned long long)p->result.mapped_pages);
@@ -672,8 +689,12 @@ static process_status_t prepare_process(active_process_t *p, const char *path, i
     return st;
 }
 
-static process_status_t prepare_exec_replacement(active_process_t *dst, const char *path, int argc, const char *const *argv) {
-    if (!dst || !current_proc.active || !path || !*path || argc <= 0 || argc > (int)PROCESS_ARG_MAX) return PROC_ERR_INVAL;
+static process_status_t prepare_process(active_process_t *p, const char *path, int argc, const char *const *argv, u32 parent_pid) {
+    return prepare_process_env(p, path, argc, argv, 0, 0, parent_pid);
+}
+
+static process_status_t prepare_exec_replacement_env(active_process_t *dst, const char *path, int argc, const char *const *argv, int envc, const char *const *envp) {
+    if (!dst || !current_proc.active || !path || !*path || argc <= 0 || argc > (int)PROCESS_ARG_MAX || envc < 0 || envc > (int)PROCESS_ENV_MAX) return PROC_ERR_INVAL;
     memset(dst, 0, sizeof(*dst));
     if (!vmm_space_create_user(&dst->space)) return PROC_ERR_NOMEM;
     dst->active = true;
@@ -700,11 +721,12 @@ static process_status_t prepare_exec_replacement(active_process_t *dst, const ch
     if (st == PROC_OK) {
         u64 user_rsp = 0;
         u64 user_argv = 0;
-        st = build_user_stack(dst, argc, argv, &user_rsp, &user_argv);
+        u64 user_envp = 0;
+        st = build_user_stack(dst, argc, argv, envc, envp, &user_rsp, &user_argv, &user_envp);
         if (st == PROC_OK) {
             dst->result.entry = entry;
             dst->result.user_stack_top = USER_STACK_TOP;
-            init_user_regs(&dst->regs, entry, user_rsp, (u64)argc, user_argv, 0);
+            init_user_regs(&dst->regs, entry, user_rsp, (u64)argc, user_argv, user_envp);
             syscall_save_user_handles(dst->fd_snapshot, sizeof(dst->fd_snapshot));
             KLOG(LOG_INFO, "process", "exec prepared pid=%u path=%s pml4=%p entry=%p rsp=%p argc=%d pages=%llu",
                  dst->result.pid, path, (void *)dst->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, argc,
@@ -721,6 +743,7 @@ static process_status_t prepare_exec_replacement(active_process_t *dst, const ch
 static void commit_exec_replacement(cpu_regs_t *regs) {
     active_process_t old = current_proc;
     if (!exec_replacement) return;
+    syscall_close_user_handles_with_flags(AURORA_FD_CLOEXEC);
     current_proc = *exec_replacement;
     memset(exec_replacement, 0, sizeof(*exec_replacement));
     exec_requested = false;
@@ -986,8 +1009,8 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
     return found_root;
 }
 
-process_status_t process_exec(const char *path, int argc, const char *const *argv, process_result_t *out) {
-    if (!path || !*path || argc < 0 || argc > (int)PROCESS_ARG_MAX) return PROC_ERR_INVAL;
+process_status_t process_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp, process_result_t *out) {
+    if (!path || !*path || argc < 0 || argc > (int)PROCESS_ARG_MAX || envc < 0 || envc > (int)PROCESS_ENV_MAX) return PROC_ERR_INVAL;
     if (async_scheduler_active || current_proc.active) return PROC_ERR_INVAL;
     if (!async_slots) return PROC_ERR_NOMEM;
     for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
@@ -996,7 +1019,9 @@ process_status_t process_exec(const char *path, int argc, const char *const *arg
     memset(async_slots, 0, sizeof(active_process_t) * PROCESS_ASYNC_CAP);
     async_next_rr = 0;
     u32 pid = 0;
-    process_status_t st = process_spawn_async(path, argc, argv, &pid);
+    active_process_t *slot = alloc_async_slot();
+    process_status_t st = slot ? prepare_process_env(slot, path, argc, argv, envc, envp, 0) : PROC_ERR_NOMEM;
+    if (st == PROC_OK) pid = slot->result.pid;
     if (st != PROC_OK) {
         if (out) memset(out, 0, sizeof(*out));
         return st;
@@ -1011,6 +1036,10 @@ process_status_t process_exec(const char *path, int argc, const char *const *arg
     if (out) *out = result;
     if (!ran) return PROC_ERR_FAULT;
     return result.faulted ? PROC_ERR_FAULT : PROC_OK;
+}
+
+process_status_t process_exec(const char *path, int argc, const char *const *argv, process_result_t *out) {
+    return process_execve(path, argc, argv, 0, 0, out);
 }
 
 process_status_t process_spawn(const char *path, int argc, const char *const *argv, u32 *pid_out, process_result_t *out) {
@@ -1078,14 +1107,18 @@ bool process_request_fork(void) {
     return true;
 }
 
-process_status_t process_request_exec(const char *path, int argc, const char *const *argv) {
+process_status_t process_request_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp) {
     if (!process_async_scheduler_active() || !current_proc.active) return PROC_ERR_INVAL;
     if (exec_requested) discard_exec_replacement();
     if (!exec_replacement) return PROC_ERR_NOMEM;
-    process_status_t st = prepare_exec_replacement(exec_replacement, path, argc, argv);
+    process_status_t st = prepare_exec_replacement_env(exec_replacement, path, argc, argv, envc, envp);
     if (st != PROC_OK) return st;
     exec_requested = true;
     return PROC_OK;
+}
+
+process_status_t process_request_exec(const char *path, int argc, const char *const *argv) {
+    return process_request_execve(path, argc, argv, 0, 0);
 }
 
 static AURORA_NORETURN void leave_user_scheduler(void) {
@@ -1297,5 +1330,17 @@ bool process_selftest(void) {
     process_result_t rexec;
     st = process_exec("/bin/execcheck", 1, argv_exec, &rexec);
     if (st != PROC_OK || rexec.faulted || rexec.exit_code != 0 || strcmp(rexec.name, "/bin/fscheck") != 0) return false;
+    const char *argv_execve[] = { "/bin/execvecheck" };
+    process_result_t rexecve;
+    st = process_exec("/bin/execvecheck", 1, argv_execve, &rexecve);
+    if (st != PROC_OK || rexecve.faulted || rexecve.exit_code != 0 || strcmp(rexecve.name, "/bin/exectarget") != 0) return false;
+    const char *argv_fdexec[] = { "/bin/execfdcheck" };
+    process_result_t rfdexec;
+    st = process_exec("/bin/execfdcheck", 1, argv_fdexec, &rfdexec);
+    if (st != PROC_OK || rfdexec.faulted || rfdexec.exit_code != 0 || strcmp(rfdexec.name, "/bin/exectarget") != 0) return false;
+    const char *argv_clo[] = { "/bin/execfdcheck", "cloexec" };
+    process_result_t rclo;
+    st = process_exec("/bin/execfdcheck", 2, argv_clo, &rclo);
+    if (st != PROC_OK || rclo.faulted || rclo.exit_code != 0 || strcmp(rclo.name, "/bin/exectarget") != 0) return false;
     return true;
 }

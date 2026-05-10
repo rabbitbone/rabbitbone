@@ -45,6 +45,8 @@ enum au_syscall_id {
     AU_SYS_FORK = AURORA_SYS_FORK,
     AU_SYS_EXEC = AURORA_SYS_EXEC,
     AU_SYS_EXECV = AURORA_SYS_EXECV,
+    AU_SYS_FDCTL = AURORA_SYS_FDCTL,
+    AU_SYS_EXECVE = AURORA_SYS_EXECVE,
 };
 
 typedef struct au_result {
@@ -127,6 +129,8 @@ au_i64 au_preemptinfo(au_preemptinfo_t *out);
 au_i64 au_fork(void);
 au_i64 au_exec(const char *path);
 au_i64 au_execv(const char *path, unsigned int argc, const char *const *argv);
+au_i64 au_execve(const char *path, unsigned int argc, const char *const *argv, unsigned int envc, const char *const *envp);
+au_i64 au_fdctl(au_i64 h, unsigned int op, unsigned int flags);
 au_i64 au_dup(au_i64 h);
 au_i64 au_tell(au_i64 h);
 au_i64 au_fstat(au_i64 h, au_stat_t *out);

@@ -2,6 +2,16 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.15
+
+Stage 10 exec and descriptor-control update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.15` / `0x0000010f`.
+- Added `fdctl` and close-on-exec descriptor flags.
+- Added `execve` with argv and environment-vector handoff.
+- Added `/bin/execfdcheck`, `/bin/execvecheck`, and `/bin/exectarget` userland regression programs.
+- Extended ktest coverage for inherited descriptors, close-on-exec behavior, and environment passing across exec.
+
 ## 0.0.1.14
 
 VMM regression update.

@@ -33,11 +33,18 @@
 #define AURORA_SYS_FORK 29u
 #define AURORA_SYS_EXEC 30u
 #define AURORA_SYS_EXECV 31u
-#define AURORA_SYS_MAX 32u
+#define AURORA_SYS_FDCTL 32u
+#define AURORA_SYS_EXECVE 33u
+#define AURORA_SYS_MAX 34u
 
 #define AURORA_NAME_MAX 64u
 #define AURORA_PATH_MAX 256u
 #define AURORA_PROCESS_NAME_MAX 48u
+#define AURORA_ENV_MAX 8u
+
+#define AURORA_FD_CLOEXEC 0x00000001u
+#define AURORA_FDCTL_GET 0u
+#define AURORA_FDCTL_SET 1u
 
 #ifndef AURORA_ABI_STATIC_ASSERT
 #define AURORA_ABI_STATIC_ASSERT(name, expr) typedef char aurora_abi_static_assert_##name[(expr) ? 1 : -1]
@@ -92,6 +99,8 @@ typedef struct aurora_fdinfo {
     unsigned long long size;
     unsigned int inode;
     unsigned int fs_id;
+    unsigned int flags;
+    unsigned int reserved;
     char path[AURORA_PATH_MAX];
 } aurora_fdinfo_t;
 
@@ -120,6 +129,7 @@ typedef struct aurora_preemptinfo {
 AURORA_ABI_STATIC_ASSERT(procinfo_pid_offset, __builtin_offsetof(aurora_procinfo_t, pid) == 0);
 AURORA_ABI_STATIC_ASSERT(procinfo_name_size, sizeof(((aurora_procinfo_t *)0)->name) == AURORA_PROCESS_NAME_MAX);
 AURORA_ABI_STATIC_ASSERT(schedinfo_quantum_after_preempt_enabled, __builtin_offsetof(aurora_schedinfo_t, quantum_ticks) == __builtin_offsetof(aurora_schedinfo_t, preempt_enabled) + sizeof(unsigned int));
+AURORA_ABI_STATIC_ASSERT(fdinfo_flags_after_fsid, __builtin_offsetof(aurora_fdinfo_t, flags) == __builtin_offsetof(aurora_fdinfo_t, fs_id) + sizeof(unsigned int));
 AURORA_ABI_STATIC_ASSERT(preemptinfo_rip_offset, __builtin_offsetof(aurora_preemptinfo_t, last_preempt_rip) > __builtin_offsetof(aurora_preemptinfo_t, total_preemptions));
 
 #endif

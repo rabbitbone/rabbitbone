@@ -1,6 +1,6 @@
 # AuroraOS status
 
-AuroraOS is currently at `0.0.1.14`.
+AuroraOS is currently at `0.0.1.15`.
 
 The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a read-only EXT4 path, a syscall layer, and a small ring3 userland.
 
@@ -11,7 +11,7 @@ The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stag
 - Writable ramfs at `/`, devfs at `/dev`, tarfs support, and read-only EXT4 mounted from the first Linux MBR partition.
 - ATA PIO, MBR parsing, and a block layer for the VMware IDE disk path.
 - ELF64 user program loading, ring3 entry, and `int 0x80` syscalls.
-- Process records, file descriptors, async `spawn`, blocking `wait` and `sleep`, deep-copy `fork`, and `exec`/`execv`.
+- Process records, file descriptors, async `spawn`, blocking `wait` and `sleep`, deep-copy `fork`, and `exec`/`execv`/`execve`.
 - Single-core preemptive scheduling through PIT IRQ0.
 - Rust safety-boundary modules linked into the kernel for syscall dispatch, usercopy, VFS routing, and path policy checks.
 - Host tests and in-kernel `ktest`.

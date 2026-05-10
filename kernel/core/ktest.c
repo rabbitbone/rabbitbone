@@ -474,6 +474,9 @@ static void test_user_processes(void) {
     check(vfs_stat("/bin/forkcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/forkcheck fork/wait ELF");
     check(vfs_stat("/bin/procctl", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/procctl async spawn/wait ELF");
     check(vfs_stat("/bin/execcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execcheck execv ELF");
+    check(vfs_stat("/bin/execfdcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execfdcheck fd inheritance/CLOEXEC ELF");
+    check(vfs_stat("/bin/execvecheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execvecheck env ELF");
+    check(vfs_stat("/bin/exectarget", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/exectarget exec target ELF");
     elf_loaded_image_t img;
     elf_status_t es = elf64_load_from_vfs("/bin/hello", &img);
     check(es == ELF_OK && img.segment_count > 0u && img.entry >= 0x0000010000000000ull, "ELF loader parses /bin/hello");
@@ -534,6 +537,24 @@ static void test_user_processes(void) {
     bool exec_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/fscheck") == 0;
     check(exec_ok, "ring3 /bin/execcheck rejects failed exec then replaces image with execv");
     if (!exec_ok) detail_process_result("/bin/execcheck", ps, &r);
+
+    const char *execfd_argv[] = { "/bin/execfdcheck" };
+    ps = process_exec("/bin/execfdcheck", 1, execfd_argv, &r);
+    bool execfd_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(execfd_ok, "ring3 /bin/execfdcheck preserves non-CLOEXEC fd across execv");
+    if (!execfd_ok) detail_process_result("/bin/execfdcheck", ps, &r);
+
+    const char *execve_argv[] = { "/bin/execvecheck" };
+    ps = process_exec("/bin/execvecheck", 1, execve_argv, &r);
+    bool execve_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(execve_ok, "ring3 /bin/execvecheck replaces image with argv+envp");
+    if (!execve_ok) detail_process_result("/bin/execvecheck", ps, &r);
+
+    const char *execfdclo_argv[] = { "/bin/execfdcheck", "cloexec" };
+    ps = process_exec("/bin/execfdcheck", 2, execfdclo_argv, &r);
+    bool execfdclo_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(execfdclo_ok, "ring3 /bin/execfdcheck closes FD_CLOEXEC handles across execv");
+    if (!execfdclo_ok) detail_process_result("/bin/execfdcheck", ps, &r);
 
     const char *fork_argv[] = { "/bin/forkcheck" };
     ps = process_exec("/bin/forkcheck", 1, fork_argv, &r);
@@ -629,7 +650,7 @@ static void test_process_registry(void) {
     syscall_result_t sr = syscall_dispatch(AURORA_SYS_WAIT, pid, (u64)(uptr)&info, 0, 0, 0, 0);
     check(sr.error == 0 && info.pid == pid && info.exit_code == 7, "Rust-dispatched wait syscall returns child metadata");
     check(strcmp(syscall_name(AURORA_SYS_FORK), "fork") == 0, "Rust-dispatched fork syscall name is stable");
-    check(strcmp(syscall_name(AURORA_SYS_EXEC), "exec") == 0 && strcmp(syscall_name(AURORA_SYS_EXECV), "execv") == 0, "Rust-dispatched exec syscall names are stable");
+    check(strcmp(syscall_name(AURORA_SYS_EXEC), "exec") == 0 && strcmp(syscall_name(AURORA_SYS_EXECV), "execv") == 0 && strcmp(syscall_name(AURORA_SYS_EXECVE), "execve") == 0 && strcmp(syscall_name(AURORA_SYS_FDCTL), "fdctl") == 0, "Rust-dispatched exec/fdctl syscall names are stable");
     check(!process_lookup(0, &info) && !process_lookup(0xffffffffu, &info), "process lookup rejects invalid or unknown pid");
     check(process_table_count() >= before, "process registry count is monotonic until ring wraps");
     suite_end();

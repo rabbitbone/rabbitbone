@@ -1,6 +1,6 @@
 # AuroraOS
 
-![Version](https://img.shields.io/badge/version-0.0.1.14-2f6fed)
+![Version](https://img.shields.io/badge/version-0.0.1.15-2f6fed)
 ![Target](https://img.shields.io/badge/target-x86_64%20VMware%20BIOS-222222)
 ![Kernel](https://img.shields.io/badge/kernel-independent-6b46c1)
 ![Written with](https://img.shields.io/badge/written%20with-GPT--5.5-0f766e)
@@ -9,7 +9,7 @@
 
 AuroraOS is an experimental amd64 operating system for VMware Legacy BIOS machines. It is not a Linux distribution, not a Unix clone, and not a bootloader demo. The repository contains the boot path, kernel, filesystem layer, syscall surface, small userland programs, host-side tests, and the tooling needed to build a raw disk image.
 
-The current release line is `0.0.1.14`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`/`execv`.
+The current release line is `0.0.1.15`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
 
 ## What is inside
 
@@ -142,6 +142,8 @@ run /bin/fdcheck
 run /bin/procctl
 run /bin/forkcheck
 run /bin/execcheck
+run /bin/execvecheck
+run /bin/execfdcheck
 spawn /bin/fscheck /disk0/hello.txt
 qspawn /bin/hello
 ```

@@ -17,7 +17,7 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-p
 USER_ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 -T user/user.ld
 
-USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck
+USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck execfdcheck execvecheck exectarget
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)
@@ -136,7 +136,7 @@ $(BUILD)/user/regtrash.elf: $(BUILD)/user/regtrash.asm.o user/user.ld
 
 $(BUILD)/user_bins.c: scripts/bin2c.py $(USER_ELFS)
 	mkdir -p $(dir $@)
-	python3 scripts/bin2c.py --out $@ $(BUILD)/user/hello.elf:/bin/hello $(BUILD)/user/fscheck.elf:/bin/fscheck $(BUILD)/user/writetest.elf:/bin/writetest $(BUILD)/user/regtrash.elf:/bin/regtrash $(BUILD)/user/badptr.elf:/bin/badptr $(BUILD)/user/badpath.elf:/bin/badpath $(BUILD)/user/statcheck.elf:/bin/statcheck $(BUILD)/user/procstat.elf:/bin/procstat $(BUILD)/user/spawncheck.elf:/bin/spawncheck $(BUILD)/user/schedcheck.elf:/bin/schedcheck $(BUILD)/user/preemptcheck.elf:/bin/preemptcheck $(BUILD)/user/fdcheck.elf:/bin/fdcheck $(BUILD)/user/isolate.elf:/bin/isolate $(BUILD)/user/fdleak.elf:/bin/fdleak $(BUILD)/user/forkcheck.elf:/bin/forkcheck $(BUILD)/user/procctl.elf:/bin/procctl $(BUILD)/user/execcheck.elf:/bin/execcheck
+	python3 scripts/bin2c.py --out $@ $(BUILD)/user/hello.elf:/bin/hello $(BUILD)/user/fscheck.elf:/bin/fscheck $(BUILD)/user/writetest.elf:/bin/writetest $(BUILD)/user/regtrash.elf:/bin/regtrash $(BUILD)/user/badptr.elf:/bin/badptr $(BUILD)/user/badpath.elf:/bin/badpath $(BUILD)/user/statcheck.elf:/bin/statcheck $(BUILD)/user/procstat.elf:/bin/procstat $(BUILD)/user/spawncheck.elf:/bin/spawncheck $(BUILD)/user/schedcheck.elf:/bin/schedcheck $(BUILD)/user/preemptcheck.elf:/bin/preemptcheck $(BUILD)/user/fdcheck.elf:/bin/fdcheck $(BUILD)/user/isolate.elf:/bin/isolate $(BUILD)/user/fdleak.elf:/bin/fdleak $(BUILD)/user/forkcheck.elf:/bin/forkcheck $(BUILD)/user/procctl.elf:/bin/procctl $(BUILD)/user/execcheck.elf:/bin/execcheck $(BUILD)/user/execfdcheck.elf:/bin/execfdcheck $(BUILD)/user/execvecheck.elf:/bin/execvecheck $(BUILD)/user/exectarget.elf:/bin/exectarget
 
 $(BUILD)/user_bins.o: $(BUILD)/user_bins.c
 	mkdir -p $(dir $@)

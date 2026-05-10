@@ -174,3 +174,13 @@ au_i64 au_execv(const char *path, unsigned int argc, const char *const *argv) {
     au_result_t r = au_syscall3(AU_SYS_EXECV, (au_u64)path, (au_u64)argc, (au_u64)argv);
     return r.error ? r.error : r.value;
 }
+
+au_i64 au_execve(const char *path, unsigned int argc, const char *const *argv, unsigned int envc, const char *const *envp) {
+    au_result_t r = au_syscall6(AU_SYS_EXECVE, (au_u64)path, (au_u64)argc, (au_u64)argv, (au_u64)envc, (au_u64)envp, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_fdctl(au_i64 h, unsigned int op, unsigned int flags) {
+    au_result_t r = au_syscall3(AU_SYS_FDCTL, (au_u64)h, (au_u64)op, (au_u64)flags);
+    return r.error ? r.error : r.value;
+}

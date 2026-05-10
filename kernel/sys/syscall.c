@@ -26,6 +26,7 @@ typedef struct sys_handle {
     u64 size;
     u32 inode;
     u32 fs_id;
+    u32 flags;
 } sys_handle_t;
 
 static sys_handle_t kernel_handles[SYSCALL_MAX_HANDLES];
@@ -49,6 +50,15 @@ usize syscall_user_handle_snapshot_size(void) {
 void syscall_save_user_handles(void *dst, usize dst_size) {
     if (!dst || dst_size < sizeof(user_handles)) return;
     memcpy(dst, user_handles, sizeof(user_handles));
+}
+
+void syscall_close_user_handles_with_flags(u32 flags) {
+    if (!flags) return;
+    for (usize i = 1; i < SYSCALL_MAX_HANDLES; ++i) {
+        if (user_handles[i].used && (user_handles[i].flags & flags)) {
+            memset(&user_handles[i], 0, sizeof(user_handles[i]));
+        }
+    }
 }
 
 bool syscall_load_user_handles(const void *src, usize src_size) {
@@ -322,6 +332,22 @@ static bool copy_argv_vector(u64 argv_ptr, u32 argc, char storage[PROCESS_ARG_MA
     return true;
 }
 
+
+static bool copy_env_vector(u64 env_ptr, u32 envc, char storage[PROCESS_ENV_MAX][SYSCALL_PATH_MAX], const char *envp[PROCESS_ENV_MAX]) {
+    if (envc > PROCESS_ENV_MAX) return false;
+    if (envc == 0) return true;
+    if (!env_ptr) return false;
+    for (u32 i = 0; i < envc; ++i) {
+        u64 item_ptr = 0;
+        u64 slot_ptr = 0;
+        if (!add_user_ptr(env_ptr, (usize)i * sizeof(u64), &slot_ptr) || !copy_in_buf(&item_ptr, slot_ptr, sizeof(item_ptr)) || !item_ptr) return false;
+        if (!copy_string_arg(item_ptr, storage[i], SYSCALL_PATH_MAX)) return false;
+        if (storage[i][0] == 0) return false;
+        envp[i] = storage[i];
+    }
+    return true;
+}
+
 syscall_result_t aurora_sys_spawn(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
@@ -394,6 +420,25 @@ syscall_result_t aurora_sys_execv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
+syscall_result_t aurora_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u64 envc64, u64 envp_ptr) {
+    if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
+    if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr || envc64 > PROCESS_ENV_MAX || (envc64 && !envp_ptr)) return err(VFS_ERR_INVAL);
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    char argv_storage[PROCESS_ARG_MAX][SYSCALL_PATH_MAX];
+    const char *argv[PROCESS_ARG_MAX];
+    char env_storage[PROCESS_ENV_MAX][SYSCALL_PATH_MAX];
+    const char *envp[PROCESS_ENV_MAX];
+    memset(argv_storage, 0, sizeof(argv_storage));
+    memset(argv, 0, sizeof(argv));
+    memset(env_storage, 0, sizeof(env_storage));
+    memset(envp, 0, sizeof(envp));
+    if (!copy_argv_vector(argv_ptr, (u32)argc64, argv_storage, argv)) return err(VFS_ERR_INVAL);
+    if (!copy_env_vector(envp_ptr, (u32)envc64, env_storage, envp)) return err(VFS_ERR_INVAL);
+    process_status_t st = process_request_execve(path, (int)argc64, argv, (int)envc64, envp);
+    return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
+}
+
 syscall_result_t aurora_sys_wait(u64 pid64, u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
     process_info_t info;
@@ -450,7 +495,25 @@ syscall_result_t aurora_sys_dup(u64 handle) {
     if (nh < 0) return err(VFS_ERR_NOSPC);
     handles[(usize)nh] = handles[h];
     handles[(usize)nh].used = true;
+    handles[(usize)nh].flags = handles[h].flags;
     return ok(nh);
+}
+
+syscall_result_t aurora_sys_fdctl(u64 handle, u64 op, u64 flags64) {
+    sys_handle_t *handles = active_handles();
+    usize h = (usize)handle;
+    if (!valid_handle(handles, h) || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    u32 flags = (u32)flags64;
+    if (flags & ~AURORA_FD_CLOEXEC) return err(VFS_ERR_INVAL);
+    switch ((u32)op) {
+        case AURORA_FDCTL_GET:
+            return ok((i64)handles[h].flags);
+        case AURORA_FDCTL_SET:
+            handles[h].flags = flags;
+            return ok((i64)handles[h].flags);
+        default:
+            return err(VFS_ERR_INVAL);
+    }
 }
 
 syscall_result_t aurora_sys_tell(u64 handle) {
@@ -489,6 +552,7 @@ syscall_result_t aurora_sys_fdinfo(u64 handle, u64 out_ptr) {
     info.size = handles[h].size;
     info.inode = handles[h].inode;
     info.fs_id = handles[h].fs_id;
+    info.flags = handles[h].flags;
     strncpy(info.path, handles[h].path, sizeof(info.path) - 1u);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
 }
@@ -586,7 +650,13 @@ bool syscall_selftest(void) {
     if (r.error || fst.type != VFS_NODE_FILE || fst.size != sizeof(seed) - 1u) return false;
     aurora_fdinfo_t fi;
     r = syscall_dispatch(AURORA_SYS_FDINFO, h, (u64)(uptr)&fi, 0, 0, 0, 0);
-    if (r.error || fi.handle != h || strcmp(fi.path, path) != 0) return false;
+    if (r.error || fi.handle != h || strcmp(fi.path, path) != 0 || fi.flags != 0) return false;
+    r = syscall_dispatch(AURORA_SYS_FDCTL, h, AURORA_FDCTL_SET, AURORA_FD_CLOEXEC, 0, 0, 0);
+    if (r.error || r.value != AURORA_FD_CLOEXEC) return false;
+    r = syscall_dispatch(AURORA_SYS_FDCTL, h, AURORA_FDCTL_GET, 0, 0, 0, 0);
+    if (r.error || r.value != AURORA_FD_CLOEXEC) return false;
+    r = syscall_dispatch(AURORA_SYS_FDCTL, h, AURORA_FDCTL_SET, 0, 0, 0, 0);
+    if (r.error || r.value != 0) return false;
     r = syscall_dispatch(AURORA_SYS_DUP, h, 0, 0, 0, 0, 0);
     if (r.error || r.value <= 0 || (u64)r.value == h) return false;
     u64 duph = (u64)r.value;
