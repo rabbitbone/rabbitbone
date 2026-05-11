@@ -134,13 +134,26 @@ static void cmd_ext4(void) {
                 dev->name, part->lba_first, (unsigned long long)mnt.block_size, mnt.group_count, mnt.inodes_per_group);
         ext4_fsck_report_t report;
         ext4_status_t vst = ext4_validate_metadata(&mnt, &report);
-        kprintf("ext4: fsck status=%s groups=%u free_blocks=%llu/%llu free_inodes=%u/%u errors=%u\n",
-                ext4_status_name(vst), report.checked_groups,
+        kprintf("ext4: fsck status=%s groups=%u inodes=%u extent_inodes=%u free_blocks=%llu/%llu free_inodes=%u/%u extent_data=%llu extent_meta=%llu errors=%u\n",
+                ext4_status_name(vst), report.checked_groups, report.checked_inodes, report.extent_inodes,
                 (unsigned long long)report.bitmap_free_blocks, (unsigned long long)report.sb_free_blocks,
-                report.bitmap_free_inodes, report.sb_free_inodes, report.errors);
+                report.bitmap_free_inodes, report.sb_free_inodes,
+                (unsigned long long)report.extent_data_blocks, (unsigned long long)report.extent_metadata_blocks,
+                report.errors);
         ext4_inode_disk_t root;
         st = ext4_read_inode(&mnt, EXT4_ROOT_INO, &root);
         if (st != EXT4_OK) { kprintf("ext4: root inode failed: %s\n", ext4_status_name(st)); return; }
+        ext4_inode_disk_t hello;
+        u32 hello_ino = 0;
+        if (ext4_lookup_path(&mnt, "/hello.txt", &hello, &hello_ino) == EXT4_OK) {
+            ext4_extent_report_t er;
+            ext4_status_t ist = ext4_inspect_inode_extents(&mnt, &hello, &er);
+            if (ist == EXT4_OK && er.uses_extents) {
+                kprintf("ext4: /hello.txt ino=%u extents depth=%u root=%u/%u leaves=%u entries=%u data=%llu meta=%llu errors=%u\n",
+                        hello_ino, er.depth, er.root_entries, er.root_capacity, er.leaf_nodes, er.extent_entries,
+                        (unsigned long long)er.data_blocks, (unsigned long long)er.metadata_blocks, er.errors);
+            }
+        }
         st = ext4_list_dir(&mnt, &root, print_dir_entry_ext4, 0);
         if (st != EXT4_OK) kprintf("ext4: list failed: %s\n", ext4_status_name(st));
         return;

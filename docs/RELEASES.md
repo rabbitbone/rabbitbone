@@ -2,6 +2,18 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.28
+
+Stage 19.5 EXT4 extent-leaf split runtime update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.28` / `0x0000011c`.
+- Added real split support for depth-1 EXT4 indexed extent leaves when a leaf reaches capacity.
+- Indexed extent roots can now reference multiple external leaf blocks, with sorted root indexes and read/write routing across leaf boundaries.
+- Added truncate/unlink coverage for multi-leaf indexed extent files, including metadata leaf block reclamation.
+- Extended EXT4 metadata validation to scan allocated inodes, inspect extent trees, and verify referenced extent data/metadata blocks are actually allocated in the block bitmap.
+- Added CLI EXT4 diagnostics for checked inode counts and extent tree shape/data/metadata block accounting.
+- Extended `ktest` with a 96-sparse-extent runtime stress file that forces leaf split, verifies sparse readback, validates zero-filled holes, truncates across leaves, and checks allocation counters return to baseline after unlink.
+
 ## 0.0.1.27
 
 Stage 19.4 EXT4 indexed-extent runtime update.

@@ -215,11 +215,28 @@ typedef struct ext4_fsck_report {
     u32 sb_free_inodes;
     u32 bitmap_free_inodes;
     u32 checked_groups;
+    u32 checked_inodes;
+    u32 extent_inodes;
+    u64 extent_data_blocks;
+    u64 extent_metadata_blocks;
     u32 errors;
 } ext4_fsck_report_t;
 
+typedef struct ext4_extent_report {
+    bool uses_extents;
+    u16 depth;
+    u16 root_entries;
+    u16 root_capacity;
+    u32 leaf_nodes;
+    u32 extent_entries;
+    u64 data_blocks;
+    u64 metadata_blocks;
+    u32 errors;
+} ext4_extent_report_t;
+
 ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *out);
 ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
+ext4_status_t ext4_inspect_inode_extents(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_extent_report_t *report);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);
 ext4_status_t ext4_read_file(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, u64 offset, void *buffer, usize bytes, usize *read_out);
 ext4_status_t ext4_write_file(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *inode, u64 offset, const void *buffer, usize bytes, usize *written_out);

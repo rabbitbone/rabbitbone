@@ -1,6 +1,6 @@
 # AuroraOS
 
-![Version](https://img.shields.io/badge/version-0.0.1.27-2f6fed)
+![Version](https://img.shields.io/badge/version-0.0.1.28-2f6fed)
 ![Target](https://img.shields.io/badge/target-x86_64%20VMware%20BIOS-222222)
 ![Kernel](https://img.shields.io/badge/kernel-independent-6b46c1)
 ![Written with](https://img.shields.io/badge/written%20with-GPT--5.5-0f766e)
@@ -9,7 +9,7 @@
 
 AuroraOS is an experimental amd64 operating system for VMware Legacy BIOS machines. It is not a Linux distribution, not a Unix clone, and not a bootloader demo. The repository contains the boot path, kernel, filesystem layer, syscall surface, small userland programs, host-side tests, and the tooling needed to build a raw disk image.
 
-The current release line is `0.0.1.27`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline and indexed extents, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
+The current release line is `0.0.1.28`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline extents and split indexed extent leaves, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
 
 ## What is inside
 
@@ -17,7 +17,7 @@ The current release line is `0.0.1.27`. At this point AuroraOS can boot through 
 | --- | --- |
 | Boot | BIOS stage1 and stage2 loader with E820 discovery and COM1 diagnostics |
 | Kernel | x86_64 GDT, IDT, IRQ, paging, heap, VMM, panic/logging, shell |
-| Filesystems | VFS, writable ramfs, devfs, tarfs, writable EXT4 adapter with inline and indexed extent files |
+| Filesystems | VFS, writable ramfs, devfs, tarfs, writable EXT4 adapter with inline, indexed, and split-leaf extent files |
 | Storage | ATA PIO, block layer, MBR parsing, installer-built EXT4 seed partition |
 | User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, small test programs |
 | Processes | process registry, fd model, async spawn, blocking wait/sleep, fork, exec |
@@ -168,7 +168,7 @@ A passing in-kernel run ends with:
 KTEST_STATUS: PASS
 ```
 
-`ktest` covers the kernel libraries, heap, VMM, VFS, ramfs, devfs, tarfs, block layer, MBR reader, EXT4 reader/writer, syscall dispatcher, PIT timer, ELF validation, process paths, user-mode transition, and logging path.
+`ktest` covers the kernel libraries, heap, VMM, VFS, ramfs, devfs, tarfs, block layer, MBR reader, EXT4 reader/writer including multi-leaf extent stress, syscall dispatcher, PIT timer, ELF validation, process paths, user-mode transition, and logging path.
 
 ## Docs
 

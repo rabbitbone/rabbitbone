@@ -490,6 +490,74 @@ static void test_block_mbr_ext4(void) {
     check(indexed_hole_zero, "EXT4 indexed extent hole reads as zero-filled data");
     check(vfs_truncate(indexed_path, 1u) == VFS_OK && vfs_stat(indexed_path, &indexed_st) == VFS_OK && indexed_st.size == 1u, "EXT4 indexed extent file truncates through leaf entries");
     check(vfs_unlink(indexed_path) == VFS_OK, "VFS unlink ext4 indexed extent file");
+
+    const char *split_path = "/disk0/aurora-extent-split.bin";
+    (void)vfs_unlink(split_path);
+    u64 split_free_before = 0;
+    bool split_baseline_ok = false;
+    if (part) {
+        ext4_mount_t before_mnt;
+        ext4_fsck_report_t before_report;
+        split_baseline_ok = ext4_mount(dev, part->lba_first, &before_mnt) == EXT4_OK &&
+                            ext4_validate_metadata(&before_mnt, &before_report) == EXT4_OK &&
+                            before_report.errors == 0;
+        split_free_before = before_report.sb_free_blocks;
+    }
+    check(vfs_create(split_path, 0, 0) == VFS_OK, "VFS create ext4 extent leaf-split stress file");
+    bool split_writes_ok = true;
+    for (u32 i = 0; i < 96u; ++i) {
+        char ch = (char)('a' + (i % 26u));
+        wrote = 0;
+        if (vfs_write(split_path, (u64)i * 8192ull, &ch, 1u, &wrote) != VFS_OK || wrote != 1u) {
+            split_writes_ok = false;
+            break;
+        }
+    }
+    check(split_writes_ok, "EXT4 writes 96 sparse extents and splits indexed leaves");
+    if (part) {
+        ext4_mount_t split_mnt;
+        ext4_inode_disk_t split_inode;
+        u32 split_ino = 0;
+        ext4_extent_report_t split_extents;
+        bool split_tree = ext4_mount(dev, part->lba_first, &split_mnt) == EXT4_OK &&
+                          ext4_lookup_path(&split_mnt, "/aurora-extent-split.bin", &split_inode, &split_ino) == EXT4_OK &&
+                          split_ino != 0 && ext4_inspect_inode_extents(&split_mnt, &split_inode, &split_extents) == EXT4_OK &&
+                          split_extents.uses_extents && split_extents.depth == 1u &&
+                          split_extents.root_entries >= 2u && split_extents.leaf_nodes >= 2u &&
+                          split_extents.extent_entries == 96u && split_extents.data_blocks == 96u &&
+                          split_extents.metadata_blocks >= 2u && split_extents.errors == 0;
+        check(split_tree, "EXT4 indexed extent root tracks multiple leaf blocks after split");
+    } else {
+        skip("EXT4 indexed extent root tracks multiple leaf blocks after split");
+    }
+    bool split_read_ok = true;
+    for (u32 i = 0; i < 96u; i += 19u) {
+        char ch = 0;
+        got = 0;
+        if (vfs_read(split_path, (u64)i * 8192ull, &ch, 1u, &got) != VFS_OK || got != 1u || ch != (char)('a' + (i % 26u))) {
+            split_read_ok = false;
+            break;
+        }
+    }
+    check(split_read_ok, "EXT4 multi-leaf indexed extents read back sparse samples");
+    memset(zeros, 0x5a, sizeof(zeros));
+    got = 0;
+    bool split_hole_zero = vfs_read(split_path, 4096u, zeros, sizeof(zeros), &got) == VFS_OK && got == sizeof(zeros);
+    for (usize zi = 0; zi < sizeof(zeros) && split_hole_zero; ++zi) split_hole_zero = zeros[zi] == 0;
+    check(split_hole_zero, "EXT4 multi-leaf indexed extent holes remain zero-filled");
+    check(vfs_truncate(split_path, 17u) == VFS_OK && vfs_stat(split_path, &indexed_st) == VFS_OK && indexed_st.size == 17u, "EXT4 multi-leaf indexed extent file truncates across leaves");
+    check(vfs_unlink(split_path) == VFS_OK, "VFS unlink ext4 multi-leaf indexed extent file");
+    if (part && split_baseline_ok) {
+        ext4_mount_t after_mnt;
+        ext4_fsck_report_t after_report;
+        bool no_leak = ext4_mount(dev, part->lba_first, &after_mnt) == EXT4_OK &&
+                       ext4_validate_metadata(&after_mnt, &after_report) == EXT4_OK &&
+                       after_report.errors == 0 && after_report.sb_free_blocks == split_free_before;
+        check(no_leak, "EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
+    } else {
+        skip("EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
+    }
+
     check(vfs_unlink(renamed_path) == VFS_OK, "VFS unlink ext4 renamed file");
     if (part) {
         ext4_mount_t final_mnt;

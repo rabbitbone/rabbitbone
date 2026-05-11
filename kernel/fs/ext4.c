@@ -70,6 +70,9 @@ static bool ext4_name_is_dot_or_dotdot(const char *name) { return name && name[0
 static bool bitmap_get(const u8 *bm, u32 bit) { return (bm[bit / 8u] & (u8)(1u << (bit % 8u))) != 0; }
 static void bitmap_set8(u8 *bm, u32 bit) { bm[bit / 8u] |= (u8)(1u << (bit % 8u)); }
 static void bitmap_clear8(u8 *bm, u32 bit) { bm[bit / 8u] &= (u8)~(1u << (bit % 8u)); }
+static u16 extent_inline_capacity(void);
+static u16 extent_root_index_capacity(void);
+static u16 extent_leaf_capacity(ext4_mount_t *mnt);
 
 static ext4_status_t read_bytes(block_device_t *dev, u64 partition_lba, u64 byte_offset, void *buffer, usize bytes) {
     if (!dev || !buffer) return EXT4_ERR_IO;
@@ -219,6 +222,76 @@ u16 ext4_inode_extent_root_entries(const ext4_inode_disk_t *inode) {
     return le16(hdr->eh_entries);
 }
 
+static ext4_status_t inspect_extent_array(ext4_mount_t *mnt, const ext4_extent_header_t *hdr, const ext4_extent_t *ext, ext4_extent_report_t *report) {
+    if (!mnt || !hdr || !ext || !report) return EXT4_ERR_RANGE;
+    u16 entries = le16(hdr->eh_entries);
+    u16 max_entries = le16(hdr->eh_max);
+    if (entries > max_entries) { ++report->errors; return EXT4_ERR_CORRUPT; }
+    u32 prev_end = 0;
+    for (u16 i = 0; i < entries; ++i) {
+        u32 first = le32(ext[i].ee_block);
+        u32 len = extent_len_blocks(&ext[i]);
+        u32 end = 0;
+        if (extent_is_unwritten(&ext[i]) || len == 0 || __builtin_add_overflow(first, len, &end) || (i && first < prev_end)) {
+            ++report->errors;
+            return EXT4_ERR_CORRUPT;
+        }
+        u64 start = extent_start_block(&ext[i]);
+        if (start >= mnt->blocks_count || len > mnt->blocks_count || start + len > mnt->blocks_count) {
+            ++report->errors;
+            return EXT4_ERR_RANGE;
+        }
+        ++report->extent_entries;
+        report->data_blocks += len;
+        prev_end = end;
+    }
+    return EXT4_OK;
+}
+
+ext4_status_t ext4_inspect_inode_extents(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_extent_report_t *report) {
+    if (!mnt || !inode || !report) return EXT4_ERR_RANGE;
+    memset(report, 0, sizeof(*report));
+    report->depth = 0xffffu;
+    if (!ext4_inode_uses_extents(inode)) return EXT4_OK;
+    report->uses_extents = true;
+    const ext4_extent_header_t *root = (const ext4_extent_header_t *)inode->i_block;
+    if (le16(root->eh_magic) != EXT4_EXT_MAGIC) { ++report->errors; return EXT4_ERR_CORRUPT; }
+    report->depth = le16(root->eh_depth);
+    report->root_entries = le16(root->eh_entries);
+    report->root_capacity = le16(root->eh_max);
+    if (report->root_entries > report->root_capacity) { ++report->errors; return EXT4_ERR_CORRUPT; }
+    if (report->depth == 0) {
+        u16 inline_cap = extent_inline_capacity();
+        if (report->root_capacity == 0 || report->root_capacity > inline_cap) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        return inspect_extent_array(mnt, root, (const ext4_extent_t *)(root + 1), report);
+    }
+    if (report->depth != 1u) { ++report->errors; return EXT4_ERR_UNSUPPORTED; }
+    u16 idx_cap = extent_root_index_capacity();
+    if (report->root_capacity == 0 || report->root_capacity > idx_cap) { ++report->errors; return EXT4_ERR_CORRUPT; }
+    const ext4_extent_idx_t *idx = (const ext4_extent_idx_t *)(root + 1);
+    u32 prev_first = 0;
+    for (u16 i = 0; i < report->root_entries; ++i) {
+        u32 first = le32(idx[i].ei_block);
+        u64 leaf_block = le64_from_lo_hi(idx[i].ei_leaf_lo, idx[i].ei_leaf_hi);
+        if (i && first <= prev_first) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        if (leaf_block >= mnt->blocks_count) { ++report->errors; return EXT4_ERR_RANGE; }
+        u8 leaf[MAX_BLOCK_SIZE];
+        ext4_status_t st = read_block(mnt, leaf_block, leaf);
+        if (st != EXT4_OK) return st;
+        ext4_extent_header_t *leaf_hdr = (ext4_extent_header_t *)leaf;
+        if (le16(leaf_hdr->eh_magic) != EXT4_EXT_MAGIC || le16(leaf_hdr->eh_depth) != 0) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        if (le16(leaf_hdr->eh_entries) == 0) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        ext4_extent_t *leaf_ext = (ext4_extent_t *)(leaf_hdr + 1);
+        if (le32(leaf_ext[0].ee_block) != first) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        ++report->leaf_nodes;
+        ++report->metadata_blocks;
+        st = inspect_extent_array(mnt, leaf_hdr, leaf_ext, report);
+        if (st != EXT4_OK) return st;
+        prev_first = first;
+    }
+    return EXT4_OK;
+}
+
 const char *ext4_status_name(ext4_status_t status) {
     switch (status) {
         case EXT4_OK: return "ok";
@@ -234,6 +307,69 @@ const char *ext4_status_name(ext4_status_t status) {
         case EXT4_ERR_NOT_EMPTY: return "not-empty";
         default: return "unknown";
     }
+}
+
+static ext4_status_t block_bitmap_is_allocated(ext4_mount_t *mnt, u64 block, bool *allocated_out) {
+    if (!mnt || !allocated_out || block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    u32 group = (u32)(block / mnt->blocks_per_group);
+    u32 bit = (u32)(block % mnt->blocks_per_group);
+    if (group >= mnt->group_count) return EXT4_ERR_RANGE;
+    ext4_group_desc_disk_t gd;
+    ext4_status_t st = read_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    u8 bm[MAX_BLOCK_SIZE];
+    st = read_block(mnt, group_block_bitmap(&gd), bm);
+    if (st != EXT4_OK) return st;
+    *allocated_out = bitmap_get(bm, bit);
+    return EXT4_OK;
+}
+
+static ext4_status_t validate_extent_array_allocations(ext4_mount_t *mnt, const ext4_extent_header_t *hdr, const ext4_extent_t *ext, ext4_fsck_report_t *report) {
+    if (!mnt || !hdr || !ext || !report) return EXT4_ERR_RANGE;
+    u16 entries = le16(hdr->eh_entries);
+    for (u16 i = 0; i < entries; ++i) {
+        u64 start = extent_start_block(&ext[i]);
+        u32 len = extent_len_blocks(&ext[i]);
+        for (u32 j = 0; j < len; ++j) {
+            bool allocated = false;
+            ext4_status_t st = block_bitmap_is_allocated(mnt, start + j, &allocated);
+            if (st != EXT4_OK) return st;
+            if (!allocated) { ++report->errors; return EXT4_ERR_CORRUPT; }
+            ++report->extent_data_blocks;
+        }
+    }
+    return EXT4_OK;
+}
+
+static ext4_status_t validate_inode_extent_allocations(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_fsck_report_t *report) {
+    if (!mnt || !inode || !report || !ext4_inode_uses_extents(inode)) return EXT4_OK;
+    ext4_extent_report_t er;
+    ext4_status_t st = ext4_inspect_inode_extents(mnt, inode, &er);
+    if (st != EXT4_OK) { ++report->errors; return st; }
+    if (er.errors) { report->errors += er.errors; return EXT4_ERR_CORRUPT; }
+    ++report->extent_inodes;
+    const ext4_extent_header_t *root = (const ext4_extent_header_t *)inode->i_block;
+    if (le16(root->eh_depth) == 0) {
+        return validate_extent_array_allocations(mnt, root, (const ext4_extent_t *)(root + 1), report);
+    }
+    if (le16(root->eh_depth) != 1u) { ++report->errors; return EXT4_ERR_UNSUPPORTED; }
+    const ext4_extent_idx_t *idx = (const ext4_extent_idx_t *)(root + 1);
+    for (u16 i = 0; i < le16(root->eh_entries); ++i) {
+        u64 leaf_block = le64_from_lo_hi(idx[i].ei_leaf_lo, idx[i].ei_leaf_hi);
+        bool allocated = false;
+        st = block_bitmap_is_allocated(mnt, leaf_block, &allocated);
+        if (st != EXT4_OK) return st;
+        if (!allocated) { ++report->errors; return EXT4_ERR_CORRUPT; }
+        ++report->extent_metadata_blocks;
+        u8 leaf[MAX_BLOCK_SIZE];
+        st = read_block(mnt, leaf_block, leaf);
+        if (st != EXT4_OK) return st;
+        const ext4_extent_header_t *leaf_hdr = (const ext4_extent_header_t *)leaf;
+        const ext4_extent_t *leaf_ext = (const ext4_extent_t *)(leaf_hdr + 1);
+        st = validate_extent_array_allocations(mnt, leaf_hdr, leaf_ext, report);
+        if (st != EXT4_OK) return st;
+    }
+    return EXT4_OK;
 }
 
 ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report) {
@@ -280,6 +416,19 @@ ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *repo
         }
         report->bitmap_free_inodes += free_inodes;
         if (free_inodes != gd_free_inodes(&gd)) ++report->errors;
+
+        for (u32 bit = 0; bit < valid_inodes; ++bit) {
+            if (!bitmap_get(bm, bit)) continue;
+            u32 ino = group * mnt->inodes_per_group + bit + 1u;
+            if (ino == 0 || ino > mnt->inodes_count) continue;
+            ext4_inode_disk_t inode;
+            st = ext4_read_inode(mnt, ino, &inode);
+            if (st != EXT4_OK) return st;
+            if (inode.i_mode == 0) continue;
+            ++report->checked_inodes;
+            st = validate_inode_extent_allocations(mnt, &inode, report);
+            if (st != EXT4_OK) return st;
+        }
     }
     if (report->bitmap_free_blocks != report->sb_free_blocks) ++report->errors;
     if (report->bitmap_free_inodes != report->sb_free_inodes) ++report->errors;
@@ -828,37 +977,113 @@ static ext4_status_t extent_promote_inline_to_index(ext4_mount_t *mnt, ext4_inod
     return EXT4_OK;
 }
 
+static void extent_idx_set_leaf(ext4_extent_idx_t *idx, u32 first_logical, u64 leaf_block) {
+    idx->ei_block = first_logical;
+    idx->ei_leaf_lo = (u32)leaf_block;
+    idx->ei_leaf_hi = (u16)(leaf_block >> 32);
+    idx->ei_unused = 0;
+}
+
+static ext4_status_t extent_index_choose_leaf(ext4_extent_header_t *root, ext4_extent_idx_t *idx, u32 logical, bool allocate, u16 *chosen_out) {
+    if (!root || !idx || !chosen_out) return EXT4_ERR_RANGE;
+    u16 entries = le16(root->eh_entries);
+    if (entries == 0) return allocate ? EXT4_ERR_UNSUPPORTED : EXT4_ERR_RANGE;
+    bool found = false;
+    u16 chosen = 0;
+    for (u16 i = 0; i < entries; ++i) {
+        if (logical >= le32(idx[i].ei_block)) { chosen = i; found = true; }
+        else break;
+    }
+    if (!found) {
+        if (!allocate) return EXT4_ERR_RANGE;
+        chosen = 0;
+    }
+    *chosen_out = chosen;
+    return EXT4_OK;
+}
+
+static ext4_status_t extent_index_split_leaf(ext4_mount_t *mnt, ext4_inode_disk_t *inode, ext4_extent_header_t *root, ext4_extent_idx_t *idx, u16 chosen, u8 *leaf) {
+    (void)inode;
+    if (!mnt || !root || !idx || !leaf) return EXT4_ERR_RANGE;
+    u16 root_entries = le16(root->eh_entries);
+    u16 root_max = le16(root->eh_max);
+    if (chosen >= root_entries) return EXT4_ERR_RANGE;
+    if (root_entries >= root_max) return EXT4_ERR_UNSUPPORTED;
+
+    ext4_extent_header_t *old_hdr = 0;
+    ext4_extent_t *old_ext = 0;
+    ext4_status_t st = extent_leaf_validate(mnt, leaf, &old_hdr, &old_ext);
+    if (st != EXT4_OK) return st;
+    u16 old_entries = le16(old_hdr->eh_entries);
+    if (old_entries < 2u) return EXT4_ERR_CORRUPT;
+
+    u16 split = (u16)(old_entries / 2u);
+    if (split == 0 || split >= old_entries) return EXT4_ERR_CORRUPT;
+
+    u64 new_leaf_block = 0;
+    st = alloc_block(mnt, &new_leaf_block);
+    if (st != EXT4_OK) return st;
+
+    u8 new_leaf[MAX_BLOCK_SIZE];
+    memset(new_leaf, 0, (usize)mnt->block_size);
+    ext4_extent_header_t *new_hdr = (ext4_extent_header_t *)new_leaf;
+    ext4_extent_t *new_ext = (ext4_extent_t *)(new_hdr + 1);
+    new_hdr->eh_magic = EXT4_EXT_MAGIC;
+    new_hdr->eh_entries = (u16)(old_entries - split);
+    new_hdr->eh_max = extent_leaf_capacity(mnt);
+    new_hdr->eh_depth = 0;
+    new_hdr->eh_generation = 0;
+    for (u16 i = 0; i < new_hdr->eh_entries; ++i) new_ext[i] = old_ext[split + i];
+    memset(&old_ext[split], 0, (usize)(old_entries - split) * sizeof(ext4_extent_t));
+    old_hdr->eh_entries = split;
+
+    st = extent_leaf_validate(mnt, leaf, &old_hdr, &old_ext);
+    if (st != EXT4_OK) { (void)free_block(mnt, new_leaf_block); return st; }
+    st = extent_leaf_validate(mnt, new_leaf, &new_hdr, &new_ext);
+    if (st != EXT4_OK) { (void)free_block(mnt, new_leaf_block); return st; }
+
+    st = write_block(mnt, le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi), leaf);
+    if (st != EXT4_OK) { (void)free_block(mnt, new_leaf_block); return st; }
+    st = write_block(mnt, new_leaf_block, new_leaf);
+    if (st != EXT4_OK) { (void)free_block(mnt, new_leaf_block); return st; }
+
+    for (u16 i = root_entries; i > chosen + 1u; --i) idx[i] = idx[i - 1u];
+    extent_idx_set_leaf(&idx[chosen], le32(old_ext[0].ee_block), le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi));
+    extent_idx_set_leaf(&idx[chosen + 1u], le32(new_ext[0].ee_block), new_leaf_block);
+    root->eh_entries = root_entries + 1u;
+    inode_add_blocks(mnt, inode, 1);
+    return EXT4_OK;
+}
+
 static ext4_status_t extent_index_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
     ext4_extent_header_t *root = 0;
     ext4_extent_idx_t *idx = 0;
     ext4_status_t st = extent_index_validate(mnt, inode, &root, &idx);
     if (st != EXT4_OK) return st;
-    u16 entries = le16(root->eh_entries);
-    if (entries == 0) return allocate ? EXT4_ERR_UNSUPPORTED : EXT4_ERR_RANGE;
-    u16 chosen = 0;
-    if (entries > 1u) {
-        bool found = false;
-        for (u16 i = 0; i < entries; ++i) {
-            if (logical >= le32(idx[i].ei_block)) { chosen = i; found = true; }
-            else break;
+
+    for (u8 attempt = 0; attempt < 2u; ++attempt) {
+        u16 chosen = 0;
+        st = extent_index_choose_leaf(root, idx, logical, allocate, &chosen);
+        if (st != EXT4_OK) return st;
+        u64 leaf_block = le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi);
+        u8 leaf[MAX_BLOCK_SIZE];
+        st = read_block(mnt, leaf_block, leaf);
+        if (st != EXT4_OK) return st;
+        ext4_extent_header_t *leaf_hdr = 0;
+        ext4_extent_t *leaf_ext = 0;
+        st = extent_leaf_validate(mnt, leaf, &leaf_hdr, &leaf_ext);
+        if (st != EXT4_OK) return st;
+        st = extent_array_block_for_write(mnt, inode, leaf_hdr, leaf_ext, logical, phys_out, allocate);
+        if (st == EXT4_OK) {
+            if (le16(leaf_hdr->eh_entries) > 0) idx[chosen].ei_block = le32(leaf_ext[0].ee_block);
+            return write_block(mnt, leaf_block, leaf);
         }
-        if (!found) {
-            if (!allocate) return EXT4_ERR_RANGE;
-            chosen = 0;
-        }
+        if (st != EXT4_ERR_UNSUPPORTED || !allocate) return st;
+        if (le16(leaf_hdr->eh_entries) < le16(leaf_hdr->eh_max)) return st;
+        st = extent_index_split_leaf(mnt, inode, root, idx, chosen, leaf);
+        if (st != EXT4_OK) return st;
     }
-    u64 leaf_block = le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi);
-    u8 leaf[MAX_BLOCK_SIZE];
-    st = read_block(mnt, leaf_block, leaf);
-    if (st != EXT4_OK) return st;
-    ext4_extent_header_t *leaf_hdr = 0;
-    ext4_extent_t *leaf_ext = 0;
-    st = extent_leaf_validate(mnt, leaf, &leaf_hdr, &leaf_ext);
-    if (st != EXT4_OK) return st;
-    st = extent_array_block_for_write(mnt, inode, leaf_hdr, leaf_ext, logical, phys_out, allocate);
-    if (st != EXT4_OK) return st;
-    if (le16(leaf_hdr->eh_entries) > 0) idx[chosen].ei_block = le32(leaf_ext[0].ee_block);
-    return write_block(mnt, leaf_block, leaf);
+    return EXT4_ERR_UNSUPPORTED;
 }
 
 static ext4_status_t extent_inline_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
