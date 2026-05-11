@@ -15,7 +15,7 @@
 #include <aurora/panic.h>
 #include <aurora/tty.h>
 
-#define SYSCALL_MAX_HANDLES 32u
+#define SYSCALL_MAX_HANDLES AURORA_PROCESS_HANDLE_CAP
 #define SYSCALL_PATH_MAX VFS_PATH_MAX
 #define SYSCALL_IO_CHUNK 4096u
 #define SYSCALL_MAX_IO_BYTES (1024u * 1024u)

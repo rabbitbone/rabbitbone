@@ -2,6 +2,16 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.26
+
+Stage 19.3 EXT4 extent-write runtime update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.26` / `0x0000011a`.
+- Added inline EXT4 extent trees for newly-created regular files and made VFS create/write/truncate/unlink operate on those inodes.
+- Added sparse EXT4 growth semantics: gap writes and expanding truncate keep holes unallocated while reads return zero-filled data.
+- Added EXT4 metadata validation that cross-checks group descriptors, allocation bitmaps, and superblock counters.
+- Extended `ktest` coverage for extent-backed files, sparse writes, sparse truncation, metadata consistency before/after mutation tests, and CLI `ext4` fsck reporting.
+
 ## 0.0.1.25
 
 Stage 19.1 EXT4 mutation runtime update.

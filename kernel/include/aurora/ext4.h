@@ -10,6 +10,9 @@ extern "C" {
 #define EXT4_N_BLOCKS 15u
 #define EXT4_NAME_LEN 255u
 #define EXT4_ROOT_INO 2u
+#define EXT4_INODE_FLAG_EXTENTS 0x00080000u
+
+#define EXT4_EXTENT_MAGIC 0xf30au
 
 typedef enum ext4_status {
     EXT4_OK = 0,
@@ -206,7 +209,17 @@ typedef struct ext4_dirent {
 
 typedef bool (*ext4_dir_iter_fn)(const ext4_dirent_t *entry, void *ctx);
 
+typedef struct ext4_fsck_report {
+    u64 sb_free_blocks;
+    u64 bitmap_free_blocks;
+    u32 sb_free_inodes;
+    u32 bitmap_free_inodes;
+    u32 checked_groups;
+    u32 errors;
+} ext4_fsck_report_t;
+
 ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *out);
+ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);
 ext4_status_t ext4_read_file(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, u64 offset, void *buffer, usize bytes, usize *read_out);
 ext4_status_t ext4_write_file(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *inode, u64 offset, const void *buffer, usize bytes, usize *written_out);

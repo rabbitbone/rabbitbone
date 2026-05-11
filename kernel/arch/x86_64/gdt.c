@@ -37,6 +37,8 @@ static u8 ist_stacks[3][IST_STACK_SIZE] __attribute__((aligned(16)));
 static void *dynamic_kernel_stack;
 static void *dynamic_ist_stacks[3];
 
+static uptr align_down16(uptr v) { return v & ~(uptr)0xfull; }
+
 static u64 make_tss_low(uptr base, u32 limit) {
     u64 desc = 0;
     desc |= (u64)(limit & 0xffffu);
@@ -52,12 +54,12 @@ void gdt_set_kernel_stack(uptr rsp0) {
 }
 
 uptr gdt_kernel_stack_top(void) {
-    return (uptr)(kernel_priv_stack + sizeof(kernel_priv_stack));
+    return align_down16((uptr)(kernel_priv_stack + sizeof(kernel_priv_stack)));
 }
 
 uptr gdt_ist_top(u8 index) {
     if (index == 0 || index > 3) return 0;
-    return (uptr)(ist_stacks[index - 1u] + IST_STACK_SIZE);
+    return align_down16((uptr)(ist_stacks[index - 1u] + IST_STACK_SIZE));
 }
 
 void gdt_set_ist(u8 index, uptr rsp) {
@@ -92,10 +94,10 @@ bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
     dynamic_ist_stacks[0] = ist0;
     dynamic_ist_stacks[1] = ist1;
     dynamic_ist_stacks[2] = ist2;
-    gdt_set_kernel_stack((uptr)ring0 + ring0_size);
-    gdt_set_ist(1, (uptr)ist0 + ist_size);
-    gdt_set_ist(2, (uptr)ist1 + ist_size);
-    gdt_set_ist(3, (uptr)ist2 + ist_size);
+    gdt_set_kernel_stack(align_down16((uptr)ring0 + ring0_size));
+    gdt_set_ist(1, align_down16((uptr)ist0 + ist_size));
+    gdt_set_ist(2, align_down16((uptr)ist1 + ist_size));
+    gdt_set_ist(3, align_down16((uptr)ist2 + ist_size));
     KLOG(LOG_INFO, "gdt", "installed heap-backed stacks rsp0=%p ist=%llu", (void *)tss.rsp0, (unsigned long long)ist_size);
     return true;
 }

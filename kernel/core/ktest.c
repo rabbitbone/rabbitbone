@@ -367,6 +367,8 @@ static void test_block_mbr_ext4(void) {
         check(est == EXT4_OK, "EXT4 raw mount first Linux partition");
         if (est == EXT4_OK) {
             ext4_inode_disk_t root;
+            ext4_fsck_report_t report;
+            check(ext4_validate_metadata(&mnt, &report) == EXT4_OK && report.errors == 0 && report.checked_groups == mnt.group_count, "EXT4 metadata counters match allocation bitmaps");
             check(ext4_read_inode(&mnt, EXT4_ROOT_INO, &root) == EXT4_OK && ext4_inode_is_dir(&root), "EXT4 root inode is directory");
             seen_name_ctx_t hello_seen = { "hello.txt", false };
             check(ext4_list_dir(&mnt, &root, ext4_seen_name, &hello_seen) == EXT4_OK && hello_seen.seen, "EXT4 root directory iteration finds hello.txt");
@@ -388,6 +390,18 @@ static void test_block_mbr_ext4(void) {
     const char rw_payload[] = "Aurora EXT4 write path survives VFS create/write/read/unlink";
     (void)vfs_unlink(rw_path);
     check(vfs_create(rw_path, rw_payload, sizeof(rw_payload) - 1u) == VFS_OK, "VFS create /disk0 file through ext4 writer");
+    if (part) {
+        ext4_mount_t verify_mnt;
+        ext4_inode_disk_t created_inode;
+        u32 created_ino = 0;
+        bool extent_file = ext4_mount(dev, part->lba_first, &verify_mnt) == EXT4_OK &&
+                           ext4_lookup_path(&verify_mnt, "/aurora-rw.txt", &created_inode, &created_ino) == EXT4_OK &&
+                           created_ino != 0 && (created_inode.i_flags & EXT4_INODE_FLAG_EXTENTS) != 0 &&
+                           ((const u16 *)created_inode.i_block)[0] == EXT4_EXTENT_MAGIC;
+        check(extent_file, "EXT4 writer creates regular files with inline extent tree");
+    } else {
+        skip("EXT4 writer creates regular files with inline extent tree");
+    }
     memset(text, 0, sizeof(text));
     got = 0;
     check(vfs_read(rw_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == sizeof(rw_payload) - 1u && strstr(text, "EXT4 write") != 0, "VFS read back ext4-created file");
@@ -416,7 +430,36 @@ static void test_block_mbr_ext4(void) {
     check(vfs_unlink("/disk0/aurora-dir") == VFS_ERR_NOTEMPTY, "VFS rejects unlink non-empty ext4 dir");
     check(vfs_unlink("/disk0/aurora-dir/child.txt") == VFS_OK, "VFS unlink ext4 child");
     check(vfs_unlink("/disk0/aurora-dir") == VFS_OK, "VFS unlink empty ext4 dir");
+
+    const char *sparse_path = "/disk0/aurora-sparse.bin";
+    (void)vfs_unlink(sparse_path);
+    check(vfs_create(sparse_path, 0, 0) == VFS_OK, "VFS create empty ext4 extent file");
+    const char tail[] = "tail";
+    wrote = 0;
+    check(vfs_write(sparse_path, 12288u + 5u, tail, sizeof(tail) - 1u, &wrote) == VFS_OK && wrote == sizeof(tail) - 1u, "VFS sparse ext4 write beyond EOF");
+    vfs_stat_t sparse_st;
+    check(vfs_stat(sparse_path, &sparse_st) == VFS_OK && sparse_st.size == 12288u + 5u + sizeof(tail) - 1u, "VFS sparse ext4 stat after gap write");
+    char zeros[32];
+    memset(zeros, 0x5a, sizeof(zeros));
+    got = 0;
+    bool zero_gap = vfs_read(sparse_path, 0, zeros, sizeof(zeros), &got) == VFS_OK && got == sizeof(zeros);
+    for (usize zi = 0; zi < sizeof(zeros) && zero_gap; ++zi) zero_gap = zeros[zi] == 0;
+    check(zero_gap, "EXT4 sparse hole reads back as zero-filled data");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(sparse_path, 12288u + 5u, text, sizeof(tail) - 1u, &got) == VFS_OK && got == sizeof(tail) - 1u && memcmp(text, tail, sizeof(tail) - 1u) == 0, "EXT4 sparse tail data survives readback");
+    check(vfs_truncate(sparse_path, 1u) == VFS_OK && vfs_stat(sparse_path, &sparse_st) == VFS_OK && sparse_st.size == 1u, "EXT4 sparse extent file truncates smaller");
+    check(vfs_unlink(sparse_path) == VFS_OK, "VFS unlink ext4 sparse extent file");
     check(vfs_unlink(renamed_path) == VFS_OK, "VFS unlink ext4 renamed file");
+    if (part) {
+        ext4_mount_t final_mnt;
+        ext4_fsck_report_t final_report;
+        bool final_ok = ext4_mount(dev, part->lba_first, &final_mnt) == EXT4_OK &&
+                        ext4_validate_metadata(&final_mnt, &final_report) == EXT4_OK && final_report.errors == 0;
+        check(final_ok, "EXT4 metadata remains consistent after mutation tests");
+    } else {
+        skip("EXT4 metadata remains consistent after mutation tests");
+    }
     suite_end();
 }
 

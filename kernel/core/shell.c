@@ -132,6 +132,12 @@ static void cmd_ext4(void) {
         }
         kprintf("ext4: mounted %s lba=%u block=%llu groups=%u inodes/group=%u\n",
                 dev->name, part->lba_first, (unsigned long long)mnt.block_size, mnt.group_count, mnt.inodes_per_group);
+        ext4_fsck_report_t report;
+        ext4_status_t vst = ext4_validate_metadata(&mnt, &report);
+        kprintf("ext4: fsck status=%s groups=%u free_blocks=%llu/%llu free_inodes=%u/%u errors=%u\n",
+                ext4_status_name(vst), report.checked_groups,
+                (unsigned long long)report.bitmap_free_blocks, (unsigned long long)report.sb_free_blocks,
+                report.bitmap_free_inodes, report.sb_free_inodes, report.errors);
         ext4_inode_disk_t root;
         st = ext4_read_inode(&mnt, EXT4_ROOT_INO, &root);
         if (st != EXT4_OK) { kprintf("ext4: root inode failed: %s\n", ext4_status_name(st)); return; }
