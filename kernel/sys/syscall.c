@@ -80,10 +80,25 @@ static sys_handle_t kernel_handles[SYSCALL_MAX_HANDLES];
 static sys_handle_t user_handles[SYSCALL_MAX_HANDLES];
 static sys_file_t *files;
 static sys_pipe_t pipes[SYSCALL_PIPE_CAP];
+
+#define SYSCALL_USER_LOG_SLOTS 32u
+#define SYSCALL_USER_LOG_WINDOW_TICKS 64ull
+#define SYSCALL_USER_LOG_BURST 8u
+
+typedef struct sys_user_log_state {
+    bool used;
+    u32 pid;
+    u64 window_start;
+    u32 count;
+    u32 suppressed;
+} sys_user_log_state_t;
+
+static sys_user_log_state_t user_log_states[SYSCALL_USER_LOG_SLOTS];
 static u32 next_file_id = 1u;
 static u32 next_pipe_id = 1u;
 static spinlock_t file_table_lock;
 static spinlock_t pipe_table_lock;
+static spinlock_t user_log_lock;
 static bool initialized;
 AURORA_STATIC_ASSERT(user_handle_snapshot_fits, sizeof(user_handles) <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
 
@@ -198,8 +213,10 @@ void syscall_init(void) {
     }
     memset(files, 0, sizeof(sys_file_t) * SYSCALL_FILE_CAP);
     memset(pipes, 0, sizeof(pipes));
+    memset(user_log_states, 0, sizeof(user_log_states));
     spinlock_init(&file_table_lock);
     spinlock_init(&pipe_table_lock);
+    spinlock_init(&user_log_lock);
     next_file_id = 1u;
     next_pipe_id = 1u;
     initialized = true;
@@ -630,7 +647,7 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
         u32 mode = tty_get_mode();
         while (total < len) {
             char c = 0;
-            if (!keyboard_getc(&c)) break;
+            if (!tty_read_char(&c)) break;
             if ((mode & AURORA_TTY_MODE_ECHO) && c >= 32) console_putc(c);
             if ((mode & AURORA_TTY_MODE_ECHO) && c == '\n') console_putc('\n');
             u64 ptr = 0;
@@ -644,12 +661,13 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
     if (handles[h].kind == SYS_HANDLE_PIPE_READ) {
         sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
         if (!p) return err(VFS_ERR_NOENT);
-        while (total < len && p->len > 0) {
+        while (total < len) {
             usize n = len - total;
             if (n > sizeof(chunk)) n = sizeof(chunk);
             usize got = pipe_read_bytes(p, chunk, n);
+            if (!got) break;
             u64 ptr = 0;
-            if (got && (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got))) return err(VFS_ERR_INVAL);
+            if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got)) return err(VFS_ERR_INVAL);
             handles[h].offset += got;
             total += got;
             if (got < n) break;
@@ -698,12 +716,13 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
     if (handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
         sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
         if (!p) return err(VFS_ERR_NOENT);
-        while (total < len && p->len < SYSCALL_PIPE_BUFFER) {
+        while (total < len) {
             usize n = len - total;
             if (n > sizeof(chunk)) n = sizeof(chunk);
             u64 ptr = 0;
             if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
             usize wrote = pipe_write_bytes(p, chunk, n);
+            if (!wrote) break;
             handles[h].offset += wrote;
             total += wrote;
             if (wrote < n) break;
@@ -1181,12 +1200,15 @@ syscall_result_t aurora_sys_fstat(u64 handle, u64 out_ptr) {
     if (handles[h].kind == SYS_HANDLE_PIPE_READ || handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
         sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
         if (!p) return err(VFS_ERR_NOENT);
+        aurora_pipeinfo_t snap;
+        memset(&snap, 0, sizeof(snap));
+        pipe_snapshot(p, &snap);
         st.type = VFS_NODE_DEV;
-        st.size = p->len;
+        st.size = snap.bytes_available;
         st.mode = handles[h].kind == SYS_HANDLE_PIPE_READ ? 0400u : 0200u;
-        st.inode = p->id;
+        st.inode = snap.pipe_id;
         st.fs_id = handles[h].fs_id;
-        handles[h].size = p->len;
+        handles[h].size = snap.bytes_available;
         return copy_out_buf(out_ptr, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
     }
     sys_file_t *f = handle_file(&handles[h]);
@@ -1212,8 +1234,11 @@ syscall_result_t aurora_sys_fdinfo(u64 handle, u64 out_ptr) {
     if (handles[h].kind == SYS_HANDLE_PIPE_READ || handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
         sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
         if (!p) return err(VFS_ERR_NOENT);
-        handles[h].size = p->len;
-        handles[h].inode = p->id;
+        aurora_pipeinfo_t snap;
+        memset(&snap, 0, sizeof(snap));
+        pipe_snapshot(p, &snap);
+        handles[h].size = snap.bytes_available;
+        handles[h].inode = snap.pipe_id;
     }
     aurora_fdinfo_t info;
     memset(&info, 0, sizeof(info));
@@ -1329,10 +1354,52 @@ syscall_result_t aurora_sys_fork(void) {
     return ok(0);
 }
 
+static bool user_log_permit(u32 pid, u32 *suppressed_out) {
+    if (suppressed_out) *suppressed_out = 0;
+    if (!pid) return true;
+    u64 now = pit_ticks();
+    u64 flags = spin_lock_irqsave(&user_log_lock);
+    sys_user_log_state_t *slot = 0;
+    sys_user_log_state_t *free_slot = 0;
+    for (usize i = 0; i < SYSCALL_USER_LOG_SLOTS; ++i) {
+        if (user_log_states[i].used && user_log_states[i].pid == pid) { slot = &user_log_states[i]; break; }
+        if (!user_log_states[i].used && !free_slot) free_slot = &user_log_states[i];
+    }
+    if (!slot) {
+        slot = free_slot ? free_slot : &user_log_states[pid % SYSCALL_USER_LOG_SLOTS];
+        memset(slot, 0, sizeof(*slot));
+        slot->used = true;
+        slot->pid = pid;
+        slot->window_start = now;
+    }
+    if (now - slot->window_start >= SYSCALL_USER_LOG_WINDOW_TICKS) {
+        if (suppressed_out) *suppressed_out = slot->suppressed;
+        slot->window_start = now;
+        slot->count = 0;
+        slot->suppressed = 0;
+    }
+    bool permit = false;
+    if (slot->count < SYSCALL_USER_LOG_BURST) {
+        ++slot->count;
+        permit = true;
+    } else {
+        ++slot->suppressed;
+    }
+    spin_unlock_irqrestore(&user_log_lock, flags);
+    return permit;
+}
+
 syscall_result_t aurora_sys_log(u64 msg_ptr) {
     char msg[160];
     if (!copy_string_arg(msg_ptr, msg, sizeof(msg))) return err(VFS_ERR_INVAL);
-    KLOG(LOG_INFO, "usersys", "%s", msg);
+    u32 pid = process_current_pid();
+    u32 suppressed = 0;
+    if (!user_log_permit(pid, &suppressed)) return ok(0);
+    process_info_t info;
+    const char *name = "kernel";
+    if (process_current_info(&info) && info.name[0]) name = info.name;
+    if (suppressed) KLOG(LOG_WARN, "usersys", "pid=%u name=%s suppressed=%u log messages", pid, name, suppressed);
+    KLOG(LOG_INFO, "usersys", "pid=%u name=%s %s", pid, name, msg);
     return ok(0);
 }
 
@@ -1377,6 +1444,37 @@ bool syscall_selftest(void) {
     static const char stdiomsg[] = "";
     r = syscall_dispatch(AURORA_SYS_WRITE, AURORA_STDOUT, (u64)(uptr)stdiomsg, 0, 0, 0, 0);
     if (r.error || r.value != 0) return false;
+
+    u64 edge_fds[AURORA_PROCESS_HANDLE_CAP - 3u];
+    memset(edge_fds, 0, sizeof(edge_fds));
+    for (usize i = 0; i < AURORA_ARRAY_LEN(edge_fds); ++i) {
+        r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"/dev/null", 0, 0, 0, 0, 0);
+        if (r.error || r.value != (i64)(i + 3u)) return false;
+        edge_fds[i] = (u64)r.value;
+    }
+    if (edge_fds[29] != 32u || edge_fds[30] != 33u) return false;
+    aurora_fdinfo_t edge_info;
+    memset(&edge_info, 0, sizeof(edge_info));
+    r = syscall_dispatch(AURORA_SYS_FDINFO, 32u, (u64)(uptr)&edge_info, 0, 0, 0, 0);
+    if (r.error || edge_info.handle != 32u) return false;
+    memset(&edge_info, 0, sizeof(edge_info));
+    r = syscall_dispatch(AURORA_SYS_FDINFO, 33u, (u64)(uptr)&edge_info, 0, 0, 0, 0);
+    if (r.error || edge_info.handle != 33u) return false;
+    r = syscall_dispatch(AURORA_SYS_CLOSE, 32u, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_CLOSE, 33u, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_DUP2, edge_fds[0], 33u, AURORA_FD_CLOEXEC, 0, 0, 0);
+    if (r.error || r.value != 33) return false;
+    memset(&edge_info, 0, sizeof(edge_info));
+    r = syscall_dispatch(AURORA_SYS_FDINFO, 33u, (u64)(uptr)&edge_info, 0, 0, 0, 0);
+    if (r.error || edge_info.handle != 33u || !(edge_info.flags & AURORA_FD_CLOEXEC)) return false;
+    r = syscall_dispatch(AURORA_SYS_CLOSE, 33u, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    for (usize i = 0; i < 29u; ++i) {
+        r = syscall_dispatch(AURORA_SYS_CLOSE, edge_fds[i], 0, 0, 0, 0, 0);
+        if (r.error) return false;
+    }
 
     const char *path = "/tmp/syscall-selftest.txt";
     (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)path, 0, 0, 0, 0, 0);

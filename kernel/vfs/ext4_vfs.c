@@ -157,7 +157,7 @@ vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {
         if (!part) continue;
         ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)kcalloc(1, sizeof(*ctx));
         if (!ctx) return VFS_ERR_NOMEM;
-        ext4_status_t st = ext4_mount(dev, part->lba_first, &ctx->mount);
+        ext4_status_t st = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &ctx->mount);
         if (st != EXT4_OK) {
             KLOG(LOG_WARN, "ext4vfs", "mount %s failed: %s", dev->name, ext4_status_name(st));
             kfree(ctx);

@@ -79,20 +79,20 @@ const VFS_ERR_UNSUPPORTED: i64 = -11;
 const MAX_CONSOLE_WRITE: u64 = 65_536;
 const MAX_IO_BYTES: u64 = 1_048_576;
 const MAX_CREATE_BYTES: u64 = 65_536;
-const MAX_HANDLES: u64 = 32;
+const MAX_HANDLES: u64 = crate::abi::AURORA_PROCESS_HANDLE_CAP;
 const MAX_SLEEP_TICKS: u64 = 10_000;
 const MAX_PROCESS_ARGS: u64 = 8;
-const MAX_PROCESS_ENVS: u64 = 8;
-const FD_CLOEXEC: u64 = 1;
-const FDCTL_GET: u64 = 0;
-const FDCTL_SET: u64 = 1;
-const POLL_READ: u64 = 1;
-const POLL_WRITE: u64 = 2;
-const POLL_HUP: u64 = 4;
-const TTY_MODE_RAW: u64 = 1;
-const TTY_MODE_ECHO: u64 = 2;
-const TTY_MODE_CANON: u64 = 4;
-const TTY_READ_NONBLOCK: u64 = 1;
+const MAX_PROCESS_ENVS: u64 = crate::abi::AURORA_ENV_MAX;
+const FD_CLOEXEC: u64 = crate::abi::AURORA_FD_CLOEXEC;
+const FDCTL_GET: u64 = crate::abi::AURORA_FDCTL_GET;
+const FDCTL_SET: u64 = crate::abi::AURORA_FDCTL_SET;
+const POLL_READ: u64 = crate::abi::AURORA_POLL_READ;
+const POLL_WRITE: u64 = crate::abi::AURORA_POLL_WRITE;
+const POLL_HUP: u64 = crate::abi::AURORA_POLL_HUP;
+const TTY_MODE_RAW: u64 = crate::abi::AURORA_TTY_MODE_RAW;
+const TTY_MODE_ECHO: u64 = crate::abi::AURORA_TTY_MODE_ECHO;
+const TTY_MODE_CANON: u64 = crate::abi::AURORA_TTY_MODE_CANON;
+const TTY_READ_NONBLOCK: u64 = crate::abi::AURORA_TTY_READ_NONBLOCK;
 
 impl SyscallNo {
     pub const fn decode(raw: u64) -> Result<Self, DecodeError> {
@@ -455,6 +455,10 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::SchedInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::PreemptInfo, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::PreemptInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Dup, SysArgs { a0: MAX_HANDLES - 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Close, SysArgs { a0: MAX_HANDLES - 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::FdInfo, SysArgs { a0: MAX_HANDLES - 1, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Dup2, SysArgs { a0: 1, a1: MAX_HANDLES - 1, a2: FD_CLOEXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Dup, SysArgs { a0: MAX_HANDLES, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Dup, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::FdCtl, SysArgs { a0: 1, a1: FDCTL_SET, a2: FD_CLOEXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }

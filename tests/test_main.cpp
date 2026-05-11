@@ -373,6 +373,8 @@ static void test_ext4_corrupt_inputs() {
     dev.read = mem_read;
     dev.write = mem_write;
     ext4_mount_t mnt;
+    require(ext4_mount_bounded(&dev, 0, 120, &mnt) == EXT4_ERR_RANGE, "ext4 bounded mount rejects filesystem larger than partition");
+    require(ext4_mount_bounded(&dev, dev.sector_count - 4, 8, &mnt) == EXT4_ERR_RANGE, "ext4 bounded mount rejects partition beyond device");
     require(ext4_mount(&dev, 0, &mnt) == EXT4_OK, "ext4 corrupt extent base mount");
     ext4_inode_disk_t inode{};
     inode.i_mode = 0x8000;

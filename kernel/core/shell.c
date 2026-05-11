@@ -76,9 +76,11 @@ static void print_help(void) {
     kprintf("  schedtest         run cooperative task scheduler self-test\n");
     kprintf("  elf PATH          parse/load ELF64 image from VFS without executing\n");
     kprintf("  userbins          validate embedded /bin ELF payloads\n");
+#ifdef AURORA_DEBUG_SHELL
     kprintf("  panic             trigger test panic\n");
     kprintf("  reboot            reboot through keyboard controller\n");
     kprintf("  halt              halt CPU\n");
+#endif
     kprintf("  echo TEXT         print TEXT\n");
 }
 
@@ -122,10 +124,10 @@ static void cmd_ext4(void) {
         block_device_t *dev = block_get(i);
         mbr_table_t mbr;
         if (!mbr_read(dev, &mbr)) continue;
-        const mbr_partition_t *part = mbr_find_linux(&mbr);
+        const mbr_partition_t *part = mbr_find_linux_on_device(dev, &mbr);
         if (!part) continue;
         ext4_mount_t mnt;
-        ext4_status_t st = ext4_mount(dev, part->lba_first, &mnt);
+        ext4_status_t st = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &mnt);
         if (st != EXT4_OK) {
             kprintf("ext4: mount failed on %s: %s\n", dev->name, ext4_status_name(st));
             return;
@@ -559,9 +561,11 @@ static void execute(char *line) {
     else if (strcmp(line, "schedtest") == 0) kprintf("task selftest: %s\n", task_selftest() ? "ok" : "failed");
     else if (strcmp(line, "elf") == 0) cmd_elf(arg);
     else if (strcmp(line, "userbins") == 0) kprintf("user bins: %s\n", user_bins_selftest() ? "ok" : "failed");
+#ifdef AURORA_DEBUG_SHELL
     else if (strcmp(line, "panic") == 0) PANIC("manual panic requested from shell");
     else if (strcmp(line, "reboot") == 0) cpu_reboot();
     else if (strcmp(line, "halt") == 0) cpu_halt_forever();
+#endif
     else if (strcmp(line, "echo") == 0) kprintf("%s\n", arg);
     else kprintf("unknown command: %s\n", line);
 }

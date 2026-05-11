@@ -238,7 +238,7 @@ static void test_vfs_ramfs_devfs(void) {
     u8 rnd[16];
     memset(rnd, 0, sizeof(rnd));
     got = 0;
-    check(vfs_read("/dev/random", 0, rnd, sizeof(rnd), &got) == VFS_OK && got == sizeof(rnd), "devfs /dev/random read");
+    check(vfs_read("/dev/prng", 0, rnd, sizeof(rnd), &got) == VFS_OK && got == sizeof(rnd), "devfs /dev/prng read");
     check(vfs_stat("/dev/tty", &st) == VFS_OK && st.type == VFS_NODE_DEV, "devfs /dev/tty present");
     suite_end();
 }
@@ -359,11 +359,11 @@ static void test_block_mbr_ext4(void) {
     bool mbr_ok = mbr_read(dev, &mbr);
     if (!mbr_ok) kprintf("[ detail] mbr_read(%s) failed after direct read status=%s\n", dev->name, block_status_name(br));
     check(mbr_ok, "MBR parser accepts boot disk");
-    const mbr_partition_t *part = mbr_ok ? mbr_find_linux(&mbr) : 0;
+    const mbr_partition_t *part = mbr_ok ? mbr_find_linux_on_device(dev, &mbr) : 0;
     check(part && part->lba_first >= 2048u && part->sector_count > 4096u, "MBR has Linux EXT partition");
     if (part) {
         ext4_mount_t mnt;
-        ext4_status_t est = ext4_mount(dev, part->lba_first, &mnt);
+        ext4_status_t est = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &mnt);
         check(est == EXT4_OK, "EXT4 raw mount first Linux partition");
         if (est == EXT4_OK) {
             ext4_inode_disk_t root;
@@ -394,7 +394,7 @@ static void test_block_mbr_ext4(void) {
         ext4_mount_t verify_mnt;
         ext4_inode_disk_t created_inode;
         u32 created_ino = 0;
-        bool extent_file = ext4_mount(dev, part->lba_first, &verify_mnt) == EXT4_OK &&
+        bool extent_file = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &verify_mnt) == EXT4_OK &&
                            ext4_lookup_path(&verify_mnt, "/aurora-rw.txt", &created_inode, &created_ino) == EXT4_OK &&
                            created_ino != 0 && (created_inode.i_flags & EXT4_INODE_FLAG_EXTENTS) != 0 &&
                            ((const u16 *)created_inode.i_block)[0] == EXT4_EXTENT_MAGIC;
@@ -467,7 +467,7 @@ static void test_block_mbr_ext4(void) {
         ext4_mount_t indexed_mnt;
         ext4_inode_disk_t indexed_inode;
         u32 indexed_ino = 0;
-        bool indexed_tree = ext4_mount(dev, part->lba_first, &indexed_mnt) == EXT4_OK &&
+        bool indexed_tree = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &indexed_mnt) == EXT4_OK &&
                             ext4_lookup_path(&indexed_mnt, "/aurora-indexed-extents.bin", &indexed_inode, &indexed_ino) == EXT4_OK &&
                             indexed_ino != 0 && ext4_inode_uses_extents(&indexed_inode) &&
                             ext4_inode_extent_depth(&indexed_inode) == 1u &&
@@ -489,6 +489,23 @@ static void test_block_mbr_ext4(void) {
     for (usize zi = 0; zi < sizeof(zeros) && indexed_hole_zero; ++zi) indexed_hole_zero = zeros[zi] == 0;
     check(indexed_hole_zero, "EXT4 indexed extent hole reads as zero-filled data");
     check(vfs_truncate(indexed_path, 1u) == VFS_OK && vfs_stat(indexed_path, &indexed_st) == VFS_OK && indexed_st.size == 1u, "EXT4 indexed extent file truncates through leaf entries");
+    if (part) {
+        ext4_mount_t indexed_demote_mnt;
+        ext4_inode_disk_t indexed_demote_inode;
+        u32 indexed_demote_ino = 0;
+        ext4_extent_report_t indexed_demote_extents;
+        bool demoted_inline = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &indexed_demote_mnt) == EXT4_OK &&
+                              ext4_lookup_path(&indexed_demote_mnt, "/aurora-indexed-extents.bin", &indexed_demote_inode, &indexed_demote_ino) == EXT4_OK &&
+                              indexed_demote_ino != 0 &&
+                              ext4_inspect_inode_extents(&indexed_demote_mnt, &indexed_demote_inode, &indexed_demote_extents) == EXT4_OK &&
+                              indexed_demote_extents.uses_extents && indexed_demote_extents.depth == 0u &&
+                              indexed_demote_extents.root_entries == 1u && indexed_demote_extents.leaf_nodes == 0u &&
+                              indexed_demote_extents.metadata_blocks == 0u && indexed_demote_extents.data_blocks == 1u &&
+                              indexed_demote_extents.errors == 0;
+        check(demoted_inline, "EXT4 demotes small truncated indexed extent file back to inline extents");
+    } else {
+        skip("EXT4 demotes small truncated indexed extent file back to inline extents");
+    }
     check(vfs_unlink(indexed_path) == VFS_OK, "VFS unlink ext4 indexed extent file");
 
     const char *split_path = "/disk0/aurora-extent-split.bin";
@@ -498,7 +515,7 @@ static void test_block_mbr_ext4(void) {
     if (part) {
         ext4_mount_t before_mnt;
         ext4_fsck_report_t before_report;
-        split_baseline_ok = ext4_mount(dev, part->lba_first, &before_mnt) == EXT4_OK &&
+        split_baseline_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &before_mnt) == EXT4_OK &&
                             ext4_validate_metadata(&before_mnt, &before_report) == EXT4_OK &&
                             before_report.errors == 0;
         split_free_before = before_report.sb_free_blocks;
@@ -519,7 +536,7 @@ static void test_block_mbr_ext4(void) {
         ext4_inode_disk_t split_inode;
         u32 split_ino = 0;
         ext4_extent_report_t split_extents;
-        bool split_tree = ext4_mount(dev, part->lba_first, &split_mnt) == EXT4_OK &&
+        bool split_tree = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &split_mnt) == EXT4_OK &&
                           ext4_lookup_path(&split_mnt, "/aurora-extent-split.bin", &split_inode, &split_ino) == EXT4_OK &&
                           split_ino != 0 && ext4_inspect_inode_extents(&split_mnt, &split_inode, &split_extents) == EXT4_OK &&
                           split_extents.uses_extents && split_extents.depth == 1u &&
@@ -546,11 +563,28 @@ static void test_block_mbr_ext4(void) {
     for (usize zi = 0; zi < sizeof(zeros) && split_hole_zero; ++zi) split_hole_zero = zeros[zi] == 0;
     check(split_hole_zero, "EXT4 multi-leaf indexed extent holes remain zero-filled");
     check(vfs_truncate(split_path, 17u) == VFS_OK && vfs_stat(split_path, &indexed_st) == VFS_OK && indexed_st.size == 17u, "EXT4 multi-leaf indexed extent file truncates across leaves");
+    if (part) {
+        ext4_mount_t split_demote_mnt;
+        ext4_inode_disk_t split_demote_inode;
+        u32 split_demote_ino = 0;
+        ext4_extent_report_t split_demote_extents;
+        bool split_demoted_inline = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &split_demote_mnt) == EXT4_OK &&
+                                    ext4_lookup_path(&split_demote_mnt, "/aurora-extent-split.bin", &split_demote_inode, &split_demote_ino) == EXT4_OK &&
+                                    split_demote_ino != 0 &&
+                                    ext4_inspect_inode_extents(&split_demote_mnt, &split_demote_inode, &split_demote_extents) == EXT4_OK &&
+                                    split_demote_extents.uses_extents && split_demote_extents.depth == 0u &&
+                                    split_demote_extents.root_entries == 1u && split_demote_extents.leaf_nodes == 0u &&
+                                    split_demote_extents.metadata_blocks == 0u && split_demote_extents.data_blocks == 1u &&
+                                    split_demote_extents.errors == 0;
+        check(split_demoted_inline, "EXT4 demotes multi-leaf file to inline extents after deep truncate");
+    } else {
+        skip("EXT4 demotes multi-leaf file to inline extents after deep truncate");
+    }
     check(vfs_unlink(split_path) == VFS_OK, "VFS unlink ext4 multi-leaf indexed extent file");
     if (part && split_baseline_ok) {
         ext4_mount_t after_mnt;
         ext4_fsck_report_t after_report;
-        bool no_leak = ext4_mount(dev, part->lba_first, &after_mnt) == EXT4_OK &&
+        bool no_leak = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &after_mnt) == EXT4_OK &&
                        ext4_validate_metadata(&after_mnt, &after_report) == EXT4_OK &&
                        after_report.errors == 0 && after_report.sb_free_blocks == split_free_before;
         check(no_leak, "EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
@@ -562,7 +596,7 @@ static void test_block_mbr_ext4(void) {
     if (part) {
         ext4_mount_t final_mnt;
         ext4_fsck_report_t final_report;
-        bool final_ok = ext4_mount(dev, part->lba_first, &final_mnt) == EXT4_OK &&
+        bool final_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &final_mnt) == EXT4_OK &&
                         ext4_validate_metadata(&final_mnt, &final_report) == EXT4_OK && final_report.errors == 0;
         check(final_ok, "EXT4 metadata remains consistent after mutation tests");
     } else {
@@ -576,8 +610,8 @@ static void test_syscall_task_timer_elf(void) {
     syscall_result_t r = syscall_dispatch(AURORA_SYS_VERSION, 0, 0, 0, 0, 0, 0);
     check(r.error == 0 && r.value == (i64)AURORA_SYSCALL_ABI_VERSION, "Rust syscall ABI version matches central kernel version");
     check(aurora_rust_syscall_selftest(), "Rust syscall decoder/validator selftest");
-    r = syscall_dispatch(AURORA_SYS_CLOSE, 32u, 0, 0, 0, 0, 0);
-    check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall rejects invalid handle before C backend");
+    r = syscall_dispatch(AURORA_SYS_CLOSE, AURORA_PROCESS_HANDLE_CAP, 0, 0, 0, 0, 0);
+    check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall rejects handle equal to ABI cap before C backend");
     r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"relative/path", 0, 0, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust path policy rejects relative syscall path");
     r = syscall_dispatch(AURORA_SYS_CREATE, (u64)(uptr)"/tmp/too-large", (u64)(uptr)"x", 65537u, 0, 0, 0);

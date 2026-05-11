@@ -190,6 +190,7 @@ typedef struct AURORA_PACKED ext4_inode_disk {
 typedef struct ext4_mount {
     block_device_t *dev;
     u64 partition_lba;
+    u64 partition_sectors;
     u64 block_size;
     u64 blocks_count;
     u32 inodes_count;
@@ -235,6 +236,7 @@ typedef struct ext4_extent_report {
 } ext4_extent_report_t;
 
 ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *out);
+ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 partition_sectors, ext4_mount_t *out);
 ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
 ext4_status_t ext4_inspect_inode_extents(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_extent_report_t *report);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);

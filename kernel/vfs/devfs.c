@@ -4,9 +4,10 @@
 #include <aurora/console.h>
 #include <aurora/log.h>
 #include <aurora/drivers.h>
+#include <aurora/tty.h>
 #include <aurora/spinlock.h>
 
-typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_RANDOM, DEV_KMSG, DEV_TTY } dev_kind_t;
+typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_PRNG, DEV_KMSG, DEV_TTY } dev_kind_t;
 
 typedef struct devfs_entry {
     const char *name;
@@ -15,16 +16,17 @@ typedef struct devfs_entry {
 } devfs_entry_t;
 
 typedef struct devfs_state {
-    u64 random_state;
-    spinlock_t random_lock;
+    u64 prng_state;
+    spinlock_t prng_lock;
 } devfs_state_t;
 
 static const devfs_entry_t entries[] = {
     { "null", DEV_NULL, 1 },
     { "zero", DEV_ZERO, 2 },
-    { "random", DEV_RANDOM, 3 },
-    { "kmsg", DEV_KMSG, 4 },
-    { "tty", DEV_TTY, 5 },
+    { "prng", DEV_PRNG, 3 },
+    { "urandom_insecure", DEV_PRNG, 4 },
+    { "kmsg", DEV_KMSG, 5 },
+    { "tty", DEV_TTY, 6 },
 };
 
 static devfs_entry_t const *find_entry(const char *path) {
@@ -38,12 +40,12 @@ static devfs_entry_t const *find_entry(const char *path) {
 }
 
 static u64 xorshift(devfs_state_t *s) {
-    u64 x = s->random_state;
+    u64 x = s->prng_state;
     if (!x) x = 0x9e3779b97f4a7c15ull ^ pit_ticks();
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
-    s->random_state = x;
+    s->prng_state = x;
     return x;
 }
 
@@ -78,14 +80,14 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
             memset(buffer, 0, size);
             if (read_out) *read_out = size;
             return VFS_OK;
-        case DEV_RANDOM: {
+        case DEV_PRNG: {
             devfs_state_t *s = (devfs_state_t *)mnt->ctx;
-            u64 flags = spin_lock_irqsave(&s->random_lock);
+            u64 flags = spin_lock_irqsave(&s->prng_lock);
             for (usize i = 0; i < size; ++i) {
                 if ((i & 7u) == 0) xorshift(s);
-                out[i] = (u8)(s->random_state >> ((i & 7u) * 8u));
+                out[i] = (u8)(s->prng_state >> ((i & 7u) * 8u));
             }
-            spin_unlock_irqrestore(&s->random_lock, flags);
+            spin_unlock_irqrestore(&s->prng_lock, flags);
             if (read_out) *read_out = size;
             return VFS_OK;
         }
@@ -93,7 +95,7 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
             usize n = 0;
             while (n < size) {
                 char c = 0;
-                if (!keyboard_getc(&c)) break;
+                if (!tty_read_char(&c)) break;
                 out[n++] = (u8)c;
                 if (c == '\n') break;
             }
@@ -167,8 +169,9 @@ static const vfs_ops_t ops = {
 vfs_status_t devfs_mount(void) {
     devfs_state_t *state = (devfs_state_t *)kcalloc(1, sizeof(*state));
     if (!state) return VFS_ERR_NOMEM;
-    spinlock_init(&state->random_lock);
-    state->random_state = 0xA6E5A6E5D00D1234ull ^ pit_ticks();
+    spinlock_init(&state->prng_lock);
+    state->prng_state = 0xA6E5A6E5D00D1234ull ^ pit_ticks();
+    KLOG(LOG_WARN, "devfs", "/dev/prng and /dev/urandom_insecure are deterministic non-cryptographic PRNG devices");
     vfs_status_t st = vfs_mount("/dev", "devfs", &ops, state, true);
     if (st != VFS_OK) kfree(state);
     return st;

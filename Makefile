@@ -73,8 +73,9 @@ K_C_SRCS := \
 
 K_CXX_SRCS := kernel/api/system.cpp
 K_ASM_SRCS := kernel/arch/x86_64/entry.S kernel/arch/x86_64/isr.S kernel/arch/x86_64/user_entry.S
-K_RUST_SRCS := kernel/rust/lib.rs kernel/rust/syscall_dispatch.rs kernel/rust/vfs_route.rs kernel/rust/usercopy.rs kernel/rust/path_policy.rs
+K_RUST_SRCS := kernel/rust/lib.rs kernel/rust/syscall_dispatch.rs kernel/rust/vfs_route.rs kernel/rust/usercopy.rs kernel/rust/path_policy.rs include/aurora/abi.h
 K_RUST_OBJ := $(BUILD)/kernel/rust/lib.o
+K_RUST_ABI := $(BUILD)/kernel/rust/abi_generated.rs
 
 K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(BUILD)/user_bins.o
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
@@ -162,7 +163,10 @@ rusttoolcheck:
 		exit 127; \
 	fi
 
-$(K_RUST_OBJ): $(K_RUST_SRCS) | rusttoolcheck
+$(K_RUST_ABI): include/aurora/abi.h scripts/gen_rust_abi.py | $(BUILD)
+	python3 scripts/gen_rust_abi.py $@
+
+$(K_RUST_OBJ): $(K_RUST_SRCS) $(K_RUST_ABI) | rusttoolcheck
 	mkdir -p $(dir $@)
 	$(RUSTC) $(RUSTFLAGS) kernel/rust/lib.rs -o $@
 

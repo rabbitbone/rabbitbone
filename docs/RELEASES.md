@@ -2,6 +2,16 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.30
+
+Stage 19.7 EXT4 extent-demotion correctness update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.30` / `0x0000011e`.
+- Fixed indexed-extent demotion after truncate so dirty leaf buffers are persisted before leaf metadata is collapsed into inline extents.
+- Generalized demotion to collapse any depth-1 extent tree whose remaining extents fit in the inode inline root, including trees that previously had multiple split leaves.
+- Ensured truncate calls the demotion pass after tail block removal so sparse multi-leaf files shrink back to inline form and release leaf metadata blocks.
+- Preserved metadata counters and allocation bitmaps across truncate, unlink, and fsck-like EXT4 validation after mutation stress.
+
 ## 0.0.1.28
 
 Stage 19.5 EXT4 extent-leaf split runtime update.

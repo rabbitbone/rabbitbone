@@ -1,5 +1,9 @@
 #![no_std]
 
+pub mod abi {
+    include!("../../build/kernel/rust/abi_generated.rs");
+}
+
 pub mod syscall_dispatch;
 pub mod vfs_route;
 pub mod usercopy;
