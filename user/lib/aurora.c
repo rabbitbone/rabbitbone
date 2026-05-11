@@ -184,3 +184,49 @@ au_i64 au_fdctl(au_i64 h, unsigned int op, unsigned int flags) {
     au_result_t r = au_syscall3(AU_SYS_FDCTL, (au_u64)h, (au_u64)op, (au_u64)flags);
     return r.error ? r.error : r.value;
 }
+
+
+au_i64 au_pipe(unsigned int out_handles[2]) {
+    au_result_t r = au_syscall3(AU_SYS_PIPE, (au_u64)out_handles, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_pipeinfo(au_i64 h, au_pipeinfo_t *out) {
+    au_result_t r = au_syscall3(AU_SYS_PIPEINFO, (au_u64)h, (au_u64)out, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_dup2(au_i64 src, au_i64 target, unsigned int flags) {
+    au_result_t r = au_syscall3(AU_SYS_DUP2, (au_u64)src, (au_u64)target, (au_u64)flags);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_poll(au_i64 h, unsigned int events) {
+    au_result_t r = au_syscall3(AU_SYS_POLL, (au_u64)h, (au_u64)events, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_getinfo(au_ttyinfo_t *out) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_GETINFO, (au_u64)out, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_setmode(unsigned int mode) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_SETMODE, (au_u64)mode, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_readkey(au_key_event_t *out, unsigned int flags) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_READKEY, (au_u64)out, (au_u64)flags, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_truncate(const char *path, au_u64 size) {
+    au_result_t r = au_syscall3(AU_SYS_TRUNCATE, (au_u64)path, size, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_rename(const char *old_path, const char *new_path) {
+    au_result_t r = au_syscall3(AU_SYS_RENAME, (au_u64)old_path, (au_u64)new_path, 0);
+    return r.error ? r.error : r.value;
+}

@@ -17,6 +17,7 @@ uptr gdt_kernel_stack_top(void);
 void gdt_set_ist(u8 index, uptr rsp);
 uptr gdt_ist_top(u8 index);
 bool gdt_selftest(void);
+bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size);
 
 #if defined(__cplusplus)
 }

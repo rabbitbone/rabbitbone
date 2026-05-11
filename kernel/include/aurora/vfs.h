@@ -60,6 +60,8 @@ typedef struct vfs_ops {
     vfs_status_t (*mkdir)(vfs_mount_t *mnt, const char *path);
     vfs_status_t (*create)(vfs_mount_t *mnt, const char *path, const void *data, usize size);
     vfs_status_t (*unlink)(vfs_mount_t *mnt, const char *path);
+    vfs_status_t (*truncate)(vfs_mount_t *mnt, const char *path, u64 size);
+    vfs_status_t (*rename)(vfs_mount_t *mnt, const char *old_path, const char *new_path);
 } vfs_ops_t;
 
 struct vfs_mount {
@@ -81,6 +83,8 @@ vfs_status_t vfs_list(const char *path, vfs_dir_iter_fn fn, void *ctx);
 vfs_status_t vfs_mkdir(const char *path);
 vfs_status_t vfs_create(const char *path, const void *data, usize size);
 vfs_status_t vfs_unlink(const char *path);
+vfs_status_t vfs_truncate(const char *path, u64 size);
+vfs_status_t vfs_rename(const char *old_path, const char *new_path);
 void vfs_dump_mounts(void);
 bool vfs_rust_route_selftest(void);
 const char *vfs_status_name(vfs_status_t st);

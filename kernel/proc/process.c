@@ -659,7 +659,7 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     p->result.address_space = p->space.pml4_physical;
     p->result.address_space_generation = alloc_address_space_generation();
     strncpy(p->result.name, path, sizeof(p->result.name) - 1u);
-    memset(p->fd_snapshot, 0, sizeof(p->fd_snapshot));
+    syscall_prepare_user_handle_snapshot(p->fd_snapshot, sizeof(p->fd_snapshot));
 
     u64 entry = 0;
     process_status_t st = load_elf_image(p, path, &entry);
@@ -790,6 +790,34 @@ process_status_t process_spawn_async(const char *path, int argc, const char *con
         memset(slot, 0, sizeof(*slot));
         return st;
     }
+    if (current_proc.active) {
+        syscall_save_user_handles(slot->fd_snapshot, sizeof(slot->fd_snapshot));
+        if (!syscall_retain_user_handle_snapshot(slot->fd_snapshot, sizeof(slot->fd_snapshot))) {
+            release_mappings(slot);
+            vmm_space_destroy(&slot->space);
+            memset(slot, 0, sizeof(*slot));
+            return PROC_ERR_NOMEM;
+        }
+    }
+    if (pid_out) *pid_out = slot->result.pid;
+    return PROC_OK;
+}
+
+process_status_t process_spawn_async_snapshot(const char *path, int argc, const char *const *argv, void *snapshot, usize snapshot_size, u32 *pid_out) {
+    if (!snapshot || snapshot_size < syscall_user_handle_snapshot_size()) return PROC_ERR_INVAL;
+    active_process_t *slot = alloc_async_slot();
+    if (!slot) return PROC_ERR_NOMEM;
+    u32 parent = current_proc.active ? current_proc.result.pid : 0;
+    process_status_t st = prepare_process(slot, path, argc, argv, parent);
+    if (st != PROC_OK) {
+        release_mappings(slot);
+        if (slot->space.pml4_physical) vmm_space_destroy(&slot->space);
+        memset(slot, 0, sizeof(*slot));
+        return st;
+    }
+    syscall_release_user_handle_snapshot(slot->fd_snapshot, sizeof(slot->fd_snapshot));
+    memcpy(slot->fd_snapshot, snapshot, sizeof(slot->fd_snapshot));
+    memset(snapshot, 0, sizeof(slot->fd_snapshot));
     if (pid_out) *pid_out = slot->result.pid;
     return PROC_OK;
 }
@@ -827,6 +855,7 @@ static bool clone_current_address_space(active_process_t *child) {
         }
     }
     syscall_save_user_handles(child->fd_snapshot, sizeof(child->fd_snapshot));
+    if (!syscall_retain_user_handle_snapshot(child->fd_snapshot, sizeof(child->fd_snapshot))) return false;
     return true;
 }
 
@@ -951,6 +980,7 @@ static void dispose_terminal_slots_except(u32 keep_pid) {
     for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
         active_process_t *p = &async_slots[i];
         if (p->active && p->result.pid != keep_pid && process_state_terminal((u32)p->state)) {
+            syscall_release_user_handle_snapshot(p->fd_snapshot, sizeof(p->fd_snapshot));
             release_mappings(p);
             vmm_space_destroy(&p->space);
             memset(p, 0, sizeof(*p));
@@ -994,6 +1024,7 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
     if (root) {
         if (root_out) *root_out = root->result;
         last_result = root->result;
+        syscall_release_user_handle_snapshot(root->fd_snapshot, sizeof(root->fd_snapshot));
         release_mappings(root);
         vmm_space_destroy(&root->space);
         memset(root, 0, sizeof(*root));

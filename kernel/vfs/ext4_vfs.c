@@ -27,6 +27,8 @@ static vfs_status_t map_status(ext4_status_t st) {
         case EXT4_ERR_NOT_FOUND: return VFS_ERR_NOENT;
         case EXT4_ERR_NOT_DIR: return VFS_ERR_NOTDIR;
         case EXT4_ERR_NO_MEMORY: return VFS_ERR_NOMEM;
+        case EXT4_ERR_EXIST: return VFS_ERR_EXIST;
+        case EXT4_ERR_NOT_EMPTY: return VFS_ERR_NOTEMPTY;
         case EXT4_ERR_IO: return VFS_ERR_IO;
         case EXT4_ERR_RANGE: return VFS_ERR_INVAL;
         case EXT4_ERR_UNSUPPORTED: return VFS_ERR_UNSUPPORTED;
@@ -93,10 +95,57 @@ static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn 
     return map_status(st);
 }
 
+
+static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, const void *buffer, usize size, usize *written_out) {
+    if (written_out) *written_out = 0;
+    if (size && !buffer) return VFS_ERR_INVAL;
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    ext4_inode_disk_t inode;
+    u32 ino = 0;
+    ext4_status_t st = ext4_lookup_path(&ctx->mount, path, &inode, &ino);
+    if (st != EXT4_OK) return map_status(st);
+    if (ext4_inode_is_dir(&inode)) return VFS_ERR_ISDIR;
+    if (!ext4_inode_is_regular(&inode)) return VFS_ERR_UNSUPPORTED;
+    st = ext4_write_file(&ctx->mount, ino, &inode, offset, buffer, size, written_out);
+    return map_status(st);
+}
+
+static vfs_status_t op_create(vfs_mount_t *mnt, const char *path, const void *data, usize size) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_create_file(&ctx->mount, path, data, size));
+}
+
+static vfs_status_t op_mkdir(vfs_mount_t *mnt, const char *path) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_mkdir(&ctx->mount, path));
+}
+
+static vfs_status_t op_unlink(vfs_mount_t *mnt, const char *path) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_unlink(&ctx->mount, path));
+}
+
+
+static vfs_status_t op_truncate(vfs_mount_t *mnt, const char *path, u64 size) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_truncate_file_path(&ctx->mount, path, size));
+}
+
+static vfs_status_t op_rename(vfs_mount_t *mnt, const char *old_path, const char *new_path) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_rename(&ctx->mount, old_path, new_path));
+}
+
 static const vfs_ops_t ops = {
     .stat = op_stat,
     .read = op_read,
+    .write = op_write,
     .list = op_list,
+    .mkdir = op_mkdir,
+    .create = op_create,
+    .unlink = op_unlink,
+    .truncate = op_truncate,
+    .rename = op_rename,
 };
 
 vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {
@@ -115,7 +164,7 @@ vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {
             return map_status(st);
         }
         strncpy(ctx->source, dev->name, sizeof(ctx->source) - 1u);
-        vfs_status_t vs = vfs_mount(path, "ext4", &ops, ctx, false);
+        vfs_status_t vs = vfs_mount(path, "ext4", &ops, ctx, true);
         if (vs != VFS_OK) kfree(ctx);
         return vs;
     }

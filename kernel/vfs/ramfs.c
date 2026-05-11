@@ -270,6 +270,62 @@ static vfs_status_t op_unlink(vfs_mount_t *mnt, const char *path) {
     return VFS_ERR_NOENT;
 }
 
+
+static vfs_status_t op_truncate(vfs_mount_t *mnt, const char *path, u64 size64) {
+    if (size64 > RAMFS_MAX_FILE_SIZE) return VFS_ERR_INVAL;
+    ramfs_node_t *n = resolve((ramfs_t *)mnt->ctx, path);
+    if (!n) return VFS_ERR_NOENT;
+    if (n->type == VFS_NODE_DIR) return VFS_ERR_ISDIR;
+    usize size = (usize)size64;
+    if (size > n->capacity) {
+        usize cap = n->capacity ? n->capacity : 64u;
+        while (cap < size) {
+            if (cap >= RAMFS_MAX_FILE_SIZE) return VFS_ERR_NOMEM;
+            if (cap > ((usize)-1) / 2u) return VFS_ERR_NOMEM;
+            cap *= 2u;
+            if (cap > RAMFS_MAX_FILE_SIZE) cap = RAMFS_MAX_FILE_SIZE;
+        }
+        u8 *new_data = (u8 *)kmalloc(cap);
+        if (!new_data) return VFS_ERR_NOMEM;
+        if (n->data) memcpy(new_data, n->data, n->size);
+        if (cap > n->size) memset(new_data + n->size, 0, cap - n->size);
+        kfree(n->data);
+        n->data = new_data;
+        n->capacity = cap;
+    } else if (size < n->size && n->data) {
+        memset(n->data + size, 0, n->size - size);
+    }
+    n->size = size;
+    return VFS_OK;
+}
+
+static vfs_status_t op_rename(vfs_mount_t *mnt, const char *old_path, const char *new_path) {
+    ramfs_t *fs = (ramfs_t *)mnt->ctx;
+    ramfs_node_t *old_parent = 0;
+    ramfs_node_t *new_parent = 0;
+    char old_leaf[VFS_NAME_MAX];
+    char new_leaf[VFS_NAME_MAX];
+    vfs_status_t st = resolve_parent(fs, old_path, &old_parent, old_leaf, sizeof(old_leaf));
+    if (st != VFS_OK) return st;
+    st = resolve_parent(fs, new_path, &new_parent, new_leaf, sizeof(new_leaf));
+    if (st != VFS_OK) return st;
+    if (find_child(new_parent, new_leaf)) return VFS_ERR_EXIST;
+    ramfs_node_t *prev = 0;
+    ramfs_node_t *n = old_parent->children;
+    while (n && strcmp(n->name, old_leaf) != 0) { prev = n; n = n->next; }
+    if (!n) return VFS_ERR_NOENT;
+    if (n->type == VFS_NODE_DIR) {
+        for (ramfs_node_t *p = new_parent; p; p = p->parent) if (p == n) return VFS_ERR_INVAL;
+    }
+    if (prev) prev->next = n->next;
+    else old_parent->children = n->next;
+    n->next = 0;
+    strncpy(n->name, new_leaf, sizeof(n->name) - 1u);
+    n->name[sizeof(n->name) - 1u] = 0;
+    attach_child(new_parent, n);
+    return VFS_OK;
+}
+
 static const vfs_ops_t ops = {
     .stat = op_stat,
     .read = op_read,
@@ -278,6 +334,8 @@ static const vfs_ops_t ops = {
     .mkdir = op_mkdir,
     .create = op_create,
     .unlink = op_unlink,
+    .truncate = op_truncate,
+    .rename = op_rename,
 };
 
 const vfs_ops_t *ramfs_ops(void) { return &ops; }

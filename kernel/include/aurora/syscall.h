@@ -41,6 +41,15 @@ typedef enum aurora_syscall_no {
     AURORA_SYSCALL_EXECV = AURORA_SYS_EXECV,
     AURORA_SYSCALL_FDCTL = AURORA_SYS_FDCTL,
     AURORA_SYSCALL_EXECVE = AURORA_SYS_EXECVE,
+    AURORA_SYSCALL_PIPE = AURORA_SYS_PIPE,
+    AURORA_SYSCALL_PIPEINFO = AURORA_SYS_PIPEINFO,
+    AURORA_SYSCALL_DUP2 = AURORA_SYS_DUP2,
+    AURORA_SYSCALL_POLL = AURORA_SYS_POLL,
+    AURORA_SYSCALL_TTY_GETINFO = AURORA_SYS_TTY_GETINFO,
+    AURORA_SYSCALL_TTY_SETMODE = AURORA_SYS_TTY_SETMODE,
+    AURORA_SYSCALL_TTY_READKEY = AURORA_SYS_TTY_READKEY,
+    AURORA_SYSCALL_TRUNCATE = AURORA_SYS_TRUNCATE,
+    AURORA_SYSCALL_RENAME = AURORA_SYS_RENAME,
     AURORA_SYSCALL_MAX = AURORA_SYS_MAX
 } aurora_syscall_no_t;
 
@@ -53,10 +62,16 @@ void syscall_init(void);
 #define SYSCALL_USER_HANDLE_SNAPSHOT_BYTES 12288u
 
 void syscall_reset_user_handles(void);
+void syscall_prepare_user_handle_snapshot(void *dst, usize dst_size);
 void syscall_save_user_handles(void *dst, usize dst_size);
+bool syscall_retain_user_handle_snapshot(const void *src, usize src_size);
+void syscall_release_user_handle_snapshot(void *src, usize src_size);
 void syscall_close_user_handles_with_flags(u32 flags);
 bool syscall_load_user_handles(const void *src, usize src_size);
 usize syscall_user_handle_snapshot_size(void);
+
+bool syscall_snapshot_open_vfs(void *snapshot, usize snapshot_size, u32 target_fd, const char *path, u32 flags, bool create_truncate);
+bool syscall_snapshot_pipe_between(void *writer_snapshot, usize writer_size, u32 writer_fd, void *reader_snapshot, usize reader_size, u32 reader_fd);
 syscall_result_t syscall_dispatch(u64 no, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5);
 const char *syscall_name(u64 no);
 bool syscall_selftest(void);

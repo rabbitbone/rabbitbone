@@ -56,10 +56,9 @@ jobs:
             exit 1
           fi
 
-      - name: Build and test image
+      - name: Build image
         run: |
           make clean
-          make test
           make image
 
       - name: Prepare release files

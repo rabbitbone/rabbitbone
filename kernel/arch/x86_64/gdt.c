@@ -1,10 +1,11 @@
 #include <aurora/arch/gdt.h>
 #include <aurora/libc.h>
 #include <aurora/log.h>
+#include <aurora/kmem.h>
 
 #define GDT_ENTRIES 7u
-#define KERNEL_PRIV_STACK_SIZE 28672u
-#define IST_STACK_SIZE 2048u
+#define KERNEL_PRIV_STACK_SIZE 12288u
+#define IST_STACK_SIZE 1024u
 
 typedef struct AURORA_PACKED gdtr {
     u16 limit;
@@ -33,6 +34,8 @@ static u64 gdt[GDT_ENTRIES];
 static tss64_t tss;
 static u8 kernel_priv_stack[KERNEL_PRIV_STACK_SIZE] __attribute__((aligned(16)));
 static u8 ist_stacks[3][IST_STACK_SIZE] __attribute__((aligned(16)));
+static void *dynamic_kernel_stack;
+static void *dynamic_ist_stacks[3];
 
 static u64 make_tss_low(uptr base, u32 limit) {
     u64 desc = 0;
@@ -64,6 +67,37 @@ void gdt_set_ist(u8 index, uptr rsp) {
         case 3: tss.ist3 = rsp; break;
         default: break;
     }
+}
+
+
+bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
+    if (ring0_size < KERNEL_PRIV_STACK_SIZE || ist_size < IST_STACK_SIZE) return false;
+    void *ring0 = kmalloc(ring0_size);
+    if (!ring0) return false;
+    memset(ring0, 0, ring0_size);
+    void *ist0 = kmalloc(ist_size);
+    void *ist1 = kmalloc(ist_size);
+    void *ist2 = kmalloc(ist_size);
+    if (!ist0 || !ist1 || !ist2) {
+        if (ist0) kfree(ist0);
+        if (ist1) kfree(ist1);
+        if (ist2) kfree(ist2);
+        kfree(ring0);
+        return false;
+    }
+    memset(ist0, 0, ist_size);
+    memset(ist1, 0, ist_size);
+    memset(ist2, 0, ist_size);
+    dynamic_kernel_stack = ring0;
+    dynamic_ist_stacks[0] = ist0;
+    dynamic_ist_stacks[1] = ist1;
+    dynamic_ist_stacks[2] = ist2;
+    gdt_set_kernel_stack((uptr)ring0 + ring0_size);
+    gdt_set_ist(1, (uptr)ist0 + ist_size);
+    gdt_set_ist(2, (uptr)ist1 + ist_size);
+    gdt_set_ist(3, (uptr)ist2 + ist_size);
+    KLOG(LOG_INFO, "gdt", "installed heap-backed stacks rsp0=%p ist=%llu", (void *)tss.rsp0, (unsigned long long)ist_size);
+    return true;
 }
 
 void gdt_init(void) {

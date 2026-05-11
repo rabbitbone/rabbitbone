@@ -21,6 +21,8 @@ typedef enum ext4_status {
     EXT4_ERR_NOT_FOUND = -6,
     EXT4_ERR_NOT_DIR = -7,
     EXT4_ERR_NO_MEMORY = -8,
+    EXT4_ERR_EXIST = -9,
+    EXT4_ERR_NOT_EMPTY = -10,
 } ext4_status_t;
 
 typedef struct AURORA_PACKED ext4_superblock_disk {
@@ -187,6 +189,7 @@ typedef struct ext4_mount {
     u64 partition_lba;
     u64 block_size;
     u64 blocks_count;
+    u32 inodes_count;
     u32 inodes_per_group;
     u32 blocks_per_group;
     u16 inode_size;
@@ -206,6 +209,12 @@ typedef bool (*ext4_dir_iter_fn)(const ext4_dirent_t *entry, void *ctx);
 ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *out);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);
 ext4_status_t ext4_read_file(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, u64 offset, void *buffer, usize bytes, usize *read_out);
+ext4_status_t ext4_write_file(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *inode, u64 offset, const void *buffer, usize bytes, usize *written_out);
+ext4_status_t ext4_create_file(ext4_mount_t *mnt, const char *path, const void *data, usize size);
+ext4_status_t ext4_mkdir(ext4_mount_t *mnt, const char *path);
+ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path);
+ext4_status_t ext4_truncate_file_path(ext4_mount_t *mnt, const char *path, u64 size);
+ext4_status_t ext4_rename(ext4_mount_t *mnt, const char *old_path, const char *new_path);
 ext4_status_t ext4_list_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, ext4_dir_iter_fn fn, void *ctx);
 ext4_status_t ext4_find_in_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out);
 ext4_status_t ext4_lookup_path(ext4_mount_t *mnt, const char *path, ext4_inode_disk_t *inode_out, u32 *ino_out);

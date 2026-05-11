@@ -1,4 +1,5 @@
 #include <aurora/ext4.h>
+#include <aurora/vfs.h>
 #include <aurora/libc.h>
 
 #define EXT4_FEATURE_INCOMPAT_FILETYPE 0x0002u
@@ -44,11 +45,16 @@ typedef struct AURORA_PACKED ext4_dir_entry_2 {
 
 static u16 le16(u16 v) { return v; }
 static u32 le32(u32 v) { return v; }
+static void put32(u32 *p, u32 v) { *p = v; }
 static u64 le64_from_lo_hi(u32 lo, u32 hi) { return ((u64)le32(hi) << 32) | le32(lo); }
 static bool checked_add_u64(u64 a, u64 b, u64 *out) { return !__builtin_add_overflow(a, b, out); }
 static bool checked_mul_u64(u64 a, u64 b, u64 *out) { return !__builtin_mul_overflow(a, b, out); }
 static bool checked_add_usize(usize a, usize b, usize *out) { return !__builtin_add_overflow(a, b, out); }
 static u64 div_round_up_u64(u64 a, u64 b) { return b ? (a + b - 1) / b : 0; }
+static u16 ext4_rec_len(usize name_len) { return (u16)((8u + name_len + 3u) & ~3u); }
+static bool bitmap_get(const u8 *bm, u32 bit) { return (bm[bit / 8u] & (u8)(1u << (bit % 8u))) != 0; }
+static void bitmap_set8(u8 *bm, u32 bit) { bm[bit / 8u] |= (u8)(1u << (bit % 8u)); }
+static void bitmap_clear8(u8 *bm, u32 bit) { bm[bit / 8u] &= (u8)~(1u << (bit % 8u)); }
 
 static ext4_status_t read_bytes(block_device_t *dev, u64 partition_lba, u64 byte_offset, void *buffer, usize bytes) {
     if (!dev || !buffer) return EXT4_ERR_IO;
@@ -69,11 +75,45 @@ static ext4_status_t read_bytes(block_device_t *dev, u64 partition_lba, u64 byte
     return EXT4_OK;
 }
 
+
+static ext4_status_t write_bytes(block_device_t *dev, u64 partition_lba, u64 byte_offset, const void *buffer, usize bytes) {
+    if (!dev || !buffer) return EXT4_ERR_IO;
+    const u8 *in = (const u8 *)buffer;
+    u8 sector[512];
+    while (bytes) {
+        u64 lba = 0;
+        if (!checked_add_u64(partition_lba, byte_offset / 512u, &lba)) return EXT4_ERR_RANGE;
+        u32 off = (u32)(byte_offset % 512u);
+        usize take = 512u - off;
+        if (take > bytes) take = bytes;
+        if (take != 512u) {
+            if (block_read(dev, lba, 1, sector) != BLOCK_OK) return EXT4_ERR_IO;
+            memcpy(sector + off, in, take);
+        } else {
+            memcpy(sector, in, 512u);
+        }
+        if (block_write(dev, lba, 1, sector) != BLOCK_OK) return EXT4_ERR_IO;
+        in += take;
+        byte_offset += take;
+        bytes -= take;
+    }
+    return EXT4_OK;
+}
+
 static ext4_status_t read_block(ext4_mount_t *mnt, u64 block, void *buffer) {
     if (block >= mnt->blocks_count) return EXT4_ERR_RANGE;
     u64 byte_offset = 0;
     if (!checked_mul_u64(block, mnt->block_size, &byte_offset)) return EXT4_ERR_RANGE;
     return read_bytes(mnt->dev, mnt->partition_lba, byte_offset, buffer, (usize)mnt->block_size);
+}
+
+
+static ext4_status_t write_block(ext4_mount_t *mnt, u64 block, const void *buffer) {
+    if (!mnt || !buffer) return EXT4_ERR_IO;
+    if (block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    u64 byte_offset = 0;
+    if (!checked_mul_u64(block, mnt->block_size, &byte_offset)) return EXT4_ERR_RANGE;
+    return write_bytes(mnt->dev, mnt->partition_lba, byte_offset, buffer, (usize)mnt->block_size);
 }
 
 static u64 group_desc_table_block(const ext4_mount_t *mnt) {
@@ -93,6 +133,32 @@ static ext4_status_t read_group_desc(ext4_mount_t *mnt, u32 group, ext4_group_de
     if (!checked_add_u64(table, group_off, &off)) return EXT4_ERR_RANGE;
     return read_bytes(mnt->dev, mnt->partition_lba, off, out, desc_size);
 }
+
+
+static ext4_status_t write_group_desc(ext4_mount_t *mnt, u32 group, const ext4_group_desc_disk_t *in) {
+    if (!mnt || !in || group >= mnt->group_count) return EXT4_ERR_RANGE;
+    usize desc_size = mnt->group_desc_size;
+    if (desc_size < 32u || desc_size > sizeof(*in)) return EXT4_ERR_UNSUPPORTED;
+    u64 table = 0, group_off = 0, off = 0;
+    if (!checked_mul_u64(group_desc_table_block(mnt), mnt->block_size, &table)) return EXT4_ERR_RANGE;
+    if (!checked_mul_u64((u64)group, mnt->group_desc_size, &group_off)) return EXT4_ERR_RANGE;
+    if (!checked_add_u64(table, group_off, &off)) return EXT4_ERR_RANGE;
+    return write_bytes(mnt->dev, mnt->partition_lba, off, in, desc_size);
+}
+
+static u64 group_block_bitmap(const ext4_group_desc_disk_t *gd) { return le64_from_lo_hi(gd->bg_block_bitmap_lo, gd->bg_block_bitmap_hi); }
+static u64 group_inode_bitmap(const ext4_group_desc_disk_t *gd) { return le64_from_lo_hi(gd->bg_inode_bitmap_lo, gd->bg_inode_bitmap_hi); }
+static u32 gd_free_blocks(const ext4_group_desc_disk_t *gd) { return ((u32)le16(gd->bg_free_blocks_count_hi) << 16) | le16(gd->bg_free_blocks_count_lo); }
+static u32 gd_free_inodes(const ext4_group_desc_disk_t *gd) { return ((u32)le16(gd->bg_free_inodes_count_hi) << 16) | le16(gd->bg_free_inodes_count_lo); }
+static void gd_set_free_blocks(ext4_group_desc_disk_t *gd, u32 v) { gd->bg_free_blocks_count_lo = (u16)v; gd->bg_free_blocks_count_hi = (u16)(v >> 16); }
+static void gd_set_free_inodes(ext4_group_desc_disk_t *gd, u32 v) { gd->bg_free_inodes_count_lo = (u16)v; gd->bg_free_inodes_count_hi = (u16)(v >> 16); }
+static void gd_set_used_dirs(ext4_group_desc_disk_t *gd, u32 v) { gd->bg_used_dirs_count_lo = (u16)v; gd->bg_used_dirs_count_hi = (u16)(v >> 16); }
+static u32 gd_used_dirs(const ext4_group_desc_disk_t *gd) { return ((u32)le16(gd->bg_used_dirs_count_hi) << 16) | le16(gd->bg_used_dirs_count_lo); }
+static u64 sb_free_blocks(ext4_mount_t *mnt) { return le64_from_lo_hi(mnt->sb.s_free_blocks_count_lo, mnt->sb.s_free_blocks_count_hi); }
+static void sb_set_free_blocks(ext4_mount_t *mnt, u64 v) { mnt->sb.s_free_blocks_count_lo = (u32)v; mnt->sb.s_free_blocks_count_hi = (u32)(v >> 32); }
+static u32 sb_free_inodes(ext4_mount_t *mnt) { return le32(mnt->sb.s_free_inodes_count); }
+static void sb_set_free_inodes(ext4_mount_t *mnt, u32 v) { mnt->sb.s_free_inodes_count = v; }
+static ext4_status_t write_super(ext4_mount_t *mnt) { return write_bytes(mnt->dev, mnt->partition_lba, 1024, &mnt->sb, sizeof(mnt->sb)); }
 
 static u64 group_inode_table(const ext4_group_desc_disk_t *gd) {
     return le64_from_lo_hi(gd->bg_inode_table_lo, gd->bg_inode_table_hi);
@@ -117,6 +183,8 @@ const char *ext4_status_name(ext4_status_t status) {
         case EXT4_ERR_NOT_FOUND: return "not-found";
         case EXT4_ERR_NOT_DIR: return "not-dir";
         case EXT4_ERR_NO_MEMORY: return "no-memory";
+        case EXT4_ERR_EXIST: return "exists";
+        case EXT4_ERR_NOT_EMPTY: return "not-empty";
         default: return "unknown";
     }
 }
@@ -139,12 +207,13 @@ ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *o
     out->partition_lba = partition_lba;
     out->block_size = block_size;
     out->blocks_count = le64_from_lo_hi(sb.s_blocks_count_lo, sb.s_blocks_count_hi);
+    out->inodes_count = le32(sb.s_inodes_count);
     out->inodes_per_group = le32(sb.s_inodes_per_group);
     out->blocks_per_group = le32(sb.s_blocks_per_group);
     out->inode_size = le16(sb.s_inode_size) ? le16(sb.s_inode_size) : 128;
     out->group_desc_size = (incompat & EXT4_FEATURE_INCOMPAT_64BIT) ? le16(sb.s_desc_size) : 32;
     u64 first_data = le32(sb.s_first_data_block);
-    if (!out->blocks_count || !out->blocks_per_group || !out->inodes_per_group) return EXT4_ERR_CORRUPT;
+    if (!out->blocks_count || !out->inodes_count || !out->blocks_per_group || !out->inodes_per_group) return EXT4_ERR_CORRUPT;
     if (first_data > out->blocks_count) return EXT4_ERR_CORRUPT;
     if (out->inode_size < 128u || out->inode_size > block_size) return EXT4_ERR_UNSUPPORTED;
     if (out->group_desc_size < 32 || out->group_desc_size > sizeof(ext4_group_desc_disk_t) || (out->group_desc_size % 8u) != 0) return EXT4_ERR_UNSUPPORTED;
@@ -279,6 +348,651 @@ ext4_status_t ext4_read_file(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, 
         done += take;
     }
     if (read_out) *read_out = done;
+    return EXT4_OK;
+}
+
+
+static ext4_status_t write_inode(ext4_mount_t *mnt, u32 ino, const ext4_inode_disk_t *in) {
+    if (!mnt || !in || ino == 0 || ino > mnt->inodes_count) return EXT4_ERR_RANGE;
+    u32 idx = ino - 1;
+    u32 group = idx / mnt->inodes_per_group;
+    u32 local = idx % mnt->inodes_per_group;
+    ext4_group_desc_disk_t gd;
+    ext4_status_t st = read_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    u64 table = group_inode_table(&gd);
+    u64 table_off = 0, inode_off = 0, off = 0;
+    if (!checked_mul_u64(table, mnt->block_size, &table_off)) return EXT4_ERR_RANGE;
+    if (!checked_mul_u64((u64)local, mnt->inode_size, &inode_off)) return EXT4_ERR_RANGE;
+    if (!checked_add_u64(table_off, inode_off, &off)) return EXT4_ERR_RANGE;
+    usize bytes = mnt->inode_size < sizeof(*in) ? mnt->inode_size : sizeof(*in);
+    return write_bytes(mnt->dev, mnt->partition_lba, off, in, bytes);
+}
+
+static void inode_set_size(ext4_inode_disk_t *inode, u64 size) {
+    inode->i_size_lo = (u32)size;
+    inode->i_size_high = (u32)(size >> 32);
+}
+
+static void inode_add_blocks(ext4_mount_t *mnt, ext4_inode_disk_t *inode, i32 blocks) {
+    u32 sectors = (u32)(mnt->block_size / 512u);
+    if (blocks >= 0) inode->i_blocks_lo += sectors * (u32)blocks;
+    else {
+        u32 dec = sectors * (u32)(-blocks);
+        inode->i_blocks_lo = inode->i_blocks_lo > dec ? inode->i_blocks_lo - dec : 0;
+    }
+}
+
+static ext4_status_t alloc_block(ext4_mount_t *mnt, u64 *block_out) {
+    if (!mnt || !block_out) return EXT4_ERR_RANGE;
+    u8 bm[MAX_BLOCK_SIZE];
+    for (u32 group = 0; group < mnt->group_count; ++group) {
+        ext4_group_desc_disk_t gd;
+        ext4_status_t st = read_group_desc(mnt, group, &gd);
+        if (st != EXT4_OK) return st;
+        if (gd_free_blocks(&gd) == 0) continue;
+        u64 bitmap_block = group_block_bitmap(&gd);
+        st = read_block(mnt, bitmap_block, bm);
+        if (st != EXT4_OK) return st;
+        for (u32 bit = 0; bit < mnt->blocks_per_group; ++bit) {
+            u64 abs = (u64)group * mnt->blocks_per_group + bit;
+            if (abs < le32(mnt->sb.s_first_data_block) || abs >= mnt->blocks_count) continue;
+            if (bitmap_get(bm, bit)) continue;
+            bitmap_set8(bm, bit);
+            st = write_block(mnt, bitmap_block, bm);
+            if (st != EXT4_OK) return st;
+            u32 gfree = gd_free_blocks(&gd);
+            if (gfree) gd_set_free_blocks(&gd, gfree - 1u);
+            st = write_group_desc(mnt, group, &gd);
+            if (st != EXT4_OK) return st;
+            u64 sfree = sb_free_blocks(mnt);
+            if (sfree) sb_set_free_blocks(mnt, sfree - 1u);
+            st = write_super(mnt);
+            if (st != EXT4_OK) return st;
+            u8 zero[MAX_BLOCK_SIZE];
+            memset(zero, 0, (usize)mnt->block_size);
+            st = write_block(mnt, abs, zero);
+            if (st != EXT4_OK) return st;
+            *block_out = abs;
+            return EXT4_OK;
+        }
+    }
+    return EXT4_ERR_NO_MEMORY;
+}
+
+static ext4_status_t free_block(ext4_mount_t *mnt, u64 block) {
+    if (!mnt || block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    u32 group = (u32)(block / mnt->blocks_per_group);
+    u32 bit = (u32)(block % mnt->blocks_per_group);
+    ext4_group_desc_disk_t gd;
+    ext4_status_t st = read_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    u8 bm[MAX_BLOCK_SIZE];
+    st = read_block(mnt, group_block_bitmap(&gd), bm);
+    if (st != EXT4_OK) return st;
+    if (!bitmap_get(bm, bit)) return EXT4_ERR_CORRUPT;
+    bitmap_clear8(bm, bit);
+    st = write_block(mnt, group_block_bitmap(&gd), bm);
+    if (st != EXT4_OK) return st;
+    gd_set_free_blocks(&gd, gd_free_blocks(&gd) + 1u);
+    st = write_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    sb_set_free_blocks(mnt, sb_free_blocks(mnt) + 1u);
+    return write_super(mnt);
+}
+
+static ext4_status_t alloc_inode(ext4_mount_t *mnt, bool dir, u32 *ino_out) {
+    if (!mnt || !ino_out) return EXT4_ERR_RANGE;
+    u32 first = le32(mnt->sb.s_first_ino);
+    if (first == 0) first = 11;
+    u8 bm[MAX_BLOCK_SIZE];
+    for (u32 group = 0; group < mnt->group_count; ++group) {
+        ext4_group_desc_disk_t gd;
+        ext4_status_t st = read_group_desc(mnt, group, &gd);
+        if (st != EXT4_OK) return st;
+        if (gd_free_inodes(&gd) == 0) continue;
+        u64 bitmap_block = group_inode_bitmap(&gd);
+        st = read_block(mnt, bitmap_block, bm);
+        if (st != EXT4_OK) return st;
+        for (u32 bit = 0; bit < mnt->inodes_per_group; ++bit) {
+            u32 ino = group * mnt->inodes_per_group + bit + 1u;
+            if (ino < first || ino > mnt->inodes_count) continue;
+            if (bitmap_get(bm, bit)) continue;
+            bitmap_set8(bm, bit);
+            st = write_block(mnt, bitmap_block, bm);
+            if (st != EXT4_OK) return st;
+            gd_set_free_inodes(&gd, gd_free_inodes(&gd) - 1u);
+            if (dir) gd_set_used_dirs(&gd, gd_used_dirs(&gd) + 1u);
+            st = write_group_desc(mnt, group, &gd);
+            if (st != EXT4_OK) return st;
+            sb_set_free_inodes(mnt, sb_free_inodes(mnt) - 1u);
+            st = write_super(mnt);
+            if (st != EXT4_OK) return st;
+            *ino_out = ino;
+            return EXT4_OK;
+        }
+    }
+    return EXT4_ERR_NO_MEMORY;
+}
+
+static ext4_status_t free_inode(ext4_mount_t *mnt, u32 ino, bool dir) {
+    if (!mnt || ino == 0 || ino > mnt->inodes_count) return EXT4_ERR_RANGE;
+    u32 idx = ino - 1u;
+    u32 group = idx / mnt->inodes_per_group;
+    u32 bit = idx % mnt->inodes_per_group;
+    ext4_group_desc_disk_t gd;
+    ext4_status_t st = read_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    u8 bm[MAX_BLOCK_SIZE];
+    st = read_block(mnt, group_inode_bitmap(&gd), bm);
+    if (st != EXT4_OK) return st;
+    if (!bitmap_get(bm, bit)) return EXT4_ERR_CORRUPT;
+    bitmap_clear8(bm, bit);
+    st = write_block(mnt, group_inode_bitmap(&gd), bm);
+    if (st != EXT4_OK) return st;
+    gd_set_free_inodes(&gd, gd_free_inodes(&gd) + 1u);
+    if (dir && gd_used_dirs(&gd)) gd_set_used_dirs(&gd, gd_used_dirs(&gd) - 1u);
+    st = write_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    sb_set_free_inodes(mnt, sb_free_inodes(mnt) + 1u);
+    return write_super(mnt);
+}
+
+static ext4_status_t inode_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
+    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) return EXT4_ERR_UNSUPPORTED;
+    if (logical < 12u) {
+        u32 b = le32(inode->i_block[logical]);
+        if (!b && allocate) {
+            u64 nb = 0;
+            ext4_status_t st = alloc_block(mnt, &nb);
+            if (st != EXT4_OK) return st;
+            inode->i_block[logical] = (u32)nb;
+            inode_add_blocks(mnt, inode, 1);
+            b = (u32)nb;
+        }
+        if (!b) return EXT4_ERR_RANGE;
+        *phys_out = b;
+        return EXT4_OK;
+    }
+    u32 per_block = (u32)(mnt->block_size / 4u);
+    if (logical >= 12u + per_block) return EXT4_ERR_UNSUPPORTED;
+    u32 indirect = le32(inode->i_block[12]);
+    if (!indirect && allocate) {
+        u64 nb = 0;
+        ext4_status_t st = alloc_block(mnt, &nb);
+        if (st != EXT4_OK) return st;
+        inode->i_block[12] = (u32)nb;
+        inode_add_blocks(mnt, inode, 1);
+        indirect = (u32)nb;
+    }
+    if (!indirect) return EXT4_ERR_RANGE;
+    u8 block[MAX_BLOCK_SIZE];
+    ext4_status_t st = read_block(mnt, indirect, block);
+    if (st != EXT4_OK) return st;
+    u32 *entries = (u32 *)block;
+    u32 idx = logical - 12u;
+    u32 b = le32(entries[idx]);
+    if (!b && allocate) {
+        u64 nb = 0;
+        st = alloc_block(mnt, &nb);
+        if (st != EXT4_OK) return st;
+        put32(&entries[idx], (u32)nb);
+        st = write_block(mnt, indirect, block);
+        if (st != EXT4_OK) return st;
+        inode_add_blocks(mnt, inode, 1);
+        b = (u32)nb;
+    }
+    if (!b) return EXT4_ERR_RANGE;
+    *phys_out = b;
+    return EXT4_OK;
+}
+
+
+static ext4_status_t inode_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical) {
+    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) return EXT4_ERR_UNSUPPORTED;
+    if (logical < 12u) {
+        u32 b = le32(inode->i_block[logical]);
+        if (!b) return EXT4_OK;
+        ext4_status_t st = free_block(mnt, b);
+        if (st != EXT4_OK) return st;
+        inode->i_block[logical] = 0;
+        inode_add_blocks(mnt, inode, -1);
+        return EXT4_OK;
+    }
+    u32 per_block = (u32)(mnt->block_size / 4u);
+    if (logical >= 12u + per_block) return EXT4_ERR_UNSUPPORTED;
+    u32 indirect = le32(inode->i_block[12]);
+    if (!indirect) return EXT4_OK;
+    u8 block[MAX_BLOCK_SIZE];
+    ext4_status_t st = read_block(mnt, indirect, block);
+    if (st != EXT4_OK) return st;
+    u32 *entries = (u32 *)block;
+    u32 idx = logical - 12u;
+    u32 b = le32(entries[idx]);
+    if (!b) return EXT4_OK;
+    st = free_block(mnt, b);
+    if (st != EXT4_OK) return st;
+    put32(&entries[idx], 0);
+    bool any = false;
+    for (u32 i = 0; i < per_block; ++i) {
+        if (le32(entries[i]) != 0) { any = true; break; }
+    }
+    if (any) {
+        st = write_block(mnt, indirect, block);
+        if (st != EXT4_OK) return st;
+    } else {
+        st = free_block(mnt, indirect);
+        if (st != EXT4_OK) return st;
+        inode->i_block[12] = 0;
+        inode_add_blocks(mnt, inode, -1);
+    }
+    inode_add_blocks(mnt, inode, -1);
+    return EXT4_OK;
+}
+
+static ext4_status_t inode_zero_tail(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u64 size) {
+    if (size == 0 || (size % mnt->block_size) == 0) return EXT4_OK;
+    u64 logical64 = size / mnt->block_size;
+    if (logical64 > 0xffffffffull) return EXT4_ERR_RANGE;
+    u32 logical = (u32)logical64;
+    u32 off = (u32)(size % mnt->block_size);
+    u64 phys = 0;
+    ext4_status_t st = inode_block_for_write(mnt, inode, logical, &phys, false);
+    if (st != EXT4_OK) return st == EXT4_ERR_RANGE ? EXT4_OK : st;
+    u8 block[MAX_BLOCK_SIZE];
+    st = read_block(mnt, phys, block);
+    if (st != EXT4_OK) return st;
+    memset(block + off, 0, (usize)mnt->block_size - off);
+    return write_block(mnt, phys, block);
+}
+
+ext4_status_t ext4_write_file(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *inode, u64 offset, const void *buffer, usize bytes, usize *written_out) {
+    if (written_out) *written_out = 0;
+    if (!mnt || !inode || (!buffer && bytes)) return EXT4_ERR_IO;
+    if (!ext4_inode_is_regular(inode)) return EXT4_ERR_UNSUPPORTED;
+    const u8 *in = (const u8 *)buffer;
+    usize done = 0;
+    u8 block[MAX_BLOCK_SIZE];
+    while (done < bytes) {
+        u64 abs = 0;
+        if (!checked_add_u64(offset, (u64)done, &abs)) return EXT4_ERR_RANGE;
+        u64 logical64 = abs / mnt->block_size;
+        if (logical64 > 0xffffffffull) return EXT4_ERR_RANGE;
+        u32 logical = (u32)logical64;
+        u32 block_off = (u32)(abs % mnt->block_size);
+        u64 phys = 0;
+        ext4_status_t st = inode_block_for_write(mnt, inode, logical, &phys, true);
+        if (st != EXT4_OK) return st;
+        usize take = (usize)mnt->block_size - block_off;
+        if (take > bytes - done) take = bytes - done;
+        if (take != (usize)mnt->block_size) {
+            st = read_block(mnt, phys, block);
+            if (st != EXT4_OK) return st;
+        } else memset(block, 0, (usize)mnt->block_size);
+        memcpy(block + block_off, in + done, take);
+        st = write_block(mnt, phys, block);
+        if (st != EXT4_OK) return st;
+        done += take;
+    }
+    u64 end = 0;
+    if (!checked_add_u64(offset, (u64)done, &end)) return EXT4_ERR_RANGE;
+    if (end > ext4_inode_size(inode)) inode_set_size(inode, end);
+    ext4_status_t st = write_inode(mnt, ino, inode);
+    if (st != EXT4_OK) return st;
+    if (written_out) *written_out = done;
+    return EXT4_OK;
+}
+
+
+ext4_status_t ext4_truncate_file_path(ext4_mount_t *mnt, const char *path, u64 new_size) {
+    if (!mnt || !path) return EXT4_ERR_RANGE;
+    ext4_inode_disk_t inode;
+    u32 ino = 0;
+    ext4_status_t st = ext4_lookup_path(mnt, path, &inode, &ino);
+    if (st != EXT4_OK) return st;
+    if (ext4_inode_is_dir(&inode)) return EXT4_ERR_UNSUPPORTED;
+    if (!ext4_inode_is_regular(&inode)) return EXT4_ERR_UNSUPPORTED;
+    u64 old_size = ext4_inode_size(&inode);
+    u64 old_blocks64 = div_round_up_u64(old_size, mnt->block_size);
+    u64 new_blocks64 = div_round_up_u64(new_size, mnt->block_size);
+    if (old_blocks64 > 0xffffffffull || new_blocks64 > 0xffffffffull) return EXT4_ERR_RANGE;
+    if (new_blocks64 > 12ull + (mnt->block_size / 4u)) return EXT4_ERR_UNSUPPORTED;
+    if (new_blocks64 > old_blocks64) {
+        u8 zero[MAX_BLOCK_SIZE];
+        memset(zero, 0, (usize)mnt->block_size);
+        for (u64 l = old_blocks64; l < new_blocks64; ++l) {
+            u64 phys = 0;
+            st = inode_block_for_write(mnt, &inode, (u32)l, &phys, true);
+            if (st != EXT4_OK) return st;
+            st = write_block(mnt, phys, zero);
+            if (st != EXT4_OK) return st;
+        }
+    } else if (new_blocks64 < old_blocks64) {
+        for (u64 l = old_blocks64; l > new_blocks64; --l) {
+            st = inode_free_logical_block(mnt, &inode, (u32)(l - 1u));
+            if (st != EXT4_OK) return st;
+        }
+    }
+    st = inode_zero_tail(mnt, &inode, new_size);
+    if (st != EXT4_OK) return st;
+    inode_set_size(&inode, new_size);
+    return write_inode(mnt, ino, &inode);
+}
+
+static bool split_parent_path(const char *path, char *parent, usize parent_cap, char *name, usize name_cap) {
+    if (!path || !parent || !name || path[0] != '/') return false;
+    usize len = strnlen(path, VFS_PATH_MAX);
+    if (len == 0 || len >= VFS_PATH_MAX) return false;
+    while (len > 1 && path[len - 1] == '/') --len;
+    usize slash = len;
+    while (slash > 0 && path[slash - 1] != '/') --slash;
+    usize name_len = len - slash;
+    if (name_len == 0 || name_len > EXT4_NAME_LEN || name_len >= name_cap) return false;
+    memcpy(name, path + slash, name_len);
+    name[name_len] = 0;
+    if (slash <= 1) {
+        if (parent_cap < 2) return false;
+        parent[0] = '/'; parent[1] = 0;
+    } else {
+        usize plen = slash - 1;
+        if (plen >= parent_cap) return false;
+        memcpy(parent, path, plen);
+        parent[plen] = 0;
+    }
+    return true;
+}
+
+static void make_dirent_at(u8 *block, usize off, u32 ino, u16 rec_len, u8 type, const char *name) {
+    usize n = strlen(name);
+    ext4_dir_entry_2_t *de = (ext4_dir_entry_2_t *)(block + off);
+    de->inode = ino;
+    de->rec_len = rec_len;
+    de->name_len = (u8)n;
+    de->file_type = type;
+    memcpy(de->name, name, n);
+}
+
+static ext4_status_t dir_add_entry(ext4_mount_t *mnt, u32 dir_ino, ext4_inode_disk_t *dir, const char *name, u32 child_ino, u8 type) {
+    if (!ext4_inode_is_dir(dir)) return EXT4_ERR_NOT_DIR;
+    usize name_len = strlen(name);
+    if (name_len == 0 || name_len > EXT4_NAME_LEN) return EXT4_ERR_RANGE;
+    u16 need = ext4_rec_len(name_len);
+    u8 block[MAX_BLOCK_SIZE];
+    u64 size = ext4_inode_size(dir);
+    u32 blocks = (u32)div_round_up_u64(size ? size : mnt->block_size, mnt->block_size);
+    for (u32 logical = 0; logical < blocks; ++logical) {
+        u64 phys = 0;
+        ext4_status_t st = inode_block_for_write(mnt, dir, logical, &phys, false);
+        if (st != EXT4_OK) continue;
+        st = read_block(mnt, phys, block);
+        if (st != EXT4_OK) return st;
+        usize p = 0;
+        while (p + 8u <= mnt->block_size) {
+            ext4_dir_entry_2_t *de = (ext4_dir_entry_2_t *)(block + p);
+            u16 rec_len = le16(de->rec_len);
+            if (rec_len < 8 || p + rec_len > mnt->block_size) return EXT4_ERR_CORRUPT;
+            if (de->inode == 0 && rec_len >= need) {
+                make_dirent_at(block, p, child_ino, rec_len, type, name);
+                st = write_block(mnt, phys, block);
+                if (st != EXT4_OK) return st;
+                return write_inode(mnt, dir_ino, dir);
+            }
+            u16 used = ext4_rec_len(de->name_len);
+            if (de->inode != 0 && rec_len >= used + need) {
+                de->rec_len = used;
+                make_dirent_at(block, p + used, child_ino, rec_len - used, type, name);
+                st = write_block(mnt, phys, block);
+                if (st != EXT4_OK) return st;
+                return write_inode(mnt, dir_ino, dir);
+            }
+            p += rec_len;
+        }
+    }
+    u64 phys = 0;
+    ext4_status_t st = inode_block_for_write(mnt, dir, blocks, &phys, true);
+    if (st != EXT4_OK) return st;
+    memset(block, 0, (usize)mnt->block_size);
+    make_dirent_at(block, 0, child_ino, (u16)mnt->block_size, type, name);
+    st = write_block(mnt, phys, block);
+    if (st != EXT4_OK) return st;
+    inode_set_size(dir, size + mnt->block_size);
+    return write_inode(mnt, dir_ino, dir);
+}
+
+static ext4_status_t dir_remove_entry(ext4_mount_t *mnt, u32 dir_ino, ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out) {
+    u8 block[MAX_BLOCK_SIZE];
+    u64 size = ext4_inode_size(dir);
+    for (u64 off = 0; off < size; off += mnt->block_size) {
+        u64 phys = 0;
+        ext4_status_t st = inode_block_for_write(mnt, dir, (u32)(off / mnt->block_size), &phys, false);
+        if (st != EXT4_OK) return st;
+        st = read_block(mnt, phys, block);
+        if (st != EXT4_OK) return st;
+        usize p = 0;
+        while (p + 8u <= mnt->block_size) {
+            ext4_dir_entry_2_t *de = (ext4_dir_entry_2_t *)(block + p);
+            u16 rec_len = le16(de->rec_len);
+            if (rec_len < 8 || p + rec_len > mnt->block_size) return EXT4_ERR_CORRUPT;
+            if (de->inode && de->name_len == strlen(name) && memcmp(de->name, name, de->name_len) == 0) {
+                if (ino_out) *ino_out = le32(de->inode);
+                if (type_out) *type_out = de->file_type;
+                de->inode = 0;
+                st = write_block(mnt, phys, block);
+                if (st != EXT4_OK) return st;
+                return write_inode(mnt, dir_ino, dir);
+            }
+            p += rec_len;
+        }
+    }
+    return EXT4_ERR_NOT_FOUND;
+}
+
+static bool dir_is_empty_cb(const ext4_dirent_t *entry, void *ctx) {
+    bool *empty = (bool *)ctx;
+    if (strcmp(entry->name, ".") != 0 && strcmp(entry->name, "..") != 0) {
+        *empty = false;
+        return false;
+    }
+    return true;
+}
+
+static ext4_status_t free_inode_blocks(ext4_mount_t *mnt, ext4_inode_disk_t *inode) {
+    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) return EXT4_ERR_UNSUPPORTED;
+    for (u32 i = 0; i < 12u; ++i) {
+        u32 b = le32(inode->i_block[i]);
+        if (b) { ext4_status_t st = free_block(mnt, b); if (st != EXT4_OK) return st; inode->i_block[i] = 0; }
+    }
+    u32 indirect = le32(inode->i_block[12]);
+    if (indirect) {
+        u8 block[MAX_BLOCK_SIZE];
+        ext4_status_t st = read_block(mnt, indirect, block);
+        if (st != EXT4_OK) return st;
+        u32 *entries = (u32 *)block;
+        u32 per = (u32)(mnt->block_size / 4u);
+        for (u32 i = 0; i < per; ++i) {
+            u32 b = le32(entries[i]);
+            if (b) { st = free_block(mnt, b); if (st != EXT4_OK) return st; }
+        }
+        st = free_block(mnt, indirect);
+        if (st != EXT4_OK) return st;
+        inode->i_block[12] = 0;
+    }
+    inode_set_size(inode, 0);
+    inode->i_blocks_lo = 0;
+    return EXT4_OK;
+}
+
+static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, const void *data, usize size) {
+    char parent_path[VFS_PATH_MAX];
+    char name[EXT4_NAME_LEN + 1];
+    if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
+    ext4_inode_disk_t parent;
+    u32 parent_ino = 0;
+    ext4_status_t st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);
+    if (st != EXT4_OK) return st;
+    if (!ext4_inode_is_dir(&parent)) return EXT4_ERR_NOT_DIR;
+    u32 tmp_ino = 0;
+    if (ext4_find_in_dir(mnt, &parent, name, &tmp_ino, 0) == EXT4_OK) return EXT4_ERR_EXIST;
+    u32 ino = 0;
+    st = alloc_inode(mnt, dir, &ino);
+    if (st != EXT4_OK) return st;
+    ext4_inode_disk_t inode;
+    memset(&inode, 0, sizeof(inode));
+    inode.i_mode = (u16)((dir ? EXT4_IFDIR : EXT4_IFREG) | (dir ? 0755 : 0644));
+    inode.i_links_count = dir ? 2u : 1u;
+    if (dir) {
+        u64 b = 0;
+        st = alloc_block(mnt, &b);
+        if (st != EXT4_OK) goto fail_inode;
+        inode.i_block[0] = (u32)b;
+        inode_add_blocks(mnt, &inode, 1);
+        inode_set_size(&inode, mnt->block_size);
+        u8 blk[MAX_BLOCK_SIZE];
+        memset(blk, 0, (usize)mnt->block_size);
+        u16 dot = ext4_rec_len(1);
+        make_dirent_at(blk, 0, ino, dot, 2, ".");
+        make_dirent_at(blk, dot, parent_ino, (u16)(mnt->block_size - dot), 2, "..");
+        st = write_block(mnt, b, blk);
+        if (st != EXT4_OK) goto fail_blocks;
+    }
+    st = write_inode(mnt, ino, &inode);
+    if (st != EXT4_OK) goto fail_blocks;
+    st = dir_add_entry(mnt, parent_ino, &parent, name, ino, dir ? 2u : 1u);
+    if (st != EXT4_OK) goto fail_blocks;
+    if (dir) {
+        parent.i_links_count = (u16)(le16(parent.i_links_count) + 1u);
+        st = write_inode(mnt, parent_ino, &parent);
+        if (st != EXT4_OK) return st;
+    }
+    if (!dir && size) {
+        st = ext4_write_file(mnt, ino, &inode, 0, data, size, 0);
+        if (st != EXT4_OK) return st;
+    }
+    return EXT4_OK;
+fail_blocks:
+    (void)free_inode_blocks(mnt, &inode);
+fail_inode:
+    (void)free_inode(mnt, ino, dir);
+    return st;
+}
+
+ext4_status_t ext4_create_file(ext4_mount_t *mnt, const char *path, const void *data, usize size) {
+    if (size && !data) return EXT4_ERR_RANGE;
+    return create_node(mnt, path, false, data, size);
+}
+
+ext4_status_t ext4_mkdir(ext4_mount_t *mnt, const char *path) {
+    return create_node(mnt, path, true, 0, 0);
+}
+
+ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path) {
+    char parent_path[VFS_PATH_MAX];
+    char name[EXT4_NAME_LEN + 1];
+    if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
+    ext4_inode_disk_t parent;
+    u32 parent_ino = 0;
+    ext4_status_t st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);
+    if (st != EXT4_OK) return st;
+    u32 ino = 0;
+    u8 type = 0;
+    st = ext4_find_in_dir(mnt, &parent, name, &ino, &type);
+    if (st != EXT4_OK) return st;
+    ext4_inode_disk_t inode;
+    st = ext4_read_inode(mnt, ino, &inode);
+    if (st != EXT4_OK) return st;
+    bool is_dir = ext4_inode_is_dir(&inode);
+    if (is_dir) {
+        bool empty = true;
+        st = ext4_list_dir(mnt, &inode, dir_is_empty_cb, &empty);
+        if (st != EXT4_OK) return st;
+        if (!empty) return EXT4_ERR_NOT_EMPTY;
+    }
+    st = dir_remove_entry(mnt, parent_ino, &parent, name, 0, 0);
+    if (st != EXT4_OK) return st;
+    if (is_dir && le16(parent.i_links_count) > 0) {
+        parent.i_links_count = (u16)(le16(parent.i_links_count) - 1u);
+        st = write_inode(mnt, parent_ino, &parent);
+        if (st != EXT4_OK) return st;
+    }
+    st = free_inode_blocks(mnt, &inode);
+    if (st != EXT4_OK) return st;
+    memset(&inode, 0, sizeof(inode));
+    st = write_inode(mnt, ino, &inode);
+    if (st != EXT4_OK) return st;
+    return free_inode(mnt, ino, is_dir);
+}
+
+
+static ext4_status_t dir_update_dotdot(ext4_mount_t *mnt, ext4_inode_disk_t *dir, u32 new_parent_ino) {
+    if (!ext4_inode_is_dir(dir)) return EXT4_ERR_NOT_DIR;
+    u64 phys = 0;
+    ext4_status_t st = inode_block_for_write(mnt, dir, 0, &phys, false);
+    if (st != EXT4_OK) return st;
+    u8 block[MAX_BLOCK_SIZE];
+    st = read_block(mnt, phys, block);
+    if (st != EXT4_OK) return st;
+    usize p = 0;
+    while (p + 8u <= mnt->block_size) {
+        ext4_dir_entry_2_t *de = (ext4_dir_entry_2_t *)(block + p);
+        u16 rec_len = le16(de->rec_len);
+        if (rec_len < 8u || p + rec_len > mnt->block_size) return EXT4_ERR_CORRUPT;
+        if (de->inode && de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.') {
+            de->inode = new_parent_ino;
+            return write_block(mnt, phys, block);
+        }
+        p += rec_len;
+    }
+    return EXT4_ERR_CORRUPT;
+}
+
+ext4_status_t ext4_rename(ext4_mount_t *mnt, const char *old_path, const char *new_path) {
+    if (!mnt || !old_path || !new_path || strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0) return EXT4_ERR_RANGE;
+    char old_parent_path[VFS_PATH_MAX];
+    char new_parent_path[VFS_PATH_MAX];
+    char old_name[EXT4_NAME_LEN + 1];
+    char new_name[EXT4_NAME_LEN + 1];
+    if (!split_parent_path(old_path, old_parent_path, sizeof(old_parent_path), old_name, sizeof(old_name))) return EXT4_ERR_RANGE;
+    if (!split_parent_path(new_path, new_parent_path, sizeof(new_parent_path), new_name, sizeof(new_name))) return EXT4_ERR_RANGE;
+    if (strcmp(old_parent_path, new_parent_path) == 0 && strcmp(old_name, new_name) == 0) return EXT4_OK;
+
+    ext4_inode_disk_t old_parent, new_parent, inode;
+    u32 old_parent_ino = 0, new_parent_ino = 0, src_ino = 0, tmp_ino = 0;
+    u8 src_type = 0;
+    ext4_status_t st = ext4_lookup_path(mnt, old_parent_path, &old_parent, &old_parent_ino);
+    if (st != EXT4_OK) return st;
+    st = ext4_lookup_path(mnt, new_parent_path, &new_parent, &new_parent_ino);
+    if (st != EXT4_OK) return st;
+    if (!ext4_inode_is_dir(&old_parent) || !ext4_inode_is_dir(&new_parent)) return EXT4_ERR_NOT_DIR;
+    st = ext4_find_in_dir(mnt, &old_parent, old_name, &src_ino, &src_type);
+    if (st != EXT4_OK) return st;
+    if (ext4_find_in_dir(mnt, &new_parent, new_name, &tmp_ino, 0) == EXT4_OK) return EXT4_ERR_EXIST;
+    st = ext4_read_inode(mnt, src_ino, &inode);
+    if (st != EXT4_OK) return st;
+    bool is_dir = ext4_inode_is_dir(&inode);
+    if (!is_dir && !ext4_inode_is_regular(&inode)) return EXT4_ERR_UNSUPPORTED;
+    if (is_dir) {
+        usize old_len = strlen(old_path);
+        if (strncmp(new_path, old_path, old_len) == 0 && (new_path[old_len] == '/' || new_path[old_len] == 0)) return EXT4_ERR_RANGE;
+    }
+
+    st = dir_add_entry(mnt, new_parent_ino, &new_parent, new_name, src_ino, src_type);
+    if (st != EXT4_OK) return st;
+    if (old_parent_ino == new_parent_ino) old_parent = new_parent;
+    st = dir_remove_entry(mnt, old_parent_ino, &old_parent, old_name, 0, 0);
+    if (st != EXT4_OK) {
+        (void)dir_remove_entry(mnt, new_parent_ino, &new_parent, new_name, 0, 0);
+        return st;
+    }
+    if (is_dir && old_parent_ino != new_parent_ino) {
+        if (le16(old_parent.i_links_count) > 0) old_parent.i_links_count = (u16)(le16(old_parent.i_links_count) - 1u);
+        new_parent.i_links_count = (u16)(le16(new_parent.i_links_count) + 1u);
+        st = write_inode(mnt, old_parent_ino, &old_parent);
+        if (st != EXT4_OK) return st;
+        st = write_inode(mnt, new_parent_ino, &new_parent);
+        if (st != EXT4_OK) return st;
+        st = dir_update_dotdot(mnt, &inode, new_parent_ino);
+        if (st != EXT4_OK) return st;
+    }
     return EXT4_OK;
 }
 

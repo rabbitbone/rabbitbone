@@ -53,10 +53,13 @@ static void print_help(void) {
     kprintf("  ls [PATH]         list VFS directory\n");
     kprintf("  stat PATH         show VFS node metadata\n");
     kprintf("  cat PATH          print VFS file\n");
+    kprintf("  PIPELINE          run user programs connected by | with < > 2> redirection\n");
     kprintf("  write PATH TEXT   write TEXT to writable VFS file\n");
     kprintf("  mkdir PATH        create ramfs directory\n");
     kprintf("  touch PATH TEXT   create/replace ramfs file\n");
-    kprintf("  rm PATH           unlink ramfs file or empty dir\n");
+    kprintf("  rm PATH           unlink writable VFS file or empty dir\n");
+    kprintf("  mv OLD NEW        rename within same writable mount\n");
+    kprintf("  truncate PATH N   resize writable VFS file\n");
     kprintf("  ext4              raw EXT4 probe of first Linux MBR partition\n");
     kprintf("  syscall PATH      test syscall open/read on PATH\n");
     kprintf("  fdprobe PATH      open PATH and show fd metadata\n");
@@ -243,6 +246,177 @@ static int split_args(char *arg, const char **argv, int max_args) {
     return argc;
 }
 
+
+#define PIPELINE_MAX_STAGES 4u
+#define PIPELINE_MAX_TOKENS 16u
+
+typedef struct shell_pipeline_segment {
+    const char *argv[PROCESS_ARG_MAX];
+    int argc;
+    char path[VFS_PATH_MAX];
+    char in_path[VFS_PATH_MAX];
+    char out_path[VFS_PATH_MAX];
+    char err_path[VFS_PATH_MAX];
+} shell_pipeline_segment_t;
+
+static bool shell_copy_token(char *dst, usize dst_size, const char *src) {
+    if (!dst || !dst_size || !src || !*src) return false;
+    usize n = strnlen(src, dst_size);
+    if (n >= dst_size) return false;
+    memcpy(dst, src, n + 1u);
+    return true;
+}
+
+static bool shell_resolve_program(shell_pipeline_segment_t *seg, const char *name) {
+    if (!seg || !name || !*name) return false;
+    if (strcmp(name, "cat") == 0) name = "stdcat";
+    if (strchr(name, '/')) return shell_copy_token(seg->path, sizeof(seg->path), name);
+    const char prefix[] = "/bin/";
+    usize pn = sizeof(prefix) - 1u;
+    usize nn = strlen(name);
+    if (pn + nn + 1u > sizeof(seg->path)) return false;
+    memcpy(seg->path, prefix, pn);
+    memcpy(seg->path + pn, name, nn + 1u);
+    return true;
+}
+
+static bool parse_pipeline_segment(char *text, shell_pipeline_segment_t *seg) {
+    if (!text || !seg) return false;
+    memset(seg, 0, sizeof(*seg));
+    const char *tokens[PIPELINE_MAX_TOKENS];
+    int ntok = split_args(text, tokens, (int)PIPELINE_MAX_TOKENS);
+    if (ntok <= 0) return false;
+    for (int i = 0; i < ntok; ++i) {
+        const char *t = tokens[i];
+        if (strcmp(t, "<") == 0 || strcmp(t, ">") == 0 || strcmp(t, "2>") == 0) {
+            if (i + 1 >= ntok) return false;
+            char *dst = strcmp(t, "<") == 0 ? seg->in_path : strcmp(t, ">") == 0 ? seg->out_path : seg->err_path;
+            if (!shell_copy_token(dst, VFS_PATH_MAX, tokens[++i])) return false;
+            continue;
+        }
+        if (t[0] == '>' && t[1]) {
+            if (!shell_copy_token(seg->out_path, sizeof(seg->out_path), t + 1)) return false;
+            continue;
+        }
+        if (t[0] == '<' && t[1]) {
+            if (!shell_copy_token(seg->in_path, sizeof(seg->in_path), t + 1)) return false;
+            continue;
+        }
+        if (t[0] == '2' && t[1] == '>' && t[2]) {
+            if (!shell_copy_token(seg->err_path, sizeof(seg->err_path), t + 2)) return false;
+            continue;
+        }
+        if (seg->argc >= (int)PROCESS_ARG_MAX) return false;
+        seg->argv[seg->argc++] = t;
+    }
+    if (seg->argc <= 0) return false;
+    if (!shell_resolve_program(seg, seg->argv[0])) return false;
+    seg->argv[0] = seg->path;
+    return true;
+}
+
+static void release_snapshot_range(u8 *snapshots, usize snapshot_size, usize first, usize count) {
+    if (!snapshots || !snapshot_size) return;
+    for (usize i = first; i < count; ++i) {
+        syscall_release_user_handle_snapshot(snapshots + i * snapshot_size, snapshot_size);
+    }
+}
+
+static void cmd_pipeline(char *line) {
+    char *parts[PIPELINE_MAX_STAGES];
+    shell_pipeline_segment_t segs[PIPELINE_MAX_STAGES];
+    usize stages = 0;
+    char *p = line;
+    while (p && stages < PIPELINE_MAX_STAGES) {
+        parts[stages++] = p;
+        char *bar = strchr(p, '|');
+        if (!bar) break;
+        *bar = 0;
+        p = bar + 1;
+    }
+    if (strchr(p ? p : "", '|')) { kprintf("pipeline: too many stages (max %u)\n", PIPELINE_MAX_STAGES); return; }
+    for (usize i = 0; i < stages; ++i) {
+        while (*parts[i] == ' ' || *parts[i] == '\t') ++parts[i];
+        if (!parse_pipeline_segment(parts[i], &segs[i])) { kprintf("pipeline: invalid stage %llu\n", (unsigned long long)i); return; }
+        if (i > 0 && segs[i].in_path[0]) { kprintf("pipeline: input redirection conflicts with pipe at stage %llu\n", (unsigned long long)i); return; }
+        if (i + 1u < stages && segs[i].out_path[0]) { kprintf("pipeline: output redirection conflicts with pipe at stage %llu\n", (unsigned long long)i); return; }
+    }
+    usize snapshot_size = syscall_user_handle_snapshot_size();
+    u8 *snapshots = (u8 *)kmalloc(snapshot_size * stages);
+    if (!snapshots) { kprintf("pipeline: no memory\n"); return; }
+    memset(snapshots, 0, snapshot_size * stages);
+    for (usize i = 0; i < stages; ++i) syscall_prepare_user_handle_snapshot(snapshots + i * snapshot_size, snapshot_size);
+
+    bool ok = true;
+    for (usize i = 0; ok && i < stages; ++i) {
+        u8 *snap = snapshots + i * snapshot_size;
+        if (segs[i].in_path[0] && !syscall_snapshot_open_vfs(snap, snapshot_size, AURORA_STDIN, segs[i].in_path, 0, false)) ok = false;
+        if (segs[i].out_path[0] && !syscall_snapshot_open_vfs(snap, snapshot_size, AURORA_STDOUT, segs[i].out_path, 0, true)) ok = false;
+        if (segs[i].err_path[0] && !syscall_snapshot_open_vfs(snap, snapshot_size, AURORA_STDERR, segs[i].err_path, 0, true)) ok = false;
+    }
+    for (usize i = 0; ok && i + 1u < stages; ++i) {
+        if (!syscall_snapshot_pipe_between(snapshots + i * snapshot_size, snapshot_size, AURORA_STDOUT,
+                                           snapshots + (i + 1u) * snapshot_size, snapshot_size, AURORA_STDIN)) ok = false;
+    }
+    if (!ok) {
+        kprintf("pipeline: fd setup failed\n");
+        release_snapshot_range(snapshots, snapshot_size, 0, stages);
+        kfree(snapshots);
+        return;
+    }
+
+    u32 pids[PIPELINE_MAX_STAGES];
+    memset(pids, 0, sizeof(pids));
+    usize spawned = 0;
+    for (; spawned < stages; ++spawned) {
+        process_status_t st = process_spawn_async_snapshot(segs[spawned].argv[0], segs[spawned].argc, segs[spawned].argv,
+                                                           snapshots + spawned * snapshot_size, snapshot_size, &pids[spawned]);
+        if (st != PROC_OK) {
+            kprintf("pipeline: spawn %s failed: %s\n", segs[spawned].argv[0], process_status_name(st));
+            break;
+        }
+    }
+    if (spawned < stages) {
+        release_snapshot_range(snapshots, snapshot_size, spawned, stages);
+        kfree(snapshots);
+        if (spawned > 0) {
+            process_result_t root;
+            (void)process_run_until_idle(pids[0], &root);
+        }
+        return;
+    }
+    kfree(snapshots);
+    process_result_t root;
+    memset(&root, 0, sizeof(root));
+    bool ran = process_run_until_idle(pids[0], &root);
+    if (!ran) { kprintf("pipeline: scheduler did not complete root pid=%u\n", pids[0]); return; }
+    for (usize i = 0; i < stages; ++i) {
+        process_info_t info;
+        if (process_lookup(pids[i], &info)) {
+            kprintf("[%u] %s exit=%d state=%u status=%s\n", pids[i], segs[i].argv[0], info.exit_code, info.state, process_status_name((process_status_t)info.status));
+        }
+    }
+}
+
+
+static void cmd_mv(const char *arg) {
+    const char *argv[2];
+    int argc = split_args((char *)arg, argv, 2);
+    if (argc != 2) { kprintf("usage: mv OLD NEW\n"); return; }
+    vfs_status_t st = vfs_rename(argv[0], argv[1]);
+    if (st != VFS_OK) kprintf("mv: %s\n", vfs_status_name(st));
+}
+
+static void cmd_truncate(const char *arg) {
+    const char *argv[2];
+    int argc = split_args((char *)arg, argv, 2);
+    if (argc != 2) { kprintf("usage: truncate PATH SIZE\n"); return; }
+    u64 size = 0;
+    if (!parse_u64_dec_checked(argv[1], &size)) { kprintf("truncate: invalid size\n"); return; }
+    vfs_status_t st = vfs_truncate(argv[0], size);
+    if (st != VFS_OK) kprintf("truncate: %s\n", vfs_status_name(st));
+}
+
 static void cmd_run(char *arg) {
     const char *argv[PROCESS_ARG_MAX];
     int argc = split_args(arg, argv, (int)PROCESS_ARG_MAX);
@@ -324,6 +498,7 @@ static void cmd_elf(const char *path) {
 
 static void execute(char *line) {
     while (*line == ' ' || *line == '\t') ++line;
+    if (strchr(line, '|')) { cmd_pipeline(line); return; }
     char *arg = strchr(line, ' ');
     if (arg) { *arg++ = 0; while (*arg == ' ') ++arg; }
     else arg = line + strlen(line);
@@ -347,6 +522,8 @@ static void execute(char *line) {
     else if (strcmp(line, "touch") == 0) cmd_write(arg, true);
     else if (strcmp(line, "mkdir") == 0) { vfs_status_t st = vfs_mkdir(arg); if (st != VFS_OK) kprintf("mkdir: %s\n", vfs_status_name(st)); }
     else if (strcmp(line, "rm") == 0) { vfs_status_t st = vfs_unlink(arg); if (st != VFS_OK) kprintf("rm: %s\n", vfs_status_name(st)); }
+    else if (strcmp(line, "mv") == 0) cmd_mv(arg);
+    else if (strcmp(line, "truncate") == 0) cmd_truncate(arg);
     else if (strcmp(line, "ext4") == 0) cmd_ext4();
     else if (strcmp(line, "syscall") == 0) cmd_syscall(arg);
     else if (strcmp(line, "fdprobe") == 0) cmd_fdprobe(arg);

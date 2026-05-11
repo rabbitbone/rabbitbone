@@ -18,6 +18,7 @@ typedef enum block_status {
 
 struct block_device;
 typedef block_status_t (*block_read_fn)(struct block_device *dev, u64 lba, u32 count, void *buffer);
+typedef block_status_t (*block_write_fn)(struct block_device *dev, u64 lba, u32 count, const void *buffer);
 
 typedef struct block_device {
     char name[16];
@@ -25,12 +26,14 @@ typedef struct block_device {
     u32 sector_size;
     void *ctx;
     block_read_fn read;
+    block_write_fn write;
 } block_device_t;
 
 void block_register(block_device_t *dev);
 block_device_t *block_get(usize index);
 usize block_count(void);
 block_status_t block_read(block_device_t *dev, u64 lba, u32 count, void *buffer);
+block_status_t block_write(block_device_t *dev, u64 lba, u32 count, const void *buffer);
 const char *block_status_name(block_status_t status);
 void ata_pio_init(void);
 

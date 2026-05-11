@@ -2,6 +2,15 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.25
+
+Stage 19.1 EXT4 mutation runtime update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.25` / `0x00000119`.
+- Added the latest filesystem, syscall, console, tty, descriptor, and userland runtime changes from the source update.
+- Extended userland coverage with pipe, poll, fd remap, stdio-style cat, and terminal checks.
+- Kept the GitHub release pipeline focused on building the raw VMware image and verifying the release version contract.
+
 ## 0.0.1.15
 
 Stage 10 exec and descriptor-control update.

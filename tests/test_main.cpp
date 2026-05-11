@@ -116,6 +116,16 @@ static block_status_t mem_read(block_device_t *dev, u64 lba, u32 count, void *bu
     return BLOCK_OK;
 }
 
+static block_status_t mem_write(block_device_t *dev, u64 lba, u32 count, const void *buffer) {
+    auto *disk = static_cast<MemDisk *>(dev->ctx);
+    if (lba > UINT64_MAX / 512ull || static_cast<u64>(count) > UINT64_MAX / 512ull) return BLOCK_ERR_RANGE;
+    const u64 off = lba * 512ull;
+    const u64 len = static_cast<u64>(count) * 512ull;
+    if (off > disk->data.size() || len > disk->data.size() - off) return BLOCK_ERR_RANGE;
+    memcpy(disk->data.data() + off, buffer, static_cast<std::size_t>(len));
+    return BLOCK_OK;
+}
+
 static block_status_t fail_read(block_device_t *, u64, u32, void *) {
     return BLOCK_ERR_IO;
 }
@@ -218,6 +228,7 @@ static void test_ext4_minimal() {
     dev.sector_size = 512;
     dev.ctx = &disk;
     dev.read = mem_read;
+    dev.write = mem_write;
 
     // Superblock at byte 1024, block size 1024.
     const std::size_t sb = 1024;
@@ -232,9 +243,15 @@ static void test_ext4_minimal() {
     put16(disk.data, sb + 88, 128);    // inode size
     put16(disk.data, sb + 254, 32);    // desc size
 
-    // Group descriptor table at block 2, inode table at block 5.
+    // Group descriptor table at block 2, bitmaps at 3/4, inode table at 5.
     const std::size_t gd = 2048;
+    put32(disk.data, gd + 0, 3);
+    put32(disk.data, gd + 4, 4);
     put32(disk.data, gd + 8, 5);
+    put16(disk.data, gd + 12, 63 - 10);
+    put16(disk.data, gd + 14, 16 - 12);
+    for (u32 b = 0; b <= 10; ++b) disk.data[3 * 1024 + b / 8] |= static_cast<u8>(1u << (b % 8));
+    for (u32 ino_b = 0; ino_b < 12; ++ino_b) disk.data[4 * 1024 + ino_b / 8] |= static_cast<u8>(1u << (ino_b % 8));
 
     // Root inode #2 at inode table + 1 * 128.
     const std::size_t root = 5 * 1024 + 128;
@@ -258,6 +275,24 @@ static void test_ext4_minimal() {
     require(found == 1, "ext4 found hello.txt");
     u32 ino = 0;
     require(ext4_find_in_dir(&mnt, &inode, "hello.txt", &ino, nullptr) == EXT4_OK && ino == 12, "ext4 find in dir");
+    const char payload[] = "persistent ext4 write";
+    require(ext4_create_file(&mnt, "/new.txt", payload, sizeof(payload) - 1) == EXT4_OK, "ext4 create file");
+    ext4_inode_disk_t created{};
+    u32 created_ino = 0;
+    require(ext4_lookup_path(&mnt, "/new.txt", &created, &created_ino) == EXT4_OK && ext4_inode_is_regular(&created), "ext4 lookup created file");
+    char readback[64]{};
+    usize rb = 0;
+    require(ext4_read_file(&mnt, &created, 0, readback, sizeof(readback), &rb) == EXT4_OK && rb == sizeof(payload) - 1 && strcmp(readback, payload) == 0, "ext4 read created file");
+    const char patch[] = "EXT4";
+    require(ext4_write_file(&mnt, created_ino, &created, 11, patch, sizeof(patch) - 1, nullptr) == EXT4_OK, "ext4 overwrite created file");
+    memset(readback, 0, sizeof(readback)); rb = 0;
+    require(ext4_read_file(&mnt, &created, 0, readback, sizeof(readback), &rb) == EXT4_OK && strstr(readback, "EXT4") != nullptr, "ext4 read overwritten data");
+    require(ext4_mkdir(&mnt, "/dir") == EXT4_OK, "ext4 mkdir");
+    require(ext4_create_file(&mnt, "/dir/child", "x", 1) == EXT4_OK, "ext4 create child in directory");
+    require(ext4_unlink(&mnt, "/dir") == EXT4_ERR_NOT_EMPTY, "ext4 refuses unlink non-empty dir");
+    require(ext4_unlink(&mnt, "/dir/child") == EXT4_OK, "ext4 unlink child");
+    require(ext4_unlink(&mnt, "/dir") == EXT4_OK, "ext4 unlink empty dir");
+    require(ext4_unlink(&mnt, "/new.txt") == EXT4_OK, "ext4 unlink file");
 
     // 32-byte group descriptors must not read high fields from the next descriptor.
     put32(disk.data, gd + 40, 0x7fffffffu);
@@ -288,6 +323,7 @@ static ext4_status_t mount_mem_ext4(std::vector<u8> &data) {
     dev.sector_size = 512;
     dev.ctx = &disk;
     dev.read = mem_read;
+    dev.write = mem_write;
     ext4_mount_t mnt;
     return ext4_mount(&dev, 0, &mnt);
 }
@@ -316,6 +352,7 @@ static void test_ext4_corrupt_inputs() {
     dev.sector_size = 512;
     dev.ctx = &disk;
     dev.read = mem_read;
+    dev.write = mem_write;
     ext4_mount_t mnt;
     require(ext4_mount(&dev, 0, &mnt) == EXT4_OK, "ext4 corrupt extent base mount");
     ext4_inode_disk_t inode{};

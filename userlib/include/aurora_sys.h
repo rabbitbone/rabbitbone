@@ -47,6 +47,15 @@ enum au_syscall_id {
     AU_SYS_EXECV = AURORA_SYS_EXECV,
     AU_SYS_FDCTL = AURORA_SYS_FDCTL,
     AU_SYS_EXECVE = AURORA_SYS_EXECVE,
+    AU_SYS_PIPE = AURORA_SYS_PIPE,
+    AU_SYS_PIPEINFO = AURORA_SYS_PIPEINFO,
+    AU_SYS_DUP2 = AURORA_SYS_DUP2,
+    AU_SYS_POLL = AURORA_SYS_POLL,
+    AU_SYS_TTY_GETINFO = AURORA_SYS_TTY_GETINFO,
+    AU_SYS_TTY_SETMODE = AURORA_SYS_TTY_SETMODE,
+    AU_SYS_TTY_READKEY = AURORA_SYS_TTY_READKEY,
+    AU_SYS_TRUNCATE = AURORA_SYS_TRUNCATE,
+    AU_SYS_RENAME = AURORA_SYS_RENAME,
 };
 
 typedef struct au_result {
@@ -68,6 +77,13 @@ typedef aurora_fdinfo_t au_fdinfo_t;
 typedef aurora_dirent_t au_dirent_t;
 typedef aurora_preemptinfo_t au_preemptinfo_t;
 typedef aurora_schedinfo_t au_schedinfo_t;
+typedef aurora_pipeinfo_t au_pipeinfo_t;
+typedef aurora_ttyinfo_t au_ttyinfo_t;
+typedef aurora_key_event_t au_key_event_t;
+
+#define AU_STDIN AURORA_STDIN
+#define AU_STDOUT AURORA_STDOUT
+#define AU_STDERR AURORA_STDERR
 
 AURORA_ABI_STATIC_ASSERT(au_procinfo_alias_size, sizeof(au_procinfo_t) == sizeof(aurora_procinfo_t));
 AURORA_ABI_STATIC_ASSERT(au_schedinfo_alias_size, sizeof(au_schedinfo_t) == sizeof(aurora_schedinfo_t));
@@ -114,6 +130,8 @@ au_i64 au_seek(au_i64 h, au_u64 off);
 au_i64 au_create(const char *path, const void *data, au_usize n);
 au_i64 au_mkdir(const char *path);
 au_i64 au_unlink(const char *path);
+au_i64 au_truncate(const char *path, au_u64 size);
+au_i64 au_rename(const char *old_path, const char *new_path);
 au_i64 au_stat(const char *path, au_stat_t *out);
 au_i64 au_log(const char *msg);
 au_i64 au_ticks(void);
@@ -131,6 +149,13 @@ au_i64 au_exec(const char *path);
 au_i64 au_execv(const char *path, unsigned int argc, const char *const *argv);
 au_i64 au_execve(const char *path, unsigned int argc, const char *const *argv, unsigned int envc, const char *const *envp);
 au_i64 au_fdctl(au_i64 h, unsigned int op, unsigned int flags);
+au_i64 au_pipe(unsigned int out_handles[2]);
+au_i64 au_pipeinfo(au_i64 h, au_pipeinfo_t *out);
+au_i64 au_dup2(au_i64 src, au_i64 target, unsigned int flags);
+au_i64 au_poll(au_i64 h, unsigned int events);
+au_i64 au_tty_getinfo(au_ttyinfo_t *out);
+au_i64 au_tty_setmode(unsigned int mode);
+au_i64 au_tty_readkey(au_key_event_t *out, unsigned int flags);
 au_i64 au_dup(au_i64 h);
 au_i64 au_tell(au_i64 h);
 au_i64 au_fstat(au_i64 h, au_stat_t *out);

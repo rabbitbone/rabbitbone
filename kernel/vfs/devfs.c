@@ -6,7 +6,7 @@
 #include <aurora/drivers.h>
 #include <aurora/spinlock.h>
 
-typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_RANDOM, DEV_KMSG } dev_kind_t;
+typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_RANDOM, DEV_KMSG, DEV_TTY } dev_kind_t;
 
 typedef struct devfs_entry {
     const char *name;
@@ -24,6 +24,7 @@ static const devfs_entry_t entries[] = {
     { "zero", DEV_ZERO, 2 },
     { "random", DEV_RANDOM, 3 },
     { "kmsg", DEV_KMSG, 4 },
+    { "tty", DEV_TTY, 5 },
 };
 
 static devfs_entry_t const *find_entry(const char *path) {
@@ -88,6 +89,17 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
             if (read_out) *read_out = size;
             return VFS_OK;
         }
+        case DEV_TTY: {
+            usize n = 0;
+            while (n < size) {
+                char c = 0;
+                if (!keyboard_getc(&c)) break;
+                out[n++] = (u8)c;
+                if (c == '\n') break;
+            }
+            if (read_out) *read_out = n;
+            return VFS_OK;
+        }
         case DEV_KMSG: {
             static const char msg[] = "kmsg is exposed through the logs shell command\n";
             usize len = sizeof(msg) - 1u;
@@ -108,6 +120,13 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
     const devfs_entry_t *e = find_entry(path);
     if (!e) return VFS_ERR_NOENT;
     if (e->kind == DEV_NULL) {
+        if (written_out) *written_out = size;
+        return VFS_OK;
+    }
+    if (e->kind == DEV_TTY) {
+        if (size && !buffer) return VFS_ERR_INVAL;
+        const char *s = (const char *)buffer;
+        for (usize i = 0; i < size; ++i) console_putc(s[i]);
         if (written_out) *written_out = size;
         return VFS_OK;
     }

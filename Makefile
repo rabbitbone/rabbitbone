@@ -17,13 +17,13 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-p
 USER_ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 -T user/user.ld
 
-USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck execfdcheck execvecheck exectarget
+USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck execfdcheck execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)
 
-K_CFLAGS := --target=x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
-K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T scripts/kernel.ld -Map=$(BUILD)/kernel.map
 RUSTFLAGS := $(RUST_SYSROOT_FLAG) --target $(RUST_TARGET) --edition=2021 -C panic=abort -C relocation-model=static -C code-model=large -C no-redzone=yes -C opt-level=2 --crate-type lib --emit obj
@@ -38,6 +38,7 @@ K_C_SRCS := \
   kernel/core/printf.c \
   kernel/core/shell.c \
   kernel/core/timer.c \
+  kernel/core/tty.c \
   kernel/lib/bitmap.c \
   kernel/lib/string.c \
   kernel/lib/ringbuf.c \
@@ -136,7 +137,7 @@ $(BUILD)/user/regtrash.elf: $(BUILD)/user/regtrash.asm.o user/user.ld
 
 $(BUILD)/user_bins.c: scripts/bin2c.py $(USER_ELFS)
 	mkdir -p $(dir $@)
-	python3 scripts/bin2c.py --out $@ $(BUILD)/user/hello.elf:/bin/hello $(BUILD)/user/fscheck.elf:/bin/fscheck $(BUILD)/user/writetest.elf:/bin/writetest $(BUILD)/user/regtrash.elf:/bin/regtrash $(BUILD)/user/badptr.elf:/bin/badptr $(BUILD)/user/badpath.elf:/bin/badpath $(BUILD)/user/statcheck.elf:/bin/statcheck $(BUILD)/user/procstat.elf:/bin/procstat $(BUILD)/user/spawncheck.elf:/bin/spawncheck $(BUILD)/user/schedcheck.elf:/bin/schedcheck $(BUILD)/user/preemptcheck.elf:/bin/preemptcheck $(BUILD)/user/fdcheck.elf:/bin/fdcheck $(BUILD)/user/isolate.elf:/bin/isolate $(BUILD)/user/fdleak.elf:/bin/fdleak $(BUILD)/user/forkcheck.elf:/bin/forkcheck $(BUILD)/user/procctl.elf:/bin/procctl $(BUILD)/user/execcheck.elf:/bin/execcheck $(BUILD)/user/execfdcheck.elf:/bin/execfdcheck $(BUILD)/user/execvecheck.elf:/bin/execvecheck $(BUILD)/user/exectarget.elf:/bin/exectarget
+	python3 scripts/bin2c.py --out $@ $(BUILD)/user/hello.elf:/bin/hello $(BUILD)/user/fscheck.elf:/bin/fscheck $(BUILD)/user/writetest.elf:/bin/writetest $(BUILD)/user/regtrash.elf:/bin/regtrash $(BUILD)/user/badptr.elf:/bin/badptr $(BUILD)/user/badpath.elf:/bin/badpath $(BUILD)/user/statcheck.elf:/bin/statcheck $(BUILD)/user/procstat.elf:/bin/procstat $(BUILD)/user/spawncheck.elf:/bin/spawncheck $(BUILD)/user/schedcheck.elf:/bin/schedcheck $(BUILD)/user/preemptcheck.elf:/bin/preemptcheck $(BUILD)/user/fdcheck.elf:/bin/fdcheck $(BUILD)/user/isolate.elf:/bin/isolate $(BUILD)/user/fdleak.elf:/bin/fdleak $(BUILD)/user/forkcheck.elf:/bin/forkcheck $(BUILD)/user/procctl.elf:/bin/procctl $(BUILD)/user/execcheck.elf:/bin/execcheck $(BUILD)/user/execfdcheck.elf:/bin/execfdcheck $(BUILD)/user/execvecheck.elf:/bin/execvecheck $(BUILD)/user/exectarget.elf:/bin/exectarget $(BUILD)/user/pipecheck.elf:/bin/pipecheck $(BUILD)/user/fdremapcheck.elf:/bin/fdremapcheck $(BUILD)/user/pollcheck.elf:/bin/pollcheck $(BUILD)/user/stdcat.elf:/bin/stdcat $(BUILD)/user/termcheck.elf:/bin/termcheck
 
 $(BUILD)/user_bins.o: $(BUILD)/user_bins.c
 	mkdir -p $(dir $@)

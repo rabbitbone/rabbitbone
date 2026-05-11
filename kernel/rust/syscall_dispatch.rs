@@ -58,6 +58,15 @@ pub enum SyscallNo {
     ExecV = 31,
     FdCtl = 32,
     ExecVe = 33,
+    Pipe = 34,
+    PipeInfo = 35,
+    Dup2 = 36,
+    Poll = 37,
+    TtyGetInfo = 38,
+    TtySetMode = 39,
+    TtyReadKey = 40,
+    Truncate = 41,
+    Rename = 42,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -77,6 +86,13 @@ const MAX_PROCESS_ENVS: u64 = 8;
 const FD_CLOEXEC: u64 = 1;
 const FDCTL_GET: u64 = 0;
 const FDCTL_SET: u64 = 1;
+const POLL_READ: u64 = 1;
+const POLL_WRITE: u64 = 2;
+const POLL_HUP: u64 = 4;
+const TTY_MODE_RAW: u64 = 1;
+const TTY_MODE_ECHO: u64 = 2;
+const TTY_MODE_CANON: u64 = 4;
+const TTY_READ_NONBLOCK: u64 = 1;
 
 impl SyscallNo {
     pub const fn decode(raw: u64) -> Result<Self, DecodeError> {
@@ -115,6 +131,15 @@ impl SyscallNo {
             31 => Ok(Self::ExecV),
             32 => Ok(Self::FdCtl),
             33 => Ok(Self::ExecVe),
+            34 => Ok(Self::Pipe),
+            35 => Ok(Self::PipeInfo),
+            36 => Ok(Self::Dup2),
+            37 => Ok(Self::Poll),
+            38 => Ok(Self::TtyGetInfo),
+            39 => Ok(Self::TtySetMode),
+            40 => Ok(Self::TtyReadKey),
+            41 => Ok(Self::Truncate),
+            42 => Ok(Self::Rename),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -155,6 +180,15 @@ impl SyscallNo {
             Self::ExecV => b"execv\0",
             Self::FdCtl => b"fdctl\0",
             Self::ExecVe => b"execve\0",
+            Self::Pipe => b"pipe\0",
+            Self::PipeInfo => b"pipeinfo\0",
+            Self::Dup2 => b"dup2\0",
+            Self::Poll => b"poll\0",
+            Self::TtyGetInfo => b"tty_getinfo\0",
+            Self::TtySetMode => b"tty_setmode\0",
+            Self::TtyReadKey => b"tty_readkey\0",
+            Self::Truncate => b"truncate\0",
+            Self::Rename => b"rename\0",
         }
     }
 }
@@ -194,9 +228,18 @@ extern "C" {
     fn aurora_sys_execv(path: u64, argc: u64, argv: u64) -> SyscallResult;
     fn aurora_sys_fdctl(handle: u64, op: u64, flags: u64) -> SyscallResult;
     fn aurora_sys_execve(path: u64, argc: u64, argv: u64, envc: u64, envp: u64) -> SyscallResult;
+    fn aurora_sys_pipe(out: u64) -> SyscallResult;
+    fn aurora_sys_pipeinfo(handle: u64, out: u64) -> SyscallResult;
+    fn aurora_sys_dup2(src: u64, target: u64, flags: u64) -> SyscallResult;
+    fn aurora_sys_poll(handle: u64, events: u64) -> SyscallResult;
+    fn aurora_sys_tty_getinfo(out: u64) -> SyscallResult;
+    fn aurora_sys_tty_setmode(mode: u64) -> SyscallResult;
+    fn aurora_sys_tty_readkey(out: u64, flags: u64) -> SyscallResult;
+    fn aurora_sys_truncate(path: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_rename(old_path: u64, new_path: u64) -> SyscallResult;
 }
 
-fn valid_handle(h: u64) -> bool { h > 0 && h < MAX_HANDLES }
+fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
@@ -250,6 +293,33 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::FdCtl => {
             if !valid_handle(a.a0) || (a.a1 != FDCTL_GET && a.a1 != FDCTL_SET) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
+        SyscallNo::Pipe => {
+            if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::PipeInfo => {
+            if !valid_handle(a.a0) || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Dup2 => {
+            if !valid_handle(a.a0) || !valid_handle(a.a1) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Poll => {
+            if !valid_handle(a.a0) || a.a1 == 0 || (a.a1 & !(POLL_READ | POLL_WRITE | POLL_HUP)) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::TtyGetInfo => {
+            if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::TtySetMode => {
+            if (a.a0 & !(TTY_MODE_RAW | TTY_MODE_ECHO | TTY_MODE_CANON)) != 0 || ((a.a0 & TTY_MODE_RAW) != 0 && (a.a0 & TTY_MODE_CANON) != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::TtyReadKey => {
+            if a.a0 == 0 || (a.a1 & !TTY_READ_NONBLOCK) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Truncate => {
+            if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Rename => {
+            if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
     }
 }
 
@@ -298,6 +368,15 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::ExecV => aurora_sys_execv(args.a0, args.a1, args.a2),
             SyscallNo::FdCtl => aurora_sys_fdctl(args.a0, args.a1, args.a2),
             SyscallNo::ExecVe => aurora_sys_execve(args.a0, args.a1, args.a2, args.a3, args.a4),
+            SyscallNo::Pipe => aurora_sys_pipe(args.a0),
+            SyscallNo::PipeInfo => aurora_sys_pipeinfo(args.a0, args.a1),
+            SyscallNo::Dup2 => aurora_sys_dup2(args.a0, args.a1, args.a2),
+            SyscallNo::Poll => aurora_sys_poll(args.a0, args.a1),
+            SyscallNo::TtyGetInfo => aurora_sys_tty_getinfo(args.a0),
+            SyscallNo::TtySetMode => aurora_sys_tty_setmode(args.a0),
+            SyscallNo::TtyReadKey => aurora_sys_tty_readkey(args.a0, args.a1),
+            SyscallNo::Truncate => aurora_sys_truncate(args.a0, args.a1),
+            SyscallNo::Rename => aurora_sys_rename(args.a0, args.a1),
         }
     }
 }
@@ -333,11 +412,20 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(31) != Ok(SyscallNo::ExecV) { return false; }
     if SyscallNo::decode(32) != Ok(SyscallNo::FdCtl) { return false; }
     if SyscallNo::decode(33) != Ok(SyscallNo::ExecVe) { return false; }
-    if SyscallNo::decode(34) != Err(DecodeError::Unsupported) { return false; }
+    if SyscallNo::decode(34) != Ok(SyscallNo::Pipe) { return false; }
+    if SyscallNo::decode(35) != Ok(SyscallNo::PipeInfo) { return false; }
+    if SyscallNo::decode(36) != Ok(SyscallNo::Dup2) { return false; }
+    if SyscallNo::decode(37) != Ok(SyscallNo::Poll) { return false; }
+    if SyscallNo::decode(38) != Ok(SyscallNo::TtyGetInfo) { return false; }
+    if SyscallNo::decode(39) != Ok(SyscallNo::TtySetMode) { return false; }
+    if SyscallNo::decode(40) != Ok(SyscallNo::TtyReadKey) { return false; }
+    if SyscallNo::decode(41) != Ok(SyscallNo::Truncate) { return false; }
+    if SyscallNo::decode(42) != Ok(SyscallNo::Rename) { return false; }
+    if SyscallNo::decode(43) != Err(DecodeError::Unsupported) { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
-    if validate_args(SyscallNo::Read, SysArgs { a0: 0, a1: 0x10000, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Read, SysArgs { a0: 0, a1: 0x10000, a2: 1, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Read, SysArgs { a0: 1, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Read, SysArgs { a0: 1, a1: 0x10000, a2: MAX_IO_BYTES + 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Seek, SysArgs { a0: 1, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
@@ -367,13 +455,30 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::SchedInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::PreemptInfo, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::PreemptInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
-    if validate_args(SyscallNo::Dup, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
-    if validate_args(SyscallNo::Dup, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Dup, SysArgs { a0: MAX_HANDLES, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Dup, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::FdCtl, SysArgs { a0: 1, a1: FDCTL_SET, a2: FD_CLOEXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::FdCtl, SysArgs { a0: 1, a1: 7, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Pipe, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Pipe, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::PipeInfo, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::PipeInfo, SysArgs { a0: 1, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Dup2, SysArgs { a0: 1, a1: 2, a2: FD_CLOEXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Dup2, SysArgs { a0: 1, a1: MAX_HANDLES, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Dup2, SysArgs { a0: 1, a1: 2, a2: FD_CLOEXEC << 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Poll, SysArgs { a0: 1, a1: POLL_READ | POLL_WRITE, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Poll, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Fstat, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::FdInfo, SysArgs { a0: 1, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::ReadDir, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::ReadDir, SysArgs { a0: 1, a1: 0, a2: 0x10000, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::TtyGetInfo, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::TtyGetInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::TtySetMode, SysArgs { a0: TTY_MODE_RAW | TTY_MODE_CANON, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::TtyReadKey, SysArgs { a0: 0x10000, a1: TTY_READ_NONBLOCK, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Truncate, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Truncate, SysArgs { a0: 0x10000, a1: 7, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Rename, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Rename, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     true
 }

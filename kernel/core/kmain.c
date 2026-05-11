@@ -21,6 +21,7 @@
 #include <aurora/scheduler.h>
 #include <aurora/user_bins.h>
 #include <aurora/version.h>
+#include <aurora/tty.h>
 
 extern void shell_run(void);
 extern void aurora_cpp_api_selftest(void);
@@ -50,11 +51,15 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     memory_init(bootinfo);
     vmm_init(1024ull * 1024ull * 1024ull);
     kmem_init();
+    if (!gdt_install_dynamic_stacks(64u * 1024u, 8u * 1024u)) {
+        PANIC("failed to install heap-backed TSS stacks");
+    }
 
     pic_remap(32, 40);
     idt_init();
     pit_init(100);
     keyboard_init();
+    tty_init();
     pic_clear_mask(0);
     pic_clear_mask(1);
     cpu_sti();

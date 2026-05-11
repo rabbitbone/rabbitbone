@@ -3,7 +3,7 @@
 #include <aurora/libc.h>
 #include <aurora/spinlock.h>
 
-#define LOG_LINES 128u
+#define LOG_LINES 48u
 #define LOG_LINE_LEN 192u
 
 static char ring[LOG_LINES][LOG_LINE_LEN];

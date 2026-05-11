@@ -13,7 +13,7 @@ static u16 make_cell(char c) { return (u16)c | ((u16)color << 8); }
 
 static void clamp_cursor(void) {
     if (row >= VGA_HEIGHT) row = VGA_HEIGHT - 1u;
-    if (col >= VGA_WIDTH) col = 0u;
+    if (col >= VGA_WIDTH) col = VGA_WIDTH - 1u;
 }
 
 static void scroll_if_needed(void) {
@@ -28,6 +28,27 @@ static void scroll_if_needed(void) {
 }
 
 void vga_set_color(u8 fg, u8 bg) { color = (u8)((bg << 4) | (fg & 0x0f)); }
+
+void vga_get_size(u32 *rows, u32 *cols) {
+    if (rows) *rows = VGA_HEIGHT;
+    if (cols) *cols = VGA_WIDTH;
+}
+
+void vga_move_cursor(u32 r, u32 c) {
+    row = r < VGA_HEIGHT ? r : VGA_HEIGHT - 1u;
+    col = c < VGA_WIDTH ? c : VGA_WIDTH - 1u;
+}
+
+void vga_get_cursor(u32 *r, u32 *c) {
+    if (r) *r = (u32)row;
+    if (c) *c = (u32)col;
+}
+
+void vga_clear_line(void) {
+    clamp_cursor();
+    for (usize x = col; x < VGA_WIDTH; ++x) VGA_MEMORY[row * VGA_WIDTH + x] = make_cell(' ');
+}
+
 
 void vga_clear(void) {
     for (usize y = 0; y < VGA_HEIGHT; ++y) {

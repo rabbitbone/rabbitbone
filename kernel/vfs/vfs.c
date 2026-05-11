@@ -222,6 +222,33 @@ vfs_status_t vfs_unlink(const char *path) {
     return mnt->ops->unlink(mnt, route.relative);
 }
 
+
+vfs_status_t vfs_truncate(const char *path, u64 size) {
+    vfs_route_t route;
+    vfs_status_t rs = resolve_route(path, &route);
+    if (rs != VFS_OK) return rs;
+    vfs_mount_t *mnt = route_mount(&route);
+    if (!mnt) return VFS_ERR_NOENT;
+    if (!mnt->writable) return VFS_ERR_PERM;
+    if (!mnt->ops->truncate) return VFS_ERR_UNSUPPORTED;
+    return mnt->ops->truncate(mnt, route.relative, size);
+}
+
+vfs_status_t vfs_rename(const char *old_path, const char *new_path) {
+    vfs_route_t old_route;
+    vfs_status_t rs = resolve_route(old_path, &old_route);
+    if (rs != VFS_OK) return rs;
+    vfs_route_t new_route;
+    rs = resolve_route(new_path, &new_route);
+    if (rs != VFS_OK) return rs;
+    if (old_route.mount_index != new_route.mount_index) return VFS_ERR_UNSUPPORTED;
+    vfs_mount_t *mnt = route_mount(&old_route);
+    if (!mnt) return VFS_ERR_NOENT;
+    if (!mnt->writable) return VFS_ERR_PERM;
+    if (!mnt->ops->rename) return VFS_ERR_UNSUPPORTED;
+    return mnt->ops->rename(mnt, old_route.relative, new_route.relative);
+}
+
 void vfs_dump_mounts(void) {
     kprintf("mounts:\n");
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {

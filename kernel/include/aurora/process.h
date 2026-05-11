@@ -59,6 +59,8 @@ process_status_t process_execve(const char *path, int argc, const char *const *a
 process_status_t process_spawn(const char *path, int argc, const char *const *argv, u32 *pid_out, process_result_t *out);
 bool process_wait(u32 pid, process_info_t *out);
 process_status_t process_spawn_async(const char *path, int argc, const char *const *argv, u32 *pid_out);
+
+process_status_t process_spawn_async_snapshot(const char *path, int argc, const char *const *argv, void *snapshot, usize snapshot_size, u32 *pid_out);
 bool process_run_until_idle(u32 root_pid, process_result_t *root_out);
 bool process_async_scheduler_active(void);
 bool process_after_syscall(cpu_regs_t *regs);

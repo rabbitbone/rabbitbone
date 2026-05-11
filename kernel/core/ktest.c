@@ -27,6 +27,7 @@
 #include <aurora/user_bins.h>
 #include <aurora/rust.h>
 #include <aurora/version.h>
+#include <aurora/tty.h>
 
 static ktest_totals_t totals;
 static const char *current_suite;
@@ -187,6 +188,7 @@ static void test_boot_memory_vmm_heap(void) {
     check(cpu_nxe_enabled(), "CPU EFER.NXE enabled for NX user pages");
     check(cpu_sse_enabled(), "CPU SSE/SSE2 context enabled for Rust-generated code");
     check(aurora_rust_usercopy_selftest(), "Rust usercopy range/step arithmetic selftest");
+    check(tty_selftest(), "TTY mode/info/readkey selftest");
     check(vmm_selftest(), "vmm map/translate/unmap 4K page");
     suite_end();
 }
@@ -237,6 +239,7 @@ static void test_vfs_ramfs_devfs(void) {
     memset(rnd, 0, sizeof(rnd));
     got = 0;
     check(vfs_read("/dev/random", 0, rnd, sizeof(rnd), &got) == VFS_OK && got == sizeof(rnd), "devfs /dev/random read");
+    check(vfs_stat("/dev/tty", &st) == VFS_OK && st.type == VFS_NODE_DEV, "devfs /dev/tty present");
     suite_end();
 }
 
@@ -380,6 +383,40 @@ static void test_block_mbr_ext4(void) {
     memset(text, 0, sizeof(text));
     usize got = 0;
     check(vfs_read("/disk0/hello.txt", 0, text, sizeof(text) - 1u, &got) == VFS_OK && got > 0u && strstr(text, "AuroraOS") != 0, "VFS read /disk0/hello.txt through ext4 adapter");
+
+    const char *rw_path = "/disk0/aurora-rw.txt";
+    const char rw_payload[] = "Aurora EXT4 write path survives VFS create/write/read/unlink";
+    (void)vfs_unlink(rw_path);
+    check(vfs_create(rw_path, rw_payload, sizeof(rw_payload) - 1u) == VFS_OK, "VFS create /disk0 file through ext4 writer");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(rw_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == sizeof(rw_payload) - 1u && strstr(text, "EXT4 write") != 0, "VFS read back ext4-created file");
+    const char patch[] = "persistent";
+    usize wrote = 0;
+    check(vfs_write(rw_path, 7u, patch, sizeof(patch) - 1u, &wrote) == VFS_OK && wrote == sizeof(patch) - 1u, "VFS overwrite ext4 file");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(rw_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && strstr(text, "persistent") != 0, "VFS read back ext4 overwrite");
+    check(vfs_truncate(rw_path, 12u) == VFS_OK, "VFS truncate ext4 file smaller");
+    vfs_stat_t trunc_st;
+    check(vfs_stat(rw_path, &trunc_st) == VFS_OK && trunc_st.size == 12u, "VFS stat ext4 truncated size");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(rw_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == 12u, "VFS read ext4 truncated contents");
+    check(vfs_truncate(rw_path, 8192u + 17u) == VFS_OK, "VFS expand ext4 file through truncate");
+    check(vfs_stat(rw_path, &trunc_st) == VFS_OK && trunc_st.size == 8192u + 17u, "VFS stat ext4 expanded size");
+    const char *renamed_path = "/disk0/aurora-rw-renamed.txt";
+    (void)vfs_unlink(renamed_path);
+    check(vfs_rename(rw_path, renamed_path) == VFS_OK, "VFS rename ext4 file");
+    check(vfs_stat(rw_path, &trunc_st) == VFS_ERR_NOENT && vfs_stat(renamed_path, &trunc_st) == VFS_OK && trunc_st.size == 8192u + 17u, "VFS observes ext4 renamed file");
+    (void)vfs_unlink("/disk0/aurora-dir/child.txt");
+    (void)vfs_unlink("/disk0/aurora-dir");
+    check(vfs_mkdir("/disk0/aurora-dir") == VFS_OK, "VFS mkdir on ext4");
+    check(vfs_create("/disk0/aurora-dir/child.txt", "x", 1u) == VFS_OK, "VFS create child on ext4");
+    check(vfs_unlink("/disk0/aurora-dir") == VFS_ERR_NOTEMPTY, "VFS rejects unlink non-empty ext4 dir");
+    check(vfs_unlink("/disk0/aurora-dir/child.txt") == VFS_OK, "VFS unlink ext4 child");
+    check(vfs_unlink("/disk0/aurora-dir") == VFS_OK, "VFS unlink empty ext4 dir");
+    check(vfs_unlink(renamed_path) == VFS_OK, "VFS unlink ext4 renamed file");
     suite_end();
 }
 
@@ -388,7 +425,7 @@ static void test_syscall_task_timer_elf(void) {
     syscall_result_t r = syscall_dispatch(AURORA_SYS_VERSION, 0, 0, 0, 0, 0, 0);
     check(r.error == 0 && r.value == (i64)AURORA_SYSCALL_ABI_VERSION, "Rust syscall ABI version matches central kernel version");
     check(aurora_rust_syscall_selftest(), "Rust syscall decoder/validator selftest");
-    r = syscall_dispatch(AURORA_SYS_CLOSE, 0, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_CLOSE, 32u, 0, 0, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall rejects invalid handle before C backend");
     r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"relative/path", 0, 0, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust path policy rejects relative syscall path");
@@ -397,7 +434,7 @@ static void test_syscall_task_timer_elf(void) {
     r = syscall_dispatch(AURORA_SYS_STAT, (u64)(uptr)"/etc/motd", 0, 0, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall requires stat output pointer");
     check(syscall_selftest(), "Rust-dispatched syscall filesystem/process-control selftest");
-    check(strcmp(syscall_name(AURORA_SYS_WRITE), "write") == 0 && strcmp(syscall_name(AURORA_SYS_GETPID), "getpid") == 0 && strcmp(syscall_name(AURORA_SYS_PROCINFO), "procinfo") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWN), "spawn") == 0 && strcmp(syscall_name(AURORA_SYS_WAIT), "wait") == 0 && strcmp(syscall_name(AURORA_SYS_YIELD), "yield") == 0 && strcmp(syscall_name(AURORA_SYS_SLEEP), "sleep") == 0 && strcmp(syscall_name(AURORA_SYS_SCHEDINFO), "schedinfo") == 0 && strcmp(syscall_name(AURORA_SYS_DUP), "dup") == 0 && strcmp(syscall_name(AURORA_SYS_TELL), "tell") == 0 && strcmp(syscall_name(AURORA_SYS_FSTAT), "fstat") == 0 && strcmp(syscall_name(AURORA_SYS_FDINFO), "fdinfo") == 0 && strcmp(syscall_name(AURORA_SYS_READDIR), "readdir") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWNV), "spawnv") == 0 && strcmp(syscall_name(AURORA_SYS_PREEMPTINFO), "preemptinfo") == 0 && strcmp(syscall_name(999), "unknown") == 0, "syscall name table");
+    check(strcmp(syscall_name(AURORA_SYS_WRITE), "write") == 0 && strcmp(syscall_name(AURORA_SYS_GETPID), "getpid") == 0 && strcmp(syscall_name(AURORA_SYS_PROCINFO), "procinfo") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWN), "spawn") == 0 && strcmp(syscall_name(AURORA_SYS_WAIT), "wait") == 0 && strcmp(syscall_name(AURORA_SYS_YIELD), "yield") == 0 && strcmp(syscall_name(AURORA_SYS_SLEEP), "sleep") == 0 && strcmp(syscall_name(AURORA_SYS_SCHEDINFO), "schedinfo") == 0 && strcmp(syscall_name(AURORA_SYS_DUP), "dup") == 0 && strcmp(syscall_name(AURORA_SYS_TELL), "tell") == 0 && strcmp(syscall_name(AURORA_SYS_FSTAT), "fstat") == 0 && strcmp(syscall_name(AURORA_SYS_FDINFO), "fdinfo") == 0 && strcmp(syscall_name(AURORA_SYS_READDIR), "readdir") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWNV), "spawnv") == 0 && strcmp(syscall_name(AURORA_SYS_PREEMPTINFO), "preemptinfo") == 0 && strcmp(syscall_name(AURORA_SYS_TRUNCATE), "truncate") == 0 && strcmp(syscall_name(AURORA_SYS_RENAME), "rename") == 0 && strcmp(syscall_name(999), "unknown") == 0, "syscall name table");
     r = syscall_dispatch(AURORA_SYS_TICKS, 0, 0, 0, 0, 0, 0);
     check(r.error == 0 && r.value >= 0, "syscall ticks");
 
@@ -477,6 +514,11 @@ static void test_user_processes(void) {
     check(vfs_stat("/bin/execfdcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execfdcheck fd inheritance/CLOEXEC ELF");
     check(vfs_stat("/bin/execvecheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execvecheck env ELF");
     check(vfs_stat("/bin/exectarget", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/exectarget exec target ELF");
+    check(vfs_stat("/bin/pipecheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/pipecheck IPC pipe ELF");
+    check(vfs_stat("/bin/fdremapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/fdremapcheck dup2 ELF");
+    check(vfs_stat("/bin/pollcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/pollcheck readiness ELF");
+    check(vfs_stat("/bin/stdcat", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/stdcat stdio copy ELF");
+    check(vfs_stat("/bin/termcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/termcheck terminal ELF");
     elf_loaded_image_t img;
     elf_status_t es = elf64_load_from_vfs("/bin/hello", &img);
     check(es == ELF_OK && img.segment_count > 0u && img.entry >= 0x0000010000000000ull, "ELF loader parses /bin/hello");
@@ -562,6 +604,31 @@ static void test_user_processes(void) {
     check(fork_ok, "ring3 /bin/forkcheck clones address space and waits child fork");
     if (!fork_ok) detail_process_result("/bin/forkcheck", ps, &r);
 
+    const char *pipe_argv[] = { "/bin/pipecheck" };
+    ps = process_exec("/bin/pipecheck", 1, pipe_argv, &r);
+    bool pipe_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
+    check(pipe_ok, "ring3 /bin/pipecheck exercises pipes, stdio remap AURORA_STDIN AURORA_STDOUT AURORA_STDERR and fork+exec pipeline");
+    if (!pipe_ok) detail_process_result("/bin/pipecheck", ps, &r);
+
+    const char *fdremap_argv[] = { "/bin/fdremapcheck" };
+    ps = process_exec("/bin/fdremapcheck", 1, fdremap_argv, &r);
+    bool fdremap_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
+    check(fdremap_ok, "ring3 /bin/fdremapcheck exercises dup2 fd remapping");
+    if (!fdremap_ok) detail_process_result("/bin/fdremapcheck", ps, &r);
+
+    const char *poll_argv[] = { "/bin/pollcheck" };
+    ps = process_exec("/bin/pollcheck", 1, poll_argv, &r);
+    bool poll_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
+    check(poll_ok, "ring3 /bin/pollcheck exercises pipe/file readiness");
+    if (!poll_ok) detail_process_result("/bin/pollcheck", ps, &r);
+
+    const char *stdcat_argv[] = { "/bin/stdcat", "/disk0/hello.txt" };
+    ps = process_exec("/bin/stdcat", 2, stdcat_argv, &r);
+    bool stdcat_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
+    check(stdcat_ok, "ring3 /bin/stdcat copies VFS file to stdout");
+    if (!stdcat_ok) detail_process_result("/bin/stdcat", ps, &r);
+
+
     const char *sched_argv[] = { "/bin/schedcheck" };
     ps = process_exec("/bin/schedcheck", 1, sched_argv, &r);
     bool sched_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
@@ -591,6 +658,12 @@ static void test_user_processes(void) {
     bool iso_b_ok = ps == PROC_OK && !iso_b.faulted && iso_b.exit_code == 41 && iso_b.address_space_generation != iso_a.address_space_generation;
     check(iso_b_ok, "second /bin/isolate gets a distinct clean address space");
     if (!iso_b_ok) detail_process_result("/bin/isolate#2", ps, &iso_b);
+
+    const char *term_argv[] = { "/bin/termcheck" };
+    ps = process_exec("/bin/termcheck", 1, term_argv, &r);
+    bool term_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
+    check(term_ok, "ring3 /bin/termcheck exercises TTY terminal ABI");
+    if (!term_ok) detail_process_result("/bin/termcheck", ps, &r);
 
     const char *fd_argv[] = { "/bin/fdleak" };
     process_result_t fd_a;
@@ -650,7 +723,7 @@ static void test_process_registry(void) {
     syscall_result_t sr = syscall_dispatch(AURORA_SYS_WAIT, pid, (u64)(uptr)&info, 0, 0, 0, 0);
     check(sr.error == 0 && info.pid == pid && info.exit_code == 7, "Rust-dispatched wait syscall returns child metadata");
     check(strcmp(syscall_name(AURORA_SYS_FORK), "fork") == 0, "Rust-dispatched fork syscall name is stable");
-    check(strcmp(syscall_name(AURORA_SYS_EXEC), "exec") == 0 && strcmp(syscall_name(AURORA_SYS_EXECV), "execv") == 0 && strcmp(syscall_name(AURORA_SYS_EXECVE), "execve") == 0 && strcmp(syscall_name(AURORA_SYS_FDCTL), "fdctl") == 0, "Rust-dispatched exec/fdctl syscall names are stable");
+    check(strcmp(syscall_name(AURORA_SYS_EXEC), "exec") == 0 && strcmp(syscall_name(AURORA_SYS_EXECV), "execv") == 0 && strcmp(syscall_name(AURORA_SYS_EXECVE), "execve") == 0 && strcmp(syscall_name(AURORA_SYS_FDCTL), "fdctl") == 0 && strcmp(syscall_name(AURORA_SYS_DUP2), "dup2") == 0 && strcmp(syscall_name(AURORA_SYS_POLL), "poll") == 0 && strcmp(syscall_name(AURORA_SYS_TTY_GETINFO), "tty_getinfo") == 0 && strcmp(syscall_name(AURORA_SYS_TTY_SETMODE), "tty_setmode") == 0 && strcmp(syscall_name(AURORA_SYS_TTY_READKEY), "tty_readkey") == 0, "Rust-dispatched exec/fdctl syscall names are stable");
     check(!process_lookup(0, &info) && !process_lookup(0xffffffffu, &info), "process lookup rejects invalid or unknown pid");
     check(process_table_count() >= before, "process registry count is monotonic until ring wraps");
     suite_end();
