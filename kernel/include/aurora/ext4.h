@@ -235,6 +235,9 @@ const char *ext4_status_name(ext4_status_t status);
 u64 ext4_inode_size(const ext4_inode_disk_t *inode);
 bool ext4_inode_is_dir(const ext4_inode_disk_t *inode);
 bool ext4_inode_is_regular(const ext4_inode_disk_t *inode);
+bool ext4_inode_uses_extents(const ext4_inode_disk_t *inode);
+u16 ext4_inode_extent_depth(const ext4_inode_disk_t *inode);
+u16 ext4_inode_extent_root_entries(const ext4_inode_disk_t *inode);
 
 #if defined(__cplusplus)
 }

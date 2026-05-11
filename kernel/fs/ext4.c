@@ -201,6 +201,24 @@ u64 ext4_inode_size(const ext4_inode_disk_t *inode) {
 bool ext4_inode_is_dir(const ext4_inode_disk_t *inode) { return inode && ((le16(inode->i_mode) & 0xf000u) == EXT4_IFDIR); }
 bool ext4_inode_is_regular(const ext4_inode_disk_t *inode) { return inode && ((le16(inode->i_mode) & 0xf000u) == EXT4_IFREG); }
 
+bool ext4_inode_uses_extents(const ext4_inode_disk_t *inode) {
+    return inode && ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0);
+}
+
+u16 ext4_inode_extent_depth(const ext4_inode_disk_t *inode) {
+    if (!ext4_inode_uses_extents(inode)) return 0xffffu;
+    const ext4_extent_header_t *hdr = (const ext4_extent_header_t *)inode->i_block;
+    if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return 0xffffu;
+    return le16(hdr->eh_depth);
+}
+
+u16 ext4_inode_extent_root_entries(const ext4_inode_disk_t *inode) {
+    if (!ext4_inode_uses_extents(inode)) return 0;
+    const ext4_extent_header_t *hdr = (const ext4_extent_header_t *)inode->i_block;
+    if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return 0;
+    return le16(hdr->eh_entries);
+}
+
 const char *ext4_status_name(ext4_status_t status) {
     switch (status) {
         case EXT4_OK: return "ok";
@@ -625,11 +643,66 @@ static ext4_status_t extent_inline_validate(ext4_inode_disk_t *inode, ext4_exten
     return EXT4_OK;
 }
 
-static ext4_status_t extent_inline_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
-    ext4_extent_header_t *hdr = 0;
-    ext4_extent_t *ext = 0;
-    ext4_status_t st = extent_inline_validate(inode, &hdr, &ext);
-    if (st != EXT4_OK) return st;
+static u16 extent_root_index_capacity(void) {
+    return (u16)((EXT4_N_BLOCKS * sizeof(u32) - sizeof(ext4_extent_header_t)) / sizeof(ext4_extent_idx_t));
+}
+
+static u16 extent_leaf_capacity(ext4_mount_t *mnt) {
+    return (u16)((mnt->block_size - sizeof(ext4_extent_header_t)) / sizeof(ext4_extent_t));
+}
+
+static ext4_status_t extent_leaf_validate(ext4_mount_t *mnt, void *block, ext4_extent_header_t **hdr_out, ext4_extent_t **ext_out) {
+    if (!mnt || !block || !hdr_out || !ext_out) return EXT4_ERR_RANGE;
+    ext4_extent_header_t *hdr = (ext4_extent_header_t *)block;
+    if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return EXT4_ERR_CORRUPT;
+    if (le16(hdr->eh_depth) != 0) return EXT4_ERR_CORRUPT;
+    u16 cap = extent_leaf_capacity(mnt);
+    u16 max_entries = le16(hdr->eh_max);
+    u16 entries = le16(hdr->eh_entries);
+    if (max_entries == 0 || max_entries > cap) return EXT4_ERR_CORRUPT;
+    if (entries > max_entries) return EXT4_ERR_CORRUPT;
+    ext4_extent_t *ext = (ext4_extent_t *)(hdr + 1);
+    u32 prev_end = 0;
+    for (u16 i = 0; i < entries; ++i) {
+        u32 first = le32(ext[i].ee_block);
+        u32 len = extent_len_blocks(&ext[i]);
+        u32 end = 0;
+        if (extent_is_unwritten(&ext[i])) return EXT4_ERR_UNSUPPORTED;
+        if (len == 0 || __builtin_add_overflow(first, len, &end)) return EXT4_ERR_CORRUPT;
+        if (i && first < prev_end) return EXT4_ERR_CORRUPT;
+        if (extent_start_block(&ext[i]) >= ((u64)1 << 48)) return EXT4_ERR_RANGE;
+        prev_end = end;
+    }
+    *hdr_out = hdr;
+    *ext_out = ext;
+    return EXT4_OK;
+}
+
+static ext4_status_t extent_index_validate(ext4_mount_t *mnt, ext4_inode_disk_t *inode, ext4_extent_header_t **hdr_out, ext4_extent_idx_t **idx_out) {
+    if (!mnt || !inode || !hdr_out || !idx_out) return EXT4_ERR_RANGE;
+    ext4_extent_header_t *hdr = (ext4_extent_header_t *)inode->i_block;
+    if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return EXT4_ERR_CORRUPT;
+    if (le16(hdr->eh_depth) != 1u) return EXT4_ERR_UNSUPPORTED;
+    u16 cap = extent_root_index_capacity();
+    u16 max_entries = le16(hdr->eh_max);
+    u16 entries = le16(hdr->eh_entries);
+    if (max_entries == 0 || max_entries > cap) return EXT4_ERR_CORRUPT;
+    if (entries > max_entries) return EXT4_ERR_CORRUPT;
+    ext4_extent_idx_t *idx = (ext4_extent_idx_t *)(hdr + 1);
+    u32 prev = 0;
+    for (u16 i = 0; i < entries; ++i) {
+        u32 first = le32(idx[i].ei_block);
+        u64 leaf = le64_from_lo_hi(idx[i].ei_leaf_lo, idx[i].ei_leaf_hi);
+        if (leaf >= mnt->blocks_count) return EXT4_ERR_RANGE;
+        if (i && first <= prev) return EXT4_ERR_CORRUPT;
+        prev = first;
+    }
+    *hdr_out = hdr;
+    *idx_out = idx;
+    return EXT4_OK;
+}
+
+static ext4_status_t extent_array_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, ext4_extent_header_t *hdr, ext4_extent_t *ext, u32 logical, u64 *phys_out, bool allocate) {
     u16 entries = le16(hdr->eh_entries);
     u16 max_entries = le16(hdr->eh_max);
     u16 pos = 0;
@@ -647,7 +720,7 @@ static ext4_status_t extent_inline_block_for_write(ext4_mount_t *mnt, ext4_inode
     }
     if (!allocate) return EXT4_ERR_RANGE;
     u64 nb = 0;
-    st = alloc_block(mnt, &nb);
+    ext4_status_t st = alloc_block(mnt, &nb);
     if (st != EXT4_OK) return st;
 
     bool merged_prev = false;
@@ -711,11 +784,97 @@ static ext4_status_t extent_inline_block_for_write(ext4_mount_t *mnt, ext4_inode
     return EXT4_OK;
 }
 
-static ext4_status_t extent_inline_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical) {
+static ext4_status_t extent_promote_inline_to_index(ext4_mount_t *mnt, ext4_inode_disk_t *inode) {
+    ext4_extent_header_t *old_hdr = 0;
+    ext4_extent_t *old_ext = 0;
+    ext4_status_t st = extent_inline_validate(inode, &old_hdr, &old_ext);
+    if (st != EXT4_OK) return st;
+    u16 entries = le16(old_hdr->eh_entries);
+    u64 leaf_block = 0;
+    st = alloc_block(mnt, &leaf_block);
+    if (st != EXT4_OK) return st;
+    u8 leaf[MAX_BLOCK_SIZE];
+    memset(leaf, 0, (usize)mnt->block_size);
+    ext4_extent_header_t *leaf_hdr = (ext4_extent_header_t *)leaf;
+    leaf_hdr->eh_magic = EXT4_EXT_MAGIC;
+    leaf_hdr->eh_entries = entries;
+    leaf_hdr->eh_max = extent_leaf_capacity(mnt);
+    leaf_hdr->eh_depth = 0;
+    leaf_hdr->eh_generation = 0;
+    if (entries > le16(leaf_hdr->eh_max)) {
+        (void)free_block(mnt, leaf_block);
+        return EXT4_ERR_CORRUPT;
+    }
+    ext4_extent_t *leaf_ext = (ext4_extent_t *)(leaf_hdr + 1);
+    for (u16 i = 0; i < entries; ++i) leaf_ext[i] = old_ext[i];
+    st = write_block(mnt, leaf_block, leaf);
+    if (st != EXT4_OK) {
+        (void)free_block(mnt, leaf_block);
+        return st;
+    }
+    memset(inode->i_block, 0, sizeof(inode->i_block));
+    ext4_extent_header_t *root = (ext4_extent_header_t *)inode->i_block;
+    root->eh_magic = EXT4_EXT_MAGIC;
+    root->eh_entries = 1u;
+    root->eh_max = extent_root_index_capacity();
+    root->eh_depth = 1u;
+    root->eh_generation = 0;
+    ext4_extent_idx_t *idx = (ext4_extent_idx_t *)(root + 1);
+    idx[0].ei_block = entries ? le32(leaf_ext[0].ee_block) : 0u;
+    idx[0].ei_leaf_lo = (u32)leaf_block;
+    idx[0].ei_leaf_hi = (u16)(leaf_block >> 32);
+    idx[0].ei_unused = 0;
+    inode_add_blocks(mnt, inode, 1);
+    return EXT4_OK;
+}
+
+static ext4_status_t extent_index_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
+    ext4_extent_header_t *root = 0;
+    ext4_extent_idx_t *idx = 0;
+    ext4_status_t st = extent_index_validate(mnt, inode, &root, &idx);
+    if (st != EXT4_OK) return st;
+    u16 entries = le16(root->eh_entries);
+    if (entries == 0) return allocate ? EXT4_ERR_UNSUPPORTED : EXT4_ERR_RANGE;
+    u16 chosen = 0;
+    if (entries > 1u) {
+        bool found = false;
+        for (u16 i = 0; i < entries; ++i) {
+            if (logical >= le32(idx[i].ei_block)) { chosen = i; found = true; }
+            else break;
+        }
+        if (!found) {
+            if (!allocate) return EXT4_ERR_RANGE;
+            chosen = 0;
+        }
+    }
+    u64 leaf_block = le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi);
+    u8 leaf[MAX_BLOCK_SIZE];
+    st = read_block(mnt, leaf_block, leaf);
+    if (st != EXT4_OK) return st;
+    ext4_extent_header_t *leaf_hdr = 0;
+    ext4_extent_t *leaf_ext = 0;
+    st = extent_leaf_validate(mnt, leaf, &leaf_hdr, &leaf_ext);
+    if (st != EXT4_OK) return st;
+    st = extent_array_block_for_write(mnt, inode, leaf_hdr, leaf_ext, logical, phys_out, allocate);
+    if (st != EXT4_OK) return st;
+    if (le16(leaf_hdr->eh_entries) > 0) idx[chosen].ei_block = le32(leaf_ext[0].ee_block);
+    return write_block(mnt, leaf_block, leaf);
+}
+
+static ext4_status_t extent_inline_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
     ext4_extent_header_t *hdr = 0;
     ext4_extent_t *ext = 0;
     ext4_status_t st = extent_inline_validate(inode, &hdr, &ext);
     if (st != EXT4_OK) return st;
+    st = extent_array_block_for_write(mnt, inode, hdr, ext, logical, phys_out, allocate);
+    if (st != EXT4_ERR_UNSUPPORTED || !allocate) return st;
+    st = extent_promote_inline_to_index(mnt, inode);
+    if (st != EXT4_OK) return st;
+    return extent_index_block_for_write(mnt, inode, logical, phys_out, allocate);
+}
+
+static ext4_status_t extent_array_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, ext4_extent_header_t *hdr, ext4_extent_t *ext, u32 logical, bool *changed_out) {
+    if (changed_out) *changed_out = false;
     u16 entries = le16(hdr->eh_entries);
     for (u16 i = 0; i < entries; ++i) {
         u32 first = le32(ext[i].ee_block);
@@ -724,7 +883,7 @@ static ext4_status_t extent_inline_free_logical_block(ext4_mount_t *mnt, ext4_in
         if (logical < first || logical >= end) continue;
         if (logical != first && logical != end - 1u && entries >= le16(hdr->eh_max)) return EXT4_ERR_UNSUPPORTED;
         u64 phys = extent_start_block(&ext[i]) + (u64)(logical - first);
-        st = free_block(mnt, phys);
+        ext4_status_t st = free_block(mnt, phys);
         if (st != EXT4_OK) return st;
         if (len == 1u) {
             for (u16 j = i; j + 1u < entries; ++j) ext[j] = ext[j + 1u];
@@ -748,13 +907,68 @@ static ext4_status_t extent_inline_free_logical_block(ext4_mount_t *mnt, ext4_in
             hdr->eh_entries = entries + 1u;
         }
         inode_add_blocks(mnt, inode, -1);
+        if (changed_out) *changed_out = true;
         return EXT4_OK;
     }
     return EXT4_OK;
 }
 
+static ext4_status_t extent_inline_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical) {
+    ext4_extent_header_t *hdr = 0;
+    ext4_extent_t *ext = 0;
+    ext4_status_t st = extent_inline_validate(inode, &hdr, &ext);
+    if (st != EXT4_OK) return st;
+    return extent_array_free_logical_block(mnt, inode, hdr, ext, logical, 0);
+}
+
+static ext4_status_t extent_index_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical) {
+    ext4_extent_header_t *root = 0;
+    ext4_extent_idx_t *idx = 0;
+    ext4_status_t st = extent_index_validate(mnt, inode, &root, &idx);
+    if (st != EXT4_OK) return st;
+    u16 entries = le16(root->eh_entries);
+    if (entries == 0) return EXT4_OK;
+    bool found = false;
+    u16 chosen = 0;
+    for (u16 i = 0; i < entries; ++i) {
+        if (logical >= le32(idx[i].ei_block)) { chosen = i; found = true; }
+        else break;
+    }
+    if (!found) return EXT4_OK;
+    u64 leaf_block = le64_from_lo_hi(idx[chosen].ei_leaf_lo, idx[chosen].ei_leaf_hi);
+    u8 leaf[MAX_BLOCK_SIZE];
+    st = read_block(mnt, leaf_block, leaf);
+    if (st != EXT4_OK) return st;
+    ext4_extent_header_t *leaf_hdr = 0;
+    ext4_extent_t *leaf_ext = 0;
+    st = extent_leaf_validate(mnt, leaf, &leaf_hdr, &leaf_ext);
+    if (st != EXT4_OK) return st;
+    bool changed = false;
+    st = extent_array_free_logical_block(mnt, inode, leaf_hdr, leaf_ext, logical, &changed);
+    if (st != EXT4_OK || !changed) return st;
+    if (le16(leaf_hdr->eh_entries) == 0) {
+        st = free_block(mnt, leaf_block);
+        if (st != EXT4_OK) return st;
+        inode_add_blocks(mnt, inode, -1);
+        for (u16 i = chosen; i + 1u < entries; ++i) idx[i] = idx[i + 1u];
+        memset(&idx[entries - 1u], 0, sizeof(ext4_extent_idx_t));
+        root->eh_entries = entries - 1u;
+        if (root->eh_entries == 0) ext4_init_inline_extent_tree(inode);
+        return EXT4_OK;
+    }
+    idx[chosen].ei_block = le32(leaf_ext[0].ee_block);
+    return write_block(mnt, leaf_block, leaf);
+}
+
 static ext4_status_t inode_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical, u64 *phys_out, bool allocate) {
-    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) return extent_inline_block_for_write(mnt, inode, logical, phys_out, allocate);
+    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) {
+        const ext4_extent_header_t *hdr = (const ext4_extent_header_t *)inode->i_block;
+        if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return EXT4_ERR_CORRUPT;
+        u16 depth = le16(hdr->eh_depth);
+        if (depth == 0) return extent_inline_block_for_write(mnt, inode, logical, phys_out, allocate);
+        if (depth == 1) return extent_index_block_for_write(mnt, inode, logical, phys_out, allocate);
+        return EXT4_ERR_UNSUPPORTED;
+    }
     if (logical < 12u) {
         u32 b = le32(inode->i_block[logical]);
         if (!b && allocate) {
@@ -804,7 +1018,14 @@ static ext4_status_t inode_block_for_write(ext4_mount_t *mnt, ext4_inode_disk_t 
 
 
 static ext4_status_t inode_free_logical_block(ext4_mount_t *mnt, ext4_inode_disk_t *inode, u32 logical) {
-    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) return extent_inline_free_logical_block(mnt, inode, logical);
+    if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) {
+        const ext4_extent_header_t *hdr = (const ext4_extent_header_t *)inode->i_block;
+        if (le16(hdr->eh_magic) != EXT4_EXT_MAGIC) return EXT4_ERR_CORRUPT;
+        u16 depth = le16(hdr->eh_depth);
+        if (depth == 0) return extent_inline_free_logical_block(mnt, inode, logical);
+        if (depth == 1) return extent_index_free_logical_block(mnt, inode, logical);
+        return EXT4_ERR_UNSUPPORTED;
+    }
     if (logical < 12u) {
         u32 b = le32(inode->i_block[logical]);
         if (!b) return EXT4_OK;
@@ -918,9 +1139,7 @@ ext4_status_t ext4_truncate_file_path(ext4_mount_t *mnt, const char *path, u64 n
     u64 old_blocks64 = div_round_up_u64(old_size, mnt->block_size);
     u64 new_blocks64 = div_round_up_u64(new_size, mnt->block_size);
     if (old_blocks64 > 0xffffffffull || new_blocks64 > 0xffffffffull) return EXT4_ERR_RANGE;
-    if ((le32(inode.i_flags) & EXT4_EXTENTS_FL) != 0) {
-        if (new_blocks64 > 32768ull) return EXT4_ERR_UNSUPPORTED;
-    } else if (new_blocks64 > 12ull + (mnt->block_size / 4u)) return EXT4_ERR_UNSUPPORTED;
+    if ((le32(inode.i_flags) & EXT4_EXTENTS_FL) == 0 && new_blocks64 > 12ull + (mnt->block_size / 4u)) return EXT4_ERR_UNSUPPORTED;
     if (new_blocks64 > old_blocks64) {
         st = inode_zero_tail(mnt, &inode, old_size);
         if (st != EXT4_OK) return st;
@@ -1062,20 +1281,53 @@ static bool dir_is_empty_cb(const ext4_dirent_t *entry, void *ctx) {
     return true;
 }
 
+static ext4_status_t free_extent_array_blocks(ext4_mount_t *mnt, const ext4_extent_header_t *hdr, const ext4_extent_t *ext) {
+    u16 entries = le16(hdr->eh_entries);
+    for (u16 i = 0; i < entries; ++i) {
+        u64 start = extent_start_block(&ext[i]);
+        u32 len = extent_len_blocks(&ext[i]);
+        for (u32 j = 0; j < len; ++j) {
+            ext4_status_t st = free_block(mnt, start + j);
+            if (st != EXT4_OK) return st;
+        }
+    }
+    return EXT4_OK;
+}
+
 static ext4_status_t free_inode_blocks(ext4_mount_t *mnt, ext4_inode_disk_t *inode) {
     if ((le32(inode->i_flags) & EXT4_EXTENTS_FL) != 0) {
-        ext4_extent_header_t *hdr = 0;
-        ext4_extent_t *ext = 0;
-        ext4_status_t st = extent_inline_validate(inode, &hdr, &ext);
-        if (st != EXT4_OK) return st;
-        u16 entries = le16(hdr->eh_entries);
-        for (u16 i = 0; i < entries; ++i) {
-            u64 start = extent_start_block(&ext[i]);
-            u32 len = extent_len_blocks(&ext[i]);
-            for (u32 j = 0; j < len; ++j) {
-                st = free_block(mnt, start + j);
+        const ext4_extent_header_t *root_hdr = (const ext4_extent_header_t *)inode->i_block;
+        if (le16(root_hdr->eh_magic) != EXT4_EXT_MAGIC) return EXT4_ERR_CORRUPT;
+        ext4_status_t st = EXT4_OK;
+        if (le16(root_hdr->eh_depth) == 0) {
+            ext4_extent_header_t *hdr = 0;
+            ext4_extent_t *ext = 0;
+            st = extent_inline_validate(inode, &hdr, &ext);
+            if (st != EXT4_OK) return st;
+            st = free_extent_array_blocks(mnt, hdr, ext);
+            if (st != EXT4_OK) return st;
+        } else if (le16(root_hdr->eh_depth) == 1u) {
+            ext4_extent_header_t *root = 0;
+            ext4_extent_idx_t *idx = 0;
+            st = extent_index_validate(mnt, inode, &root, &idx);
+            if (st != EXT4_OK) return st;
+            u16 entries = le16(root->eh_entries);
+            for (u16 i = 0; i < entries; ++i) {
+                u64 leaf_block = le64_from_lo_hi(idx[i].ei_leaf_lo, idx[i].ei_leaf_hi);
+                u8 leaf[MAX_BLOCK_SIZE];
+                st = read_block(mnt, leaf_block, leaf);
+                if (st != EXT4_OK) return st;
+                ext4_extent_header_t *leaf_hdr = 0;
+                ext4_extent_t *leaf_ext = 0;
+                st = extent_leaf_validate(mnt, leaf, &leaf_hdr, &leaf_ext);
+                if (st != EXT4_OK) return st;
+                st = free_extent_array_blocks(mnt, leaf_hdr, leaf_ext);
+                if (st != EXT4_OK) return st;
+                st = free_block(mnt, leaf_block);
                 if (st != EXT4_OK) return st;
             }
+        } else {
+            return EXT4_ERR_UNSUPPORTED;
         }
         memset(inode->i_block, 0, sizeof(inode->i_block));
         inode_set_size(inode, 0);

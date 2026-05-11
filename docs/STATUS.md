@@ -1,8 +1,8 @@
 # AuroraOS status
 
-AuroraOS is currently at `0.0.1.26`.
+AuroraOS is currently at `0.0.1.27`.
 
-The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a writable EXT4 path with inline extent writes, a syscall layer, and a small ring3 userland.
+The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a writable EXT4 path with inline and indexed extent writes, a syscall layer, and a small ring3 userland.
 
 ## Working now
 
@@ -19,7 +19,7 @@ The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stag
 ## Not done yet
 
 - SMP, APIC, PCI, AHCI, NVMe, USB, ACPI, and GUI.
-- EXT4 journaling/recovery and indexed directories.
+- EXT4 journaling/recovery, multi-level extent splitting, and indexed directories.
 - Copy-on-write `fork`.
 - Interpreter and shebang support.
 - Full kernel text/rodata/data page-permission split.

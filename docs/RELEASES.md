@@ -2,6 +2,17 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.1.27
+
+Stage 19.4 EXT4 indexed-extent runtime update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.27` / `0x0000011b`.
+- Added indexed EXT4 extent promotion: overflowed inline extent trees move into a depth-1 root with an external leaf block.
+- Kept sparse EXT4 growth semantics across indexed extents: gap writes keep holes unallocated while reads return zero-filled data.
+- Added safe freeing/truncation/unlink for indexed extent data and metadata leaf blocks.
+- Added public inode extent introspection helpers for runtime contracts.
+- Extended `ktest` coverage for five-discontiguous-block sparse files, indexed extent readback, hole reads, truncate, unlink, and metadata consistency.
+
 ## 0.0.1.26
 
 Stage 19.3 EXT4 extent-write runtime update.
@@ -11,15 +22,6 @@ Stage 19.3 EXT4 extent-write runtime update.
 - Added sparse EXT4 growth semantics: gap writes and expanding truncate keep holes unallocated while reads return zero-filled data.
 - Added EXT4 metadata validation that cross-checks group descriptors, allocation bitmaps, and superblock counters.
 - Extended `ktest` coverage for extent-backed files, sparse writes, sparse truncation, metadata consistency before/after mutation tests, and CLI `ext4` fsck reporting.
-
-## 0.0.1.25
-
-Stage 19.1 EXT4 mutation runtime update.
-
-- Bumped the kernel version and syscall ABI to `0.0.1.25` / `0x00000119`.
-- Added the latest filesystem, syscall, console, tty, descriptor, and userland runtime changes from the source update.
-- Extended userland coverage with pipe, poll, fd remap, stdio-style cat, and terminal checks.
-- Kept the GitHub release pipeline focused on building the raw VMware image and verifying the release version contract.
 
 ## 0.0.1.15
 
