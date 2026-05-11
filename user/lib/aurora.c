@@ -230,3 +230,18 @@ au_i64 au_rename(const char *old_path, const char *new_path) {
     au_result_t r = au_syscall3(AU_SYS_RENAME, (au_u64)old_path, (au_u64)new_path, 0);
     return r.error ? r.error : r.value;
 }
+
+au_i64 au_sync(void) {
+    au_result_t r = au_syscall3(AU_SYS_SYNC, 0, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_fsync(au_i64 h) {
+    au_result_t r = au_syscall3(AU_SYS_FSYNC, (au_u64)h, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_statvfs(const char *path, au_statvfs_t *out) {
+    au_result_t r = au_syscall3(AU_SYS_STATVFS, (au_u64)path, (au_u64)out, 0);
+    return r.error ? r.error : r.value;
+}

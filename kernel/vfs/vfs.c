@@ -64,6 +64,18 @@ static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
     return VFS_OK;
 }
 
+
+static void fill_default_statvfs(const vfs_mount_t *mnt, vfs_statvfs_t *out) {
+    if (!mnt || !out) return;
+    memset(out, 0, sizeof(*out));
+    out->block_size = 4096u;
+    out->fs_id = mnt->fs_id;
+    out->flags = mnt->writable ? 0u : VFS_STATVFS_FLAG_READONLY;
+    out->max_name_len = VFS_NAME_MAX - 1u;
+    strncpy(out->mount_path, mnt->path, sizeof(out->mount_path) - 1u);
+    strncpy(out->fs_name, mnt->name, sizeof(out->fs_name) - 1u);
+}
+
 static vfs_mount_t *route_mount(vfs_route_t *route) {
     if (!route || !route->found || route->mount_index >= VFS_MAX_MOUNTS) return 0;
     if (!mounts[route->mount_index].ops) return 0;
@@ -211,6 +223,7 @@ vfs_status_t vfs_create(const char *path, const void *data, usize size) {
     return mnt->ops->create(mnt, route.relative, data, size);
 }
 
+
 vfs_status_t vfs_unlink(const char *path) {
     vfs_route_t route;
     vfs_status_t rs = resolve_route(path, &route);
@@ -247,6 +260,48 @@ vfs_status_t vfs_rename(const char *old_path, const char *new_path) {
     if (!mnt->writable) return VFS_ERR_PERM;
     if (!mnt->ops->rename) return VFS_ERR_UNSUPPORTED;
     return mnt->ops->rename(mnt, old_route.relative, new_route.relative);
+}
+
+
+vfs_status_t vfs_sync_all(void) {
+    vfs_status_t first = VFS_OK;
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
+        if (!mounts[i].ops || !mounts[i].writable || !mounts[i].ops->sync) continue;
+        vfs_status_t st = mounts[i].ops->sync(&mounts[i]);
+        if (st != VFS_OK && first == VFS_OK) first = st;
+    }
+    return first;
+}
+
+vfs_status_t vfs_sync_path(const char *path) {
+    vfs_route_t route;
+    vfs_status_t rs = resolve_route(path, &route);
+    if (rs != VFS_OK) return rs;
+    vfs_mount_t *mnt = route_mount(&route);
+    if (!mnt) return VFS_ERR_NOENT;
+    if (!mnt->writable) return VFS_OK;
+    if (!mnt->ops->sync) return VFS_OK;
+    return mnt->ops->sync(mnt);
+}
+
+vfs_status_t vfs_statvfs(const char *path, vfs_statvfs_t *out) {
+    if (!path || !out) return VFS_ERR_INVAL;
+    vfs_route_t route;
+    vfs_status_t rs = resolve_route(path, &route);
+    if (rs != VFS_OK) return rs;
+    vfs_mount_t *mnt = route_mount(&route);
+    if (!mnt) return VFS_ERR_NOENT;
+    if (mnt->ops->statvfs) {
+        vfs_status_t st = mnt->ops->statvfs(mnt, out);
+        if (st != VFS_OK) return st;
+    } else {
+        fill_default_statvfs(mnt, out);
+    }
+    out->fs_id = mnt->fs_id;
+    out->flags = (out->flags & ~VFS_STATVFS_FLAG_READONLY) | (mnt->writable ? 0u : VFS_STATVFS_FLAG_READONLY);
+    strncpy(out->mount_path, mnt->path, sizeof(out->mount_path) - 1u);
+    strncpy(out->fs_name, mnt->name, sizeof(out->fs_name) - 1u);
+    return VFS_OK;
 }
 
 void vfs_dump_mounts(void) {

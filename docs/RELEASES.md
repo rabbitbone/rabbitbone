@@ -2,6 +2,62 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+
+## 0.0.1.40
+
+Stage19.17 syscall validator recovery and ABI boundary hardening.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.40` / `0x00000128`.
+- Fixed the Rust syscall decoder self-test after the `sync`/`fsync`/`statvfs` ABI expansion by checking `AURORA_SYS_MAX` instead of the old `sync` syscall number as the unsupported boundary.
+- Added explicit Rust validator contracts for `sync`, `fsync`, and `statvfs`, keeping C and Rust syscall validation aligned.
+- Extended the Rust ABI generator to export `AURORA_SYS_MAX`, preventing future decoder boundary tests from drifting when syscall IDs are added.
+- Reduced the diagnostic log ring from 40 to 32 lines to keep the freestanding kernel below the early-stack safety boundary.
+
+## 0.0.1.39
+
+Stage19.16 EXT4 app-storage syscall contract update.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.39` / `0x00000127`.
+- Added VFS-level `sync`, descriptor-backed `fsync`, and `statvfs` plumbing for persistent application storage.
+- Added EXT4 `statvfs` capacity reporting with persistent/journaled/repairable mount flags, free block/inode counters, block size, max name length, mount path, and filesystem name.
+- Added userland wrappers `au_sync`, `au_fsync`, and `au_statvfs`, and wired the Rust syscall dispatcher/name table for the new stable filesystem ABI.
+- Extended runtime contracts for EXT4 capacity reporting, writeback flush boundaries, and syscall validation for the new FS calls.
+- Reduced the in-kernel log ring from 48 to 40 lines to preserve the early boot stack layout after adding the storage ABI.
+
+## 0.0.1.38
+
+Stage19.15 EXT4 repair-lite and fault-injection contracts.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.38` / `0x00000126`.
+- Added `ext4_repair_metadata()` for fsck-lite recovery of free block/inode counters, metadata checksums, and Aurora htree indexes.
+- Added htree index consistency checking and rebuild logic that scans directory records, drops a corrupt index block, rebuilds a sorted persistent index, and preserves lookups.
+- Added repair telemetry to fsck reports, EXT4 performance counters, and the `ext4` shell command.
+- Added runtime fault-injection contracts for corrupted htree metadata and corrupted free counters, followed by repair and post-repair validation.
+
+## 0.0.1.37
+
+Stage19.14 EXT4 unwritten-extent preallocation and conversion.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.37` / `0x00000125`.
+- Added EXT4 unwritten extent support in inline, depth-1, and depth-2 extent trees.
+- Added `ext4_preallocate_file_path()` for zero-readable preallocation without eager data writes.
+- Added safe conversion of an unwritten block to initialized data on first write, including split/merge of neighboring extent records.
+- Kept security semantics for partial writes by zero-filling converted blocks in the data cache before overlaying user payload, avoiding stale disk-data exposure.
+- Extended fsck/extent inspection and shell perf counters with unwritten extent/block and conversion telemetry.
+- Added runtime coverage for preallocate-read-zero, write conversion, no stale data leakage, truncate, unlink, and metadata consistency.
+
+## 0.0.1.34
+
+Stage 19.11 EXT4 cache-coherency and runtime correctness recovery.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.34` / `0x00000122`.
+- Fixed the stage19.10 runtime failures where dirty metadata-cache blocks could survive after a metadata block was freed and then reused as file data, causing sparse and indexed extent readback to return stale metadata instead of file payload.
+- Added metadata-cache invalidation on direct data writes and block free, while preserving async metadata write-combining for performance.
+- Fixed htree index offsets for entries inserted by splitting an occupied directory record; the index now points to the newly-created record instead of the previous record.
+- Strengthened htree validation so fsck-like checks verify that every htree entry resolves to the exact referenced directory record, inode, file type, and name hash.
+- Added mount-time free-counter reconciliation so a second mount cannot overwrite correct cached journal-reserved free counts with stale superblock counts read through the raw boot path.
+- Extended EXT4 perf reporting with metadata-cache invalidation counters.
+
 ## 0.0.1.30
 
 Stage 19.7 EXT4 extent-demotion correctness update.

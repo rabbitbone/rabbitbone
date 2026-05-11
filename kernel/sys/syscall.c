@@ -877,6 +877,45 @@ syscall_result_t aurora_sys_rename(u64 old_path_ptr, u64 new_path_ptr) {
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
+
+syscall_result_t aurora_sys_sync(void) {
+    vfs_status_t vs = vfs_sync_all();
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_fsync(u64 handle) {
+    sys_handle_t *handles = active_handles();
+    usize h = (usize)handle;
+    if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
+    sys_file_t *f = handle_file(&handles[h]);
+    const char *path = f ? f->path : handles[h].path;
+    if (!path || !path[0]) return err(VFS_ERR_NOENT);
+    vfs_status_t vs = vfs_sync_path(path);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_statvfs(u64 path_ptr, u64 out_ptr) {
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path) || !out_ptr) return err(VFS_ERR_INVAL);
+    vfs_statvfs_t st;
+    vfs_status_t vs = vfs_statvfs(path, &st);
+    if (vs != VFS_OK) return err(vs);
+    aurora_statvfs_t out;
+    memset(&out, 0, sizeof(out));
+    out.block_size = st.block_size;
+    out.total_blocks = st.total_blocks;
+    out.free_blocks = st.free_blocks;
+    out.avail_blocks = st.avail_blocks;
+    out.total_inodes = st.total_inodes;
+    out.free_inodes = st.free_inodes;
+    out.fs_id = st.fs_id;
+    out.flags = st.flags;
+    out.max_name_len = st.max_name_len;
+    strncpy(out.mount_path, st.mount_path, sizeof(out.mount_path) - 1u);
+    strncpy(out.fs_name, st.fs_name, sizeof(out.fs_name) - 1u);
+    return copy_out_buf(out_ptr, &out, sizeof(out)) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
 syscall_result_t aurora_sys_ticks(void) {
     return ok((i64)pit_ticks());
 }
@@ -1503,6 +1542,14 @@ bool syscall_selftest(void) {
     aurora_fdinfo_t fi;
     r = syscall_dispatch(AURORA_SYS_FDINFO, h, (u64)(uptr)&fi, 0, 0, 0, 0);
     if (r.error || fi.handle != h || strcmp(fi.path, path) != 0 || fi.flags != 0) return false;
+    r = syscall_dispatch(AURORA_SYS_FSYNC, h, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    aurora_statvfs_t sv;
+    memset(&sv, 0, sizeof(sv));
+    r = syscall_dispatch(AURORA_SYS_STATVFS, (u64)(uptr)path, (u64)(uptr)&sv, 0, 0, 0, 0);
+    if (r.error || sv.block_size < 1024u || sv.free_blocks > sv.total_blocks) return false;
+    r = syscall_dispatch(AURORA_SYS_SYNC, 0, 0, 0, 0, 0, 0);
+    if (r.error) return false;
     r = syscall_dispatch(AURORA_SYS_FDCTL, h, AURORA_FDCTL_SET, AURORA_FD_CLOEXEC, 0, 0, 0);
     if (r.error || r.value != AURORA_FD_CLOEXEC) return false;
     r = syscall_dispatch(AURORA_SYS_FDCTL, h, AURORA_FDCTL_GET, 0, 0, 0, 0);

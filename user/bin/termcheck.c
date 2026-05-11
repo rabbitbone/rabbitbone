@@ -1,5 +1,8 @@
 #include <aurora_sys.h>
-#include <aurora_term.h>
+
+static int write_console_bytes(const char *s, au_usize n) {
+    return au_write_console(s, n) == (au_i64)n ? 0 : -1;
+}
 
 int main(int argc, char **argv, char **envp) {
     (void)argc; (void)argv; (void)envp;
@@ -14,7 +17,20 @@ int main(int argc, char **argv, char **envp) {
     if (au_tty_readkey(&ev, AURORA_TTY_READ_NONBLOCK) != 0) return 5;
     if (ev.code != AURORA_KEY_NONE && ev.code != AURORA_KEY_CHAR && ev.code < AURORA_KEY_UP) return 6;
     if (au_tty_setmode(old) != 0) return 7;
-    au_term_move(1, 1);
-    au_term_clear_line();
+
+    char move_home[6];
+    move_home[0] = '\x1b';
+    move_home[1] = '[';
+    move_home[2] = '1';
+    move_home[3] = ';';
+    move_home[4] = '1';
+    move_home[5] = 'H';
+    if (write_console_bytes(move_home, sizeof(move_home)) != 0) return 8;
+
+    char clear_line[3];
+    clear_line[0] = '\x1b';
+    clear_line[1] = '[';
+    clear_line[2] = 'K';
+    if (write_console_bytes(clear_line, sizeof(clear_line)) != 0) return 9;
     return 0;
 }

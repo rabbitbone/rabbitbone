@@ -1,8 +1,8 @@
 # AuroraOS status
 
-AuroraOS is currently at `0.0.1.30`.
+AuroraOS is currently at `0.0.1.40`.
 
-The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a bounded writable EXT4 path with inline extents, indexed extents, split extent leaf writes, truncate-time extent-tree compaction/demotion, a syscall layer, and a small ring3 userland.
+The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a bounded writable EXT4 path with inline/depth-1/depth-2 extents, split extent leaf writes, truncate-time extent-tree compaction/demotion, persistent htree directory indexes, async-coalesced ordered metadata journaling/recovery with data-before-metadata sync, direct-data writeback caching with cache coherency, unwritten extent preallocation/conversion, orphan cleanup, metadata checksums, fsck repair-lite for htree/free-counter corruption, VFS/userland sync-fsync-statvfs app-storage calls, a syscall layer, and a small ring3 userland.
 
 ## Working now
 
@@ -18,8 +18,8 @@ The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stag
 
 ## Not done yet
 
+- Full Linux-compatible EXT4 journal descriptor/commit block format, extent tree depth above 2, htree hash variants beyond the Aurora-compatible index block, full delayed allocation/writeback-daemon policy, app/package rollback database, deeper fsck repair coverage, and metadata checksum coverage matching every upstream EXT4 feature flag.
 - SMP, APIC, PCI, AHCI, NVMe, USB, ACPI, and GUI.
-- EXT4 journaling/recovery, extent depth greater than one, and indexed directories.
 - Copy-on-write `fork`.
 - Interpreter and shebang support.
 - Full kernel text/rodata/data page-permission split.

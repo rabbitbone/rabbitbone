@@ -13,6 +13,7 @@ typedef struct ext4_vfs_ctx {
 } ext4_vfs_ctx_t;
 
 static u16 le16(u16 v) { return v; }
+static u32 le32(u32 v) { return v; }
 
 static bool ext4_type_checked(const ext4_inode_disk_t *inode, vfs_node_type_t *type_out) {
     if (!inode || !type_out) return false;
@@ -136,6 +137,27 @@ static vfs_status_t op_rename(vfs_mount_t *mnt, const char *old_path, const char
     return map_status(ext4_rename(&ctx->mount, old_path, new_path));
 }
 
+
+static vfs_status_t op_sync(vfs_mount_t *mnt) {
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    return map_status(ext4_sync_metadata(&ctx->mount));
+}
+
+static vfs_status_t op_statvfs(vfs_mount_t *mnt, vfs_statvfs_t *out) {
+    if (!mnt || !out) return VFS_ERR_INVAL;
+    ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
+    memset(out, 0, sizeof(*out));
+    out->block_size = ctx->mount.block_size;
+    out->total_blocks = ctx->mount.blocks_count;
+    out->free_blocks = ((u64)le32(ctx->mount.sb.s_free_blocks_count_hi) << 32) | le32(ctx->mount.sb.s_free_blocks_count_lo);
+    out->avail_blocks = out->free_blocks;
+    out->total_inodes = ctx->mount.inodes_count;
+    out->free_inodes = le32(ctx->mount.sb.s_free_inodes_count);
+    out->flags = VFS_STATVFS_FLAG_PERSISTENT | VFS_STATVFS_FLAG_JOURNALED | VFS_STATVFS_FLAG_REPAIRABLE;
+    out->max_name_len = EXT4_NAME_LEN;
+    return VFS_OK;
+}
+
 static const vfs_ops_t ops = {
     .stat = op_stat,
     .read = op_read,
@@ -146,6 +168,8 @@ static const vfs_ops_t ops = {
     .unlink = op_unlink,
     .truncate = op_truncate,
     .rename = op_rename,
+    .sync = op_sync,
+    .statvfs = op_statvfs,
 };
 
 vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {

@@ -56,6 +56,9 @@ enum au_syscall_id {
     AU_SYS_TTY_READKEY = AURORA_SYS_TTY_READKEY,
     AU_SYS_TRUNCATE = AURORA_SYS_TRUNCATE,
     AU_SYS_RENAME = AURORA_SYS_RENAME,
+    AU_SYS_SYNC = AURORA_SYS_SYNC,
+    AU_SYS_FSYNC = AURORA_SYS_FSYNC,
+    AU_SYS_STATVFS = AURORA_SYS_STATVFS,
 };
 
 typedef struct au_result {
@@ -80,6 +83,7 @@ typedef aurora_schedinfo_t au_schedinfo_t;
 typedef aurora_pipeinfo_t au_pipeinfo_t;
 typedef aurora_ttyinfo_t au_ttyinfo_t;
 typedef aurora_key_event_t au_key_event_t;
+typedef aurora_statvfs_t au_statvfs_t;
 
 #define AU_STDIN AURORA_STDIN
 #define AU_STDOUT AURORA_STDOUT
@@ -132,6 +136,9 @@ au_i64 au_mkdir(const char *path);
 au_i64 au_unlink(const char *path);
 au_i64 au_truncate(const char *path, au_u64 size);
 au_i64 au_rename(const char *old_path, const char *new_path);
+au_i64 au_sync(void);
+au_i64 au_fsync(au_i64 h);
+au_i64 au_statvfs(const char *path, au_statvfs_t *out);
 au_i64 au_stat(const char *path, au_stat_t *out);
 au_i64 au_log(const char *msg);
 au_i64 au_ticks(void);

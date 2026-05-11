@@ -4,14 +4,14 @@
 #define AURORA_VERSION_MAJOR 0u
 #define AURORA_VERSION_MINOR 0u
 #define AURORA_VERSION_PATCH 1u
-#define AURORA_VERSION_FIX 30u
-#define AURORA_VERSION_TEXT "0.0.1.30"
+#define AURORA_VERSION_FIX 40u
+#define AURORA_VERSION_TEXT "0.0.1.40"
 #define AURORA_VERSION_FULL "AuroraOS " AURORA_VERSION_TEXT
 
 #define AURORA_KERNEL_BANNER AURORA_VERSION_FULL " booting"
 #define AURORA_UNAME_TEXT "AuroraOS amd64 vmware " AURORA_VERSION_TEXT
 #define AURORA_CLI_BANNER "AuroraOS CLI " AURORA_VERSION_TEXT
-#define AURORA_KTEST_TITLE "AuroraOS 0.0.1.30 stage19.7 ext4 extent-demotion runtime self-test"
-#define AURORA_SYSCALL_ABI_VERSION 0x0000011eull
+#define AURORA_KTEST_TITLE "AuroraOS 0.0.1.40 stage19.17 fs stable-storage runtime self-test"
+#define AURORA_SYSCALL_ABI_VERSION 0x00000128ull
 
 #endif

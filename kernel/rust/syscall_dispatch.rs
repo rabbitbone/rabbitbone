@@ -67,6 +67,9 @@ pub enum SyscallNo {
     TtyReadKey = 40,
     Truncate = 41,
     Rename = 42,
+    Sync = 43,
+    Fsync = 44,
+    StatVfs = 45,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -140,6 +143,9 @@ impl SyscallNo {
             40 => Ok(Self::TtyReadKey),
             41 => Ok(Self::Truncate),
             42 => Ok(Self::Rename),
+            43 => Ok(Self::Sync),
+            44 => Ok(Self::Fsync),
+            45 => Ok(Self::StatVfs),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -189,6 +195,9 @@ impl SyscallNo {
             Self::TtyReadKey => b"tty_readkey\0",
             Self::Truncate => b"truncate\0",
             Self::Rename => b"rename\0",
+            Self::Sync => b"sync\0",
+            Self::Fsync => b"fsync\0",
+            Self::StatVfs => b"statvfs\0",
         }
     }
 }
@@ -237,13 +246,16 @@ extern "C" {
     fn aurora_sys_tty_readkey(out: u64, flags: u64) -> SyscallResult;
     fn aurora_sys_truncate(path: u64, size: u64) -> SyscallResult;
     fn aurora_sys_rename(old_path: u64, new_path: u64) -> SyscallResult;
+    fn aurora_sys_sync() -> SyscallResult;
+    fn aurora_sys_fsync(handle: u64) -> SyscallResult;
+    fn aurora_sys_statvfs(path: u64, out: u64) -> SyscallResult;
 }
 
 fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
-        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork => Ok(()),
+        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync => Ok(()),
         SyscallNo::WriteConsole => {
             if a.a1 > MAX_CONSOLE_WRITE || (a.a0 == 0 && a.a1 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
@@ -256,7 +268,7 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::ExecVe => {
             if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PROCESS_ARGS || a.a2 == 0 || a.a3 > MAX_PROCESS_ENVS || (a.a3 != 0 && a.a4 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell => {
+        SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell | SyscallNo::Fsync => {
             if valid_handle(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Read | SyscallNo::Write => {
@@ -320,6 +332,9 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::Rename => {
             if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
+        SyscallNo::StatVfs => {
+            if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
     }
 }
 
@@ -377,6 +392,9 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::TtyReadKey => aurora_sys_tty_readkey(args.a0, args.a1),
             SyscallNo::Truncate => aurora_sys_truncate(args.a0, args.a1),
             SyscallNo::Rename => aurora_sys_rename(args.a0, args.a1),
+            SyscallNo::Sync => aurora_sys_sync(),
+            SyscallNo::Fsync => aurora_sys_fsync(args.a0),
+            SyscallNo::StatVfs => aurora_sys_statvfs(args.a0, args.a1),
         }
     }
 }
@@ -421,7 +439,10 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(40) != Ok(SyscallNo::TtyReadKey) { return false; }
     if SyscallNo::decode(41) != Ok(SyscallNo::Truncate) { return false; }
     if SyscallNo::decode(42) != Ok(SyscallNo::Rename) { return false; }
-    if SyscallNo::decode(43) != Err(DecodeError::Unsupported) { return false; }
+    if SyscallNo::decode(43) != Ok(SyscallNo::Sync) { return false; }
+    if SyscallNo::decode(44) != Ok(SyscallNo::Fsync) { return false; }
+    if SyscallNo::decode(45) != Ok(SyscallNo::StatVfs) { return false; }
+    if SyscallNo::decode(crate::abi::AURORA_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
@@ -484,5 +505,12 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::Truncate, SysArgs { a0: 0x10000, a1: 7, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Rename, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Rename, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+
+    if validate_args(SyscallNo::Sync, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Fsync, SysArgs { a0: MAX_HANDLES - 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Fsync, SysArgs { a0: MAX_HANDLES, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     true
 }

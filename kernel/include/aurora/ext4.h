@@ -199,6 +199,13 @@ typedef struct ext4_mount {
     u16 inode_size;
     u16 group_desc_size;
     u32 group_count;
+    u64 journal_first_block;
+    u32 journal_blocks;
+    u32 journal_seq;
+    bool journal_ready;
+    u32 recovered_orphans;
+    u32 recovered_journal_replays;
+    u64 allocator_next_block;
     ext4_superblock_disk_t sb;
 } ext4_mount_t;
 
@@ -220,8 +227,48 @@ typedef struct ext4_fsck_report {
     u32 extent_inodes;
     u64 extent_data_blocks;
     u64 extent_metadata_blocks;
+    u32 htree_dirs;
+    u32 htree_entries;
+    u32 htree_errors;
+    u32 orphan_recovered;
+    u32 journal_replays;
+    u32 checksum_errors;
+    u32 repaired_counters;
+    u32 repaired_checksums;
+    u32 repaired_htree;
     u32 errors;
 } ext4_fsck_report_t;
+
+
+typedef struct ext4_perf_stats {
+    u32 cache_slots;
+    u32 dirty_slots;
+    u64 cache_hits;
+    u64 cache_stores;
+    u64 cache_evictions;
+    u64 cache_flushes;
+    u64 cache_invalidations;
+    u64 journal_commits;
+    u64 raw_reads;
+    u64 raw_writes;
+    u64 data_writes;
+    u64 data_cache_hits;
+    u64 data_cache_stores;
+    u64 data_cache_evictions;
+    u64 data_cache_flushes;
+    u64 data_cache_invalidations;
+    u64 allocator_scans;
+    u64 allocator_wraps;
+    u64 zero_block_writes;
+    u64 zero_block_skips;
+    u64 unwritten_allocations;
+    u64 unwritten_conversions;
+    u64 unwritten_zero_fills;
+    u64 repair_runs;
+    u64 repair_counter_fixes;
+    u64 repair_checksum_fixes;
+    u64 repair_htree_rebuilds;
+} ext4_perf_stats_t;
 
 typedef struct ext4_extent_report {
     bool uses_extents;
@@ -232,12 +279,20 @@ typedef struct ext4_extent_report {
     u32 extent_entries;
     u64 data_blocks;
     u64 metadata_blocks;
+    u64 unwritten_blocks;
+    u32 unwritten_extents;
+    u16 max_depth_seen;
+    u32 index_nodes;
     u32 errors;
 } ext4_extent_report_t;
 
 ext4_status_t ext4_mount(block_device_t *dev, u64 partition_lba, ext4_mount_t *out);
 ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 partition_sectors, ext4_mount_t *out);
 ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
+ext4_status_t ext4_repair_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
+ext4_status_t ext4_recover(ext4_mount_t *mnt, ext4_fsck_report_t *report);
+ext4_status_t ext4_sync_metadata(ext4_mount_t *mnt);
+ext4_status_t ext4_get_perf_stats(ext4_mount_t *mnt, ext4_perf_stats_t *out);
 ext4_status_t ext4_inspect_inode_extents(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_extent_report_t *report);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);
 ext4_status_t ext4_read_file(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, u64 offset, void *buffer, usize bytes, usize *read_out);
@@ -246,6 +301,7 @@ ext4_status_t ext4_create_file(ext4_mount_t *mnt, const char *path, const void *
 ext4_status_t ext4_mkdir(ext4_mount_t *mnt, const char *path);
 ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path);
 ext4_status_t ext4_truncate_file_path(ext4_mount_t *mnt, const char *path, u64 size);
+ext4_status_t ext4_preallocate_file_path(ext4_mount_t *mnt, const char *path, u64 size);
 ext4_status_t ext4_rename(ext4_mount_t *mnt, const char *old_path, const char *new_path);
 ext4_status_t ext4_list_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, ext4_dir_iter_fn fn, void *ctx);
 ext4_status_t ext4_find_in_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out);

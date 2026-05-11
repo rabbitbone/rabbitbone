@@ -1,6 +1,6 @@
 # AuroraOS
 
-![Version](https://img.shields.io/badge/version-0.0.1.30-2f6fed)
+![Version](https://img.shields.io/badge/version-0.0.1.40-2f6fed)
 ![Target](https://img.shields.io/badge/target-x86_64%20VMware%20BIOS-222222)
 ![Kernel](https://img.shields.io/badge/kernel-independent-6b46c1)
 ![Written with](https://img.shields.io/badge/written%20with-GPT--5.5-0f766e)
@@ -9,7 +9,7 @@
 
 AuroraOS is an experimental amd64 operating system for VMware Legacy BIOS machines. It is not a Linux distribution, not a Unix clone, and not a bootloader demo. The repository contains the boot path, kernel, filesystem layer, syscall surface, small userland programs, host-side tests, and the tooling needed to build a raw disk image.
 
-The current release line is `0.0.1.30`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline extents, split indexed extent leaves, compact truncated trees back to inline form, and validate extent metadata after mutation stress, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
+The current release line is `0.0.1.40`. At this point AuroraOS can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline, depth-1, and depth-2 extent trees, maintain persistent directory htree indexes, journal metadata with async-coalesced ordered single-block recovery, buffer data writes with ordered data-before-metadata sync, preallocate zero-readable unwritten extents, recover orphaned unlinks, verify metadata checksums, repair corrupted htree metadata/free counters, expose sync/fsync/statvfs for application storage, and validate metadata after mutation stress, enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
 
 ## What is inside
 
@@ -17,7 +17,7 @@ The current release line is `0.0.1.30`. At this point AuroraOS can boot through 
 | --- | --- |
 | Boot | BIOS stage1 and stage2 loader with E820 discovery and COM1 diagnostics |
 | Kernel | x86_64 GDT, IDT, IRQ, paging, heap, VMM, panic/logging, shell |
-| Filesystems | VFS, writable ramfs, devfs, tarfs, bounded writable EXT4 adapter with inline, indexed, split-leaf, and compacted/demoted extent files |
+| Filesystems | VFS, writable ramfs, devfs, tarfs, bounded writable EXT4 adapter with inline, indexed, split-leaf, depth-2 extent trees, persistent htree directory indexes, heap-backed async metadata cache, buffered file-data writeback with coherency invalidation, unwritten extent preallocation/conversion, ordered metadata journal/recovery, orphan cleanup, metadata checksums, and fsck repair-lite for htree/free-counter corruption |
 | Storage | ATA PIO, block layer, MBR parsing, installer-built EXT4 seed partition |
 | User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, small test programs |
 | Processes | process registry, fd model, async spawn, blocking wait/sleep, fork, exec |

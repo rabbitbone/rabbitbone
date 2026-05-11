@@ -44,7 +44,10 @@
 #define AURORA_SYS_TTY_READKEY 40u
 #define AURORA_SYS_TRUNCATE 41u
 #define AURORA_SYS_RENAME 42u
-#define AURORA_SYS_MAX 43u
+#define AURORA_SYS_SYNC 43u
+#define AURORA_SYS_FSYNC 44u
+#define AURORA_SYS_STATVFS 45u
+#define AURORA_SYS_MAX 46u
 
 #define AURORA_NAME_MAX 64u
 #define AURORA_PATH_MAX 256u
@@ -91,6 +94,11 @@
 #define AURORA_KEY_MOD_SHIFT 0x00000001u
 #define AURORA_KEY_MOD_CTRL  0x00000002u
 #define AURORA_KEY_MOD_ALT   0x00000004u
+
+#define AURORA_VFS_FLAG_READONLY 0x00000001u
+#define AURORA_VFS_FLAG_PERSISTENT 0x00000002u
+#define AURORA_VFS_FLAG_JOURNALED 0x00000004u
+#define AURORA_VFS_FLAG_REPAIRABLE 0x00000008u
 
 
 #ifndef AURORA_ABI_STATIC_ASSERT
@@ -180,6 +188,21 @@ typedef struct aurora_dirent {
 } aurora_dirent_t;
 
 
+
+typedef struct aurora_statvfs {
+    unsigned long long block_size;
+    unsigned long long total_blocks;
+    unsigned long long free_blocks;
+    unsigned long long avail_blocks;
+    unsigned long long total_inodes;
+    unsigned long long free_inodes;
+    unsigned long long fs_id;
+    unsigned int flags;
+    unsigned int max_name_len;
+    char mount_path[AURORA_PATH_MAX];
+    char fs_name[AURORA_NAME_MAX];
+} aurora_statvfs_t;
+
 typedef struct aurora_pipeinfo {
     unsigned int pipe_id;
     unsigned int read_handle;
@@ -215,5 +238,7 @@ AURORA_ABI_STATIC_ASSERT(preemptinfo_rip_offset, __builtin_offsetof(aurora_preem
 AURORA_ABI_STATIC_ASSERT(pipeinfo_capacity_offset, __builtin_offsetof(aurora_pipeinfo_t, capacity) == 12);
 AURORA_ABI_STATIC_ASSERT(ttyinfo_mode_offset, __builtin_offsetof(aurora_ttyinfo_t, mode) == 16);
 AURORA_ABI_STATIC_ASSERT(key_event_size, sizeof(aurora_key_event_t) == 16);
+AURORA_ABI_STATIC_ASSERT(statvfs_block_size_offset, __builtin_offsetof(aurora_statvfs_t, block_size) == 0);
+AURORA_ABI_STATIC_ASSERT(statvfs_mount_after_max_name, __builtin_offsetof(aurora_statvfs_t, mount_path) == __builtin_offsetof(aurora_statvfs_t, max_name_len) + sizeof(unsigned int));
 
 #endif

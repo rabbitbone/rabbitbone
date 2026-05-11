@@ -142,6 +142,24 @@ static void cmd_ext4(void) {
                 report.bitmap_free_inodes, report.sb_free_inodes,
                 (unsigned long long)report.extent_data_blocks, (unsigned long long)report.extent_metadata_blocks,
                 report.errors);
+        ext4_perf_stats_t ps;
+        if (ext4_get_perf_stats(&mnt, &ps) == EXT4_OK) {
+            kprintf("ext4: perf cache=%u dirty=%u hits=%llu stores=%llu evict=%llu flush=%llu inval=%llu journal=%llu raw_r=%llu raw_w=%llu data_w=%llu d_hits=%llu d_stores=%llu d_evict=%llu d_flush=%llu d_inval=%llu alloc_scan=%llu alloc_wrap=%llu zero_w=%llu zero_skip=%llu unw_alloc=%llu unw_conv=%llu unw_zero=%llu repair=%llu repair_cnt=%llu repair_csum=%llu repair_htree=%llu\n",
+                    ps.cache_slots, ps.dirty_slots,
+                    (unsigned long long)ps.cache_hits, (unsigned long long)ps.cache_stores,
+                    (unsigned long long)ps.cache_evictions, (unsigned long long)ps.cache_flushes,
+                    (unsigned long long)ps.cache_invalidations, (unsigned long long)ps.journal_commits, (unsigned long long)ps.raw_reads,
+                    (unsigned long long)ps.raw_writes, (unsigned long long)ps.data_writes,
+                    (unsigned long long)ps.data_cache_hits, (unsigned long long)ps.data_cache_stores,
+                    (unsigned long long)ps.data_cache_evictions, (unsigned long long)ps.data_cache_flushes,
+                    (unsigned long long)ps.data_cache_invalidations,
+                    (unsigned long long)ps.allocator_scans, (unsigned long long)ps.allocator_wraps,
+                    (unsigned long long)ps.zero_block_writes, (unsigned long long)ps.zero_block_skips,
+                    (unsigned long long)ps.unwritten_allocations, (unsigned long long)ps.unwritten_conversions,
+                    (unsigned long long)ps.unwritten_zero_fills,
+                    (unsigned long long)ps.repair_runs, (unsigned long long)ps.repair_counter_fixes,
+                    (unsigned long long)ps.repair_checksum_fixes, (unsigned long long)ps.repair_htree_rebuilds);
+        }
         ext4_inode_disk_t root;
         st = ext4_read_inode(&mnt, EXT4_ROOT_INO, &root);
         if (st != EXT4_OK) { kprintf("ext4: root inode failed: %s\n", ext4_status_name(st)); return; }

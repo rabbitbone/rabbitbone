@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ABI = ROOT / 'include' / 'aurora' / 'abi.h'
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'build' / 'kernel' / 'rust' / 'abi_generated.rs'
 WANTED = {
+    'AURORA_SYS_MAX',
     'AURORA_PROCESS_HANDLE_CAP',
     'AURORA_ENV_MAX',
     'AURORA_FD_CLOEXEC',
