@@ -56,16 +56,17 @@ static void default_exception(cpu_regs_t *regs) {
     if (regs_from_user(regs) && process_user_active()) {
         if (process_async_scheduler_active()) process_fault_current_from_interrupt(regs, regs->vector, regs->vector == 14 ? read_cr2() : 0);
         else process_fault_from_interrupt(regs->vector, regs->rip, regs->vector == 14 ? read_cr2() : 0);
+        return;
     }
     if (regs->vector == 14) {
-        PANIC("exception %llu %s rip=%p err=%llx cr2=%p",
+        PANIC_REGS(regs, "exception %llu %s rip=%p err=%llx cr2=%p",
               (unsigned long long)regs->vector,
               cpu_exception_name(regs->vector),
               (void *)(uptr)regs->rip,
               (unsigned long long)regs->error,
               (void *)(uptr)read_cr2());
     }
-    PANIC("exception %llu %s rip=%p err=%llx",
+    PANIC_REGS(regs, "exception %llu %s rip=%p err=%llx",
           (unsigned long long)regs->vector,
           cpu_exception_name(regs->vector),
           (void *)(uptr)regs->rip,

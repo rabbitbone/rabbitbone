@@ -125,6 +125,26 @@ bool keyboard_get_event(aurora_key_event_t *out) {
     return true;
 }
 
+bool keyboard_try_get_event(aurora_key_event_t *out) {
+    u64 flags = irq_save();
+    for (u32 spin = 0; spin < 1024u; ++spin) {
+        if (spin_try_lock(&kbd_lock)) {
+            bool ok = false;
+            if (head != tail) {
+                if (out) *out = queue[head];
+                head = (head + 1u) % QUEUE_SIZE;
+                ok = true;
+            }
+            spin_unlock(&kbd_lock);
+            irq_restore(flags);
+            return ok;
+        }
+        __asm__ volatile("pause");
+    }
+    irq_restore(flags);
+    return false;
+}
+
 bool keyboard_peek_event(aurora_key_event_t *out) {
     u64 flags = spin_lock_irqsave(&kbd_lock);
     if (head == tail) { spin_unlock_irqrestore(&kbd_lock, flags); return false; }

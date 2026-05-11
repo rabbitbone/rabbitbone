@@ -38,7 +38,16 @@ typedef struct vfs_stat {
     u32 mode;
     u32 inode;
     u32 fs_id;
+    u32 nlink;
 } vfs_stat_t;
+
+typedef struct vfs_node_ref {
+    u32 fs_id;
+    u32 inode;
+    vfs_node_type_t type;
+    u64 size;
+    char path[VFS_PATH_MAX];
+} vfs_node_ref_t;
 
 typedef struct vfs_dirent {
     char name[VFS_NAME_MAX];
@@ -73,15 +82,27 @@ typedef struct vfs_mount vfs_mount_t;
 
 typedef struct vfs_ops {
     vfs_status_t (*stat)(vfs_mount_t *mnt, const char *path, vfs_stat_t *out);
+    vfs_status_t (*lstat)(vfs_mount_t *mnt, const char *path, vfs_stat_t *out);
+    vfs_status_t (*readlink)(vfs_mount_t *mnt, const char *path, char *buffer, usize size, usize *read_out);
+    vfs_status_t (*symlink)(vfs_mount_t *mnt, const char *target, const char *link_path);
+    vfs_status_t (*link)(vfs_mount_t *mnt, const char *old_path, const char *new_path);
     vfs_status_t (*read)(vfs_mount_t *mnt, const char *path, u64 offset, void *buffer, usize size, usize *read_out);
     vfs_status_t (*write)(vfs_mount_t *mnt, const char *path, u64 offset, const void *buffer, usize size, usize *written_out);
+    vfs_status_t (*stat_inode)(vfs_mount_t *mnt, u32 inode, vfs_stat_t *out);
+    vfs_status_t (*read_inode)(vfs_mount_t *mnt, u32 inode, u64 offset, void *buffer, usize size, usize *read_out);
+    vfs_status_t (*write_inode)(vfs_mount_t *mnt, u32 inode, u64 offset, const void *buffer, usize size, usize *written_out);
+    vfs_status_t (*truncate_inode)(vfs_mount_t *mnt, u32 inode, u64 size);
     vfs_status_t (*list)(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn fn, void *ctx);
+    vfs_status_t (*list_inode)(vfs_mount_t *mnt, u32 inode, vfs_dir_iter_fn fn, void *ctx);
     vfs_status_t (*mkdir)(vfs_mount_t *mnt, const char *path);
     vfs_status_t (*create)(vfs_mount_t *mnt, const char *path, const void *data, usize size);
     vfs_status_t (*unlink)(vfs_mount_t *mnt, const char *path);
     vfs_status_t (*truncate)(vfs_mount_t *mnt, const char *path, u64 size);
     vfs_status_t (*rename)(vfs_mount_t *mnt, const char *old_path, const char *new_path);
+    vfs_status_t (*preallocate)(vfs_mount_t *mnt, const char *path, u64 size);
+    vfs_status_t (*preallocate_inode)(vfs_mount_t *mnt, u32 inode, u64 size);
     vfs_status_t (*sync)(vfs_mount_t *mnt);
+    vfs_status_t (*sync_inode)(vfs_mount_t *mnt, u32 inode, bool data_only);
     vfs_status_t (*statvfs)(vfs_mount_t *mnt, vfs_statvfs_t *out);
 } vfs_ops_t;
 
@@ -98,17 +119,32 @@ void vfs_init(void);
 vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops, void *ctx, bool writable);
 vfs_status_t vfs_unmount(const char *path);
 vfs_status_t vfs_stat(const char *path, vfs_stat_t *out);
+vfs_status_t vfs_lstat(const char *path, vfs_stat_t *out);
+vfs_status_t vfs_readlink(const char *path, char *buffer, usize size, usize *read_out);
+vfs_status_t vfs_symlink(const char *target, const char *link_path);
+vfs_status_t vfs_link(const char *old_path, const char *new_path);
+vfs_status_t vfs_get_ref(const char *path, vfs_node_ref_t *out);
+vfs_status_t vfs_stat_ref(const vfs_node_ref_t *ref, vfs_stat_t *out);
 vfs_status_t vfs_read(const char *path, u64 offset, void *buffer, usize size, usize *read_out);
+vfs_status_t vfs_read_ref(const vfs_node_ref_t *ref, u64 offset, void *buffer, usize size, usize *read_out);
 vfs_status_t vfs_write(const char *path, u64 offset, const void *buffer, usize size, usize *written_out);
+vfs_status_t vfs_write_ref(const vfs_node_ref_t *ref, u64 offset, const void *buffer, usize size, usize *written_out);
 vfs_status_t vfs_list(const char *path, vfs_dir_iter_fn fn, void *ctx);
+vfs_status_t vfs_list_ref(const vfs_node_ref_t *ref, vfs_dir_iter_fn fn, void *ctx);
 vfs_status_t vfs_mkdir(const char *path);
 vfs_status_t vfs_create(const char *path, const void *data, usize size);
 vfs_status_t vfs_unlink(const char *path);
 vfs_status_t vfs_truncate(const char *path, u64 size);
+vfs_status_t vfs_truncate_ref(const vfs_node_ref_t *ref, u64 size);
 vfs_status_t vfs_rename(const char *old_path, const char *new_path);
+vfs_status_t vfs_preallocate(const char *path, u64 size);
+vfs_status_t vfs_preallocate_ref(const vfs_node_ref_t *ref, u64 size);
 vfs_status_t vfs_sync_all(void);
 vfs_status_t vfs_sync_path(const char *path);
+vfs_status_t vfs_sync_ref(const vfs_node_ref_t *ref, bool data_only);
+vfs_status_t vfs_sync_parent_dir(const char *path);
 vfs_status_t vfs_statvfs(const char *path, vfs_statvfs_t *out);
+vfs_status_t vfs_install_commit(const char *staged_path, const char *final_path);
 void vfs_dump_mounts(void);
 bool vfs_rust_route_selftest(void);
 const char *vfs_status_name(vfs_status_t st);

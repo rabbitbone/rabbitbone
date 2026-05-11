@@ -81,6 +81,8 @@ void process_dump_last(void);
 void process_dump_table(void);
 u32 process_current_pid(void);
 bool process_current_info(process_info_t *out);
+bool process_current_cwd(char *out, usize out_size);
+bool process_set_current_cwd(const char *path);
 bool process_lookup(u32 pid, process_info_t *out);
 usize process_table_count(void);
 bool process_table_selftest(void);

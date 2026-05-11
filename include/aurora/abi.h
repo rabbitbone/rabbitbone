@@ -47,7 +47,18 @@
 #define AURORA_SYS_SYNC 43u
 #define AURORA_SYS_FSYNC 44u
 #define AURORA_SYS_STATVFS 45u
-#define AURORA_SYS_MAX 46u
+#define AURORA_SYS_INSTALL_COMMIT 46u
+#define AURORA_SYS_PREALLOCATE 47u
+#define AURORA_SYS_FTRUNCATE 48u
+#define AURORA_SYS_FPREALLOCATE 49u
+#define AURORA_SYS_CHDIR 50u
+#define AURORA_SYS_GETCWD 51u
+#define AURORA_SYS_FDATASYNC 52u
+#define AURORA_SYS_SYMLINK 53u
+#define AURORA_SYS_READLINK 54u
+#define AURORA_SYS_LINK 55u
+#define AURORA_SYS_LSTAT 56u
+#define AURORA_SYS_MAX 57u
 
 #define AURORA_NAME_MAX 64u
 #define AURORA_PATH_MAX 256u
@@ -61,6 +72,22 @@
 #define AURORA_STDERR 2u
 
 #define AURORA_FD_CLOEXEC 0x00000001u
+
+#define AURORA_O_RDONLY    0x00000000u
+#define AURORA_O_WRONLY    0x00000001u
+#define AURORA_O_RDWR      0x00000002u
+#define AURORA_O_ACCMODE   0x00000003u
+#define AURORA_O_CREAT     0x00000100u
+#define AURORA_O_EXCL      0x00000200u
+#define AURORA_O_TRUNC     0x00000400u
+#define AURORA_O_APPEND    0x00000800u
+#define AURORA_O_DIRECTORY 0x00001000u
+#define AURORA_O_CLOEXEC   0x00002000u
+#define AURORA_O_SUPPORTED (AURORA_O_ACCMODE | AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_TRUNC | AURORA_O_APPEND | AURORA_O_DIRECTORY | AURORA_O_CLOEXEC)
+
+#define AURORA_SEEK_SET 0u
+#define AURORA_SEEK_CUR 1u
+#define AURORA_SEEK_END 2u
 #define AURORA_FDCTL_GET 0u
 #define AURORA_FDCTL_SET 1u
 
@@ -174,7 +201,7 @@ typedef struct aurora_fdinfo {
     unsigned int inode;
     unsigned int fs_id;
     unsigned int flags;
-    unsigned int reserved;
+    unsigned int open_flags;
     char path[AURORA_PATH_MAX];
 } aurora_fdinfo_t;
 
@@ -234,6 +261,7 @@ AURORA_ABI_STATIC_ASSERT(procinfo_pid_offset, __builtin_offsetof(aurora_procinfo
 AURORA_ABI_STATIC_ASSERT(procinfo_name_size, sizeof(((aurora_procinfo_t *)0)->name) == AURORA_PROCESS_NAME_MAX);
 AURORA_ABI_STATIC_ASSERT(schedinfo_quantum_after_preempt_enabled, __builtin_offsetof(aurora_schedinfo_t, quantum_ticks) == __builtin_offsetof(aurora_schedinfo_t, preempt_enabled) + sizeof(unsigned int));
 AURORA_ABI_STATIC_ASSERT(fdinfo_flags_after_fsid, __builtin_offsetof(aurora_fdinfo_t, flags) == __builtin_offsetof(aurora_fdinfo_t, fs_id) + sizeof(unsigned int));
+AURORA_ABI_STATIC_ASSERT(fdinfo_open_flags_after_flags, __builtin_offsetof(aurora_fdinfo_t, open_flags) == __builtin_offsetof(aurora_fdinfo_t, flags) + sizeof(unsigned int));
 AURORA_ABI_STATIC_ASSERT(preemptinfo_rip_offset, __builtin_offsetof(aurora_preemptinfo_t, last_preempt_rip) > __builtin_offsetof(aurora_preemptinfo_t, total_preemptions));
 AURORA_ABI_STATIC_ASSERT(pipeinfo_capacity_offset, __builtin_offsetof(aurora_pipeinfo_t, capacity) == 12);
 AURORA_ABI_STATIC_ASSERT(ttyinfo_mode_offset, __builtin_offsetof(aurora_ttyinfo_t, mode) == 16);

@@ -236,6 +236,7 @@ typedef struct ext4_fsck_report {
     u32 repaired_counters;
     u32 repaired_checksums;
     u32 repaired_htree;
+    u32 repaired_dirents;
     u32 errors;
 } ext4_fsck_report_t;
 
@@ -257,6 +258,10 @@ typedef struct ext4_perf_stats {
     u64 data_cache_evictions;
     u64 data_cache_flushes;
     u64 data_cache_invalidations;
+    u64 data_cache_readahead;
+    u64 data_cache_clean_stores;
+    u64 data_cache_writeback_runs;
+    u64 data_cache_pressure_flushes;
     u64 allocator_scans;
     u64 allocator_wraps;
     u64 zero_block_writes;
@@ -268,6 +273,7 @@ typedef struct ext4_perf_stats {
     u64 repair_counter_fixes;
     u64 repair_checksum_fixes;
     u64 repair_htree_rebuilds;
+    u64 repair_dirent_fixes;
 } ext4_perf_stats_t;
 
 typedef struct ext4_extent_report {
@@ -292,6 +298,7 @@ ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *repo
 ext4_status_t ext4_repair_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report);
 ext4_status_t ext4_recover(ext4_mount_t *mnt, ext4_fsck_report_t *report);
 ext4_status_t ext4_sync_metadata(ext4_mount_t *mnt);
+ext4_status_t ext4_sync_file(ext4_mount_t *mnt, u32 ino, bool data_only);
 ext4_status_t ext4_get_perf_stats(ext4_mount_t *mnt, ext4_perf_stats_t *out);
 ext4_status_t ext4_inspect_inode_extents(ext4_mount_t *mnt, const ext4_inode_disk_t *inode, ext4_extent_report_t *report);
 ext4_status_t ext4_read_inode(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *out);
@@ -300,16 +307,23 @@ ext4_status_t ext4_write_file(ext4_mount_t *mnt, u32 ino, ext4_inode_disk_t *ino
 ext4_status_t ext4_create_file(ext4_mount_t *mnt, const char *path, const void *data, usize size);
 ext4_status_t ext4_mkdir(ext4_mount_t *mnt, const char *path);
 ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path);
+ext4_status_t ext4_symlink(ext4_mount_t *mnt, const char *target, const char *link_path);
+ext4_status_t ext4_readlink(ext4_mount_t *mnt, const char *path, char *buffer, usize size, usize *read_out);
+ext4_status_t ext4_link(ext4_mount_t *mnt, const char *old_path, const char *new_path);
 ext4_status_t ext4_truncate_file_path(ext4_mount_t *mnt, const char *path, u64 size);
 ext4_status_t ext4_preallocate_file_path(ext4_mount_t *mnt, const char *path, u64 size);
+ext4_status_t ext4_preallocate_file_inode(ext4_mount_t *mnt, u32 ino, u64 size);
+ext4_status_t ext4_truncate_file_inode(ext4_mount_t *mnt, u32 ino, u64 size);
 ext4_status_t ext4_rename(ext4_mount_t *mnt, const char *old_path, const char *new_path);
 ext4_status_t ext4_list_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, ext4_dir_iter_fn fn, void *ctx);
 ext4_status_t ext4_find_in_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out);
 ext4_status_t ext4_lookup_path(ext4_mount_t *mnt, const char *path, ext4_inode_disk_t *inode_out, u32 *ino_out);
+ext4_status_t ext4_lstat_path(ext4_mount_t *mnt, const char *path, ext4_inode_disk_t *inode_out, u32 *ino_out);
 const char *ext4_status_name(ext4_status_t status);
 u64 ext4_inode_size(const ext4_inode_disk_t *inode);
 bool ext4_inode_is_dir(const ext4_inode_disk_t *inode);
 bool ext4_inode_is_regular(const ext4_inode_disk_t *inode);
+bool ext4_inode_is_symlink(const ext4_inode_disk_t *inode);
 bool ext4_inode_uses_extents(const ext4_inode_disk_t *inode);
 u16 ext4_inode_extent_depth(const ext4_inode_disk_t *inode);
 u16 ext4_inode_extent_root_entries(const ext4_inode_disk_t *inode);

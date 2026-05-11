@@ -303,6 +303,11 @@ static void test_ext4_minimal() {
     require(ext4_mkdir(&mnt, "/.") == EXT4_ERR_RANGE, "ext4 rejects mkdir dot entry");
     require(ext4_mkdir(&mnt, "/..") == EXT4_ERR_RANGE, "ext4 rejects mkdir dotdot entry");
     require(ext4_mkdir(&mnt, "/dir") == EXT4_OK, "ext4 mkdir");
+    ext4_inode_disk_t dir_inode{};
+    u32 dir_ino = 0;
+    require(ext4_lookup_path(&mnt, "/dir", &dir_inode, &dir_ino) == EXT4_OK && ext4_inode_is_dir(&dir_inode) &&
+            ext4_inode_uses_extents(&dir_inode) && ext4_inode_extent_depth(&dir_inode) == 0,
+            "ext4 mkdir creates extent-backed directory");
     require(ext4_unlink(&mnt, "/dir/.") == EXT4_ERR_RANGE, "ext4 refuses unlink dot entry");
     require(ext4_rename(&mnt, "/dir", "/.") == EXT4_ERR_RANGE, "ext4 refuses rename over dot entry");
     require(ext4_create_file(&mnt, "/dir/child", "x", 1) == EXT4_OK, "ext4 create child in directory");

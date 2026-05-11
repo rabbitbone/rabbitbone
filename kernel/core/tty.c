@@ -101,15 +101,20 @@ bool tty_getinfo(aurora_ttyinfo_t *out) {
     return true;
 }
 
+static void tty_key_none(aurora_key_event_t *out) {
+    if (!out) return;
+    out->code = AURORA_KEY_NONE;
+    out->mods = 0;
+    out->ch = 0;
+    out->scancode = 0;
+}
+
 bool tty_read_key(aurora_key_event_t *out, u32 flags) {
     if (!out) return false;
     if (flags & ~AURORA_TTY_READ_NONBLOCK) return false;
     if (keyboard_get_event(out)) return true;
-    if (flags & AURORA_TTY_READ_NONBLOCK) {
-        out->code = AURORA_KEY_NONE;
-        out->mods = 0;
-        out->ch = 0;
-        out->scancode = 0;
+    if ((flags & AURORA_TTY_READ_NONBLOCK) || process_user_active()) {
+        tty_key_none(out);
         return true;
     }
     for (;;) {

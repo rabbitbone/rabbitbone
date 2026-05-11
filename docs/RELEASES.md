@@ -3,6 +3,74 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.1.49
+
+Preparatory update for the upcoming `0.0.2.0` line.
+
+This is not the full `0.0.2.0` release. It keeps the project on the `0.0.1.x` release line while landing the filesystem, syscall, and runtime groundwork needed for the next minor line.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.49` / `0x00000131`.
+- Added cwd-relative filesystem syscall groundwork and userland wrappers for the future `0.0.2.0` storage surface.
+- Extended VFS, ramfs, EXT4, and process state plumbing for cwd-aware path resolution without promoting the project to the `0.0.2.0` release line yet.
+- Expanded runtime coverage for cwd-relative file operations, descriptor behavior, bad-path handling, and EXT4 metadata stability.
+- Kept this release marked as a `0.0.1.x` preparatory patch so the eventual `0.0.2.0` tag can remain the first complete release of that line.
+
+## 0.0.1.46
+
+Stage19.23 EXT4 VFS/userland preallocation ABI.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.46` / `0x0000012e`.
+- Promoted EXT4 unwritten-extent preallocation from the raw EXT4 helper into the VFS, syscall dispatcher, and userland wrapper surface as `preallocate(path, size)`.
+- Added runtime coverage that preallocated EXT4 files expose zero-readable unwritten blocks, convert correctly on write, truncate/unlink cleanly, and work from ring3 userland through `/disk0`.
+- Kept existing app-storage guarantees for sync, fsync, statvfs, install_commit, htree repair, extent trees, and ordered writeback intact.
+
+## 0.0.1.45
+
+Stage19.22 EXT4 extent-backed directories and dirent-repair target fix.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.45` / `0x0000012d`.
+- Changed newly created EXT4 directories to use inline extent roots for their data blocks, matching the regular-file allocator path and the repair/fsck raw-media tests.
+- Keeps legacy direct-block seed directories readable while making app-created directories compatible with extent validation, htree repair, dirent normalization, truncate/unlink cleanup, and future multi-block directory growth.
+
+## 0.0.1.44
+
+Stage19.21 EXT4 cache-coherent repair and dirty-data preservation.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.44` / `0x0000012c`.
+- Fixed the stage19.20 regression where a secondary raw EXT4 mount invalidated dirty data-cache slots belonging to the live VFS mount, causing newly created file payloads and sparse extent samples to disappear before sync.
+- Kept fsck-lite raw-media visibility by flushing dirty cache state and invalidating only clean cached blocks for the same partition before validate/repair scans.
+- Preserved the stage19.19 dirent repair normalization fix while keeping htree repair, indexed extent readback, install_commit, and ordered writeback coherent.
+
+## 0.0.1.43
+
+Stage19.20 EXT4 fsck cache coherency and app-storage stability.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.43` / `0x0000012b`.
+- Made EXT4 validate/repair paths flush and invalidate shared read caches before scanning metadata, so fsck-lite sees raw-media corruption even when the mounted filesystem still has a clean cached copy of the same directory block.
+- Fixed directory unlink of the first entry in a block to create a canonical free dirent instead of leaving stale `name_len`/`file_type` fields behind.
+- Kept the existing ordered writeback, install_commit, htree, extent, and syscall paths intact while closing the stage19.19 runtime failure.
+
+## 0.0.1.42
+
+Stage19.19 EXT4 dirent repair normalization.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.42` / `0x0000012a`.
+- Reworked EXT4 repair-lite for directory entries to compact live records and normalize malformed free-slot `rec_len`, `name_len`, and `file_type` chains.
+- Reduced the in-kernel log ring from 32 to 24 lines to keep the freestanding kernel under the early boot stack safety boundary after the repair code growth.
+- Fixed the stage19.18 runtime failure in `EXT4 repair-lite normalizes corrupted dirent rec_len/free slot metadata` without changing the already-green extent, writeback, htree, install-commit, and syscall paths.
+
+## 0.0.1.41
+
+Stage19.18 EXT4 atomic install/update and dirent repair.
+
+- Bumped the kernel version and syscall ABI to `0.0.1.41` / `0x00000129`.
+- Added VFS and syscall-level `install_commit(staged, final)`, which syncs the target filesystem, atomically renames a staged path into place, then syncs again for application/package install boundaries.
+- Added rename-overwrite semantics for ramfs and EXT4 regular files, preserving replacement payloads and removing the overwritten inode through the orphan/free path.
+- Added EXT4 same-type replacement handling for empty directories, including `..` update when moving a directory across parents.
+- Added EXT4 dirent `rec_len`/free-slot validation and repair-lite normalization for corrupted directory record metadata.
+- Extended runtime contracts for file rename-overwrite, staged app install commit, syscall/userland install commit, corrupted dirent repair, and final metadata validation.
+- Moved two 4 KiB ktest scratch buffers from static BSS to heap allocation to keep the freestanding kernel below the early-stack safety boundary.
+
 ## 0.0.1.40
 
 Stage19.17 syscall validator recovery and ABI boundary hardening.

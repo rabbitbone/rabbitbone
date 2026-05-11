@@ -14,6 +14,7 @@
 #include <aurora/spinlock.h>
 #include <aurora/panic.h>
 #include <aurora/tty.h>
+#include <aurora/path.h>
 
 #define SYSCALL_MAX_HANDLES AURORA_PROCESS_HANDLE_CAP
 #define SYSCALL_PATH_MAX VFS_PATH_MAX
@@ -56,10 +57,12 @@ typedef struct sys_file {
     u32 refs;
     char path[VFS_PATH_MAX];
     u64 offset;
+    u32 open_flags;
     vfs_node_type_t type;
     u64 size;
     u32 inode;
     u32 fs_id;
+    vfs_node_ref_t ref;
     spinlock_t lock;
 } sys_file_t;
 
@@ -100,12 +103,36 @@ static spinlock_t file_table_lock;
 static spinlock_t pipe_table_lock;
 static spinlock_t user_log_lock;
 static bool initialized;
+static char kernel_cwd[SYSCALL_PATH_MAX] = "/";
 AURORA_STATIC_ASSERT(user_handle_snapshot_fits, sizeof(user_handles) <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
 
 static syscall_result_t ok(i64 v) { syscall_result_t r = { v, 0 }; return r; }
 static syscall_result_t err(i64 e) { syscall_result_t r = { -1, e }; return r; }
 static sys_handle_t *active_handles(void) { return process_user_active() ? user_handles : kernel_handles; }
 static bool add_user_ptr(u64 base, usize off, u64 *out) { return !__builtin_add_overflow(base, (u64)off, out); }
+
+static bool open_flags_valid(u32 flags) {
+    if (flags & ~AURORA_O_SUPPORTED) return false;
+    u32 acc = flags & AURORA_O_ACCMODE;
+    if (acc == AURORA_O_ACCMODE) return false;
+    if ((flags & AURORA_O_EXCL) && !(flags & AURORA_O_CREAT)) return false;
+    if ((flags & AURORA_O_TRUNC) && acc == AURORA_O_RDONLY) return false;
+    return true;
+}
+
+static bool open_flags_can_read(u32 flags) {
+    u32 acc = flags & AURORA_O_ACCMODE;
+    return acc == AURORA_O_RDONLY || acc == AURORA_O_RDWR;
+}
+
+static bool open_flags_can_write(u32 flags) {
+    u32 acc = flags & AURORA_O_ACCMODE;
+    return acc == AURORA_O_WRONLY || acc == AURORA_O_RDWR;
+}
+
+static u32 open_flags_to_fd_flags(u32 flags) {
+    return (flags & AURORA_O_CLOEXEC) ? AURORA_FD_CLOEXEC : 0u;
+}
 
 static void init_stdio_handles(sys_handle_t *handles) {
     if (!handles) return;
@@ -141,6 +168,7 @@ static sys_file_t *file_by_id(u32 id);
 static sys_file_t *handle_file(sys_handle_t *h);
 static sys_pipe_t *alloc_pipe(void);
 static void release_pipe(sys_pipe_t *p);
+static bool copy_path_arg(u64 user_or_kernel_ptr, char *out);
 
 void syscall_reset_user_handles(void) {
     memset(user_handles, 0, sizeof(user_handles));
@@ -219,6 +247,8 @@ void syscall_init(void) {
     spinlock_init(&user_log_lock);
     next_file_id = 1u;
     next_pipe_id = 1u;
+    memset(kernel_cwd, 0, sizeof(kernel_cwd));
+    kernel_cwd[0] = '/';
     initialized = true;
     KLOG(LOG_INFO, "syscall", "Rust syscall dispatcher initialized handles=%u", SYSCALL_MAX_HANDLES);
 }
@@ -266,8 +296,10 @@ static void file_release(u32 id) {
     spin_unlock_irqrestore(&file_table_lock, flags);
 }
 
-static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st) {
+static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32 open_flags) {
     if (!path || !st) return 0;
+    vfs_node_ref_t ref;
+    if (vfs_get_ref(path, &ref) != VFS_OK) return 0;
     u64 flags = spin_lock_irqsave(&file_table_lock);
     for (usize i = 0; i < SYSCALL_FILE_CAP; ++i) {
         if (!files[i].used) {
@@ -277,11 +309,13 @@ static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st) {
             if (next_file_id == 0) next_file_id = 1u;
             files[i].refs = 1u;
             strncpy(files[i].path, path, sizeof(files[i].path) - 1u);
-            files[i].offset = 0;
+            files[i].offset = (open_flags & AURORA_O_APPEND) ? st->size : 0;
+            files[i].open_flags = open_flags;
             files[i].type = st->type;
             files[i].size = st->size;
             files[i].inode = st->inode;
             files[i].fs_id = st->fs_id;
+            files[i].ref = ref;
             spinlock_init(&files[i].lock);
             spin_unlock_irqrestore(&file_table_lock, flags);
             return &files[i];
@@ -306,19 +340,21 @@ static void refresh_handle_stat(sys_handle_t *h) {
     sys_file_t *f = handle_file(h);
     if (!f) return;
     vfs_stat_t st;
-    if (vfs_stat(f->path, &st) == VFS_OK) {
+    if (vfs_stat_ref(&f->ref, &st) == VFS_OK) {
         u64 flags = spin_lock_irqsave(&f->lock);
         f->type = st.type;
         f->size = st.size;
         f->inode = st.inode;
         f->fs_id = st.fs_id;
+        f->ref.type = st.type;
+        f->ref.size = st.size;
         sync_handle_from_file(h, f);
         spin_unlock_irqrestore(&f->lock, flags);
     }
 }
 
-static i64 alloc_handle(sys_handle_t *handles, const char *path, const vfs_stat_t *st) {
-    sys_file_t *file = alloc_file_object(path, st);
+static i64 alloc_handle(sys_handle_t *handles, const char *path, const vfs_stat_t *st, u32 open_flags) {
+    sys_file_t *file = alloc_file_object(path, st, open_flags);
     if (!file) return -1;
     for (usize i = 3; i < SYSCALL_MAX_HANDLES; ++i) {
         if (!handles[i].used) {
@@ -326,6 +362,7 @@ static i64 alloc_handle(sys_handle_t *handles, const char *path, const vfs_stat_
             handles[i].used = true;
             handles[i].kind = SYS_HANDLE_VFS;
             handles[i].file_id = file->id;
+            handles[i].flags = open_flags_to_fd_flags(open_flags);
             sync_handle_from_file(&handles[i], file);
             return (i64)i;
         }
@@ -435,13 +472,15 @@ static bool install_owned_handle(sys_handle_t *handles, u32 target_fd, sys_handl
 bool syscall_snapshot_open_vfs(void *snapshot, usize snapshot_size, u32 target_fd, const char *path, u32 flags, bool create_truncate) {
     if (!snapshot_valid(snapshot, snapshot_size) || !path || !*path || target_fd >= SYSCALL_MAX_HANDLES) return false;
     if (flags & ~AURORA_FD_CLOEXEC) return false;
+    char resolved[SYSCALL_PATH_MAX];
+    if (!copy_path_arg((u64)(uptr)path, resolved)) return false;
     if (create_truncate) {
-        vfs_status_t cs = vfs_create(path, "", 0);
+        vfs_status_t cs = vfs_create(resolved, "", 0);
         if (cs != VFS_OK && cs != VFS_ERR_PERM) return false;
     }
     vfs_stat_t st;
-    if (vfs_stat(path, &st) != VFS_OK || st.type == VFS_NODE_DIR) return false;
-    sys_file_t *file = alloc_file_object(path, &st);
+    if (vfs_stat(resolved, &st) != VFS_OK || st.type == VFS_NODE_DIR) return false;
+    sys_file_t *file = alloc_file_object(resolved, &st, AURORA_O_RDONLY);
     if (!file) return false;
     sys_handle_t h;
     memset(&h, 0, sizeof(h));
@@ -599,8 +638,63 @@ static bool copy_string_arg(u64 user_or_kernel_ptr, char *out, usize max_len) {
     return true;
 }
 
-static bool copy_path_arg(u64 user_or_kernel_ptr, char *out) {
+static bool syscall_path_chars_valid(const char *path) {
+    if (!path || !path[0]) return false;
+    usize comp_len = 0;
+    for (usize i = 0; i < SYSCALL_PATH_MAX; ++i) {
+        unsigned char c = (unsigned char)path[i];
+        if (c == 0) return true;
+        if (c < 0x20u || c == 0x7fu || c == '\\') return false;
+        if (c == '/') {
+            comp_len = 0;
+        } else {
+            ++comp_len;
+            if (comp_len >= VFS_NAME_MAX) return false;
+        }
+    }
+    return false;
+}
+
+static bool syscall_get_cwd(char *out, usize out_size) {
+    if (!out || out_size == 0) return false;
+    if (process_user_active() && process_current_cwd(out, out_size)) return true;
+    usize n = strnlen(kernel_cwd, out_size);
+    if (n >= out_size) return false;
+    memcpy(out, kernel_cwd, n + 1u);
+    return true;
+}
+
+static bool syscall_set_cwd(const char *path) {
+    if (!path || !aurora_rust_path_policy_check((const u8 *)path, SYSCALL_PATH_MAX)) return false;
+    if (process_user_active()) return process_set_current_cwd(path);
+    usize n = strnlen(path, sizeof(kernel_cwd));
+    if (n >= sizeof(kernel_cwd)) return false;
+    memset(kernel_cwd, 0, sizeof(kernel_cwd));
+    memcpy(kernel_cwd, path, n + 1u);
+    return true;
+}
+
+
+static bool copy_symlink_target_arg(u64 user_or_kernel_ptr, char *out) {
+    if (!out) return false;
     if (!copy_string_arg(user_or_kernel_ptr, out, SYSCALL_PATH_MAX)) return false;
+    if (!syscall_path_chars_valid(out)) return false;
+    return strnlen(out, SYSCALL_PATH_MAX) < SYSCALL_PATH_MAX;
+}
+
+static bool copy_path_arg(u64 user_or_kernel_ptr, char *out) {
+    char raw[SYSCALL_PATH_MAX];
+    if (!copy_string_arg(user_or_kernel_ptr, raw, sizeof(raw))) return false;
+    if (!syscall_path_chars_valid(raw)) return false;
+    bool ok = false;
+    if (raw[0] == '/') {
+        ok = path_normalize(raw, out, SYSCALL_PATH_MAX);
+    } else {
+        char cwd[SYSCALL_PATH_MAX];
+        if (!syscall_get_cwd(cwd, sizeof(cwd))) return false;
+        ok = path_join(cwd, raw, out, SYSCALL_PATH_MAX);
+    }
+    if (!ok) return false;
     return aurora_rust_path_policy_check((const u8 *)out, SYSCALL_PATH_MAX);
 }
 
@@ -677,13 +771,14 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
     refresh_handle_stat(&handles[h]);
     sys_file_t *f = handle_file(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
+    if (!open_flags_can_read(f->open_flags)) return err(VFS_ERR_PERM);
     if (handles[h].type == VFS_NODE_DIR) return err(VFS_ERR_ISDIR);
     while (total < len) {
         usize n = len - total;
         if (n > sizeof(chunk)) n = sizeof(chunk);
         usize got = 0;
         u64 ff = spin_lock_irqsave(&f->lock);
-        vfs_status_t vs = vfs_read(f->path, f->offset, chunk, n, &got);
+        vfs_status_t vs = vfs_read_ref(&f->ref, f->offset, chunk, n, &got);
         if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return err(vs); }
         u64 ptr = 0;
         if (got && (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got))) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_INVAL); }
@@ -732,6 +827,7 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
     refresh_handle_stat(&handles[h]);
     sys_file_t *f = handle_file(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
+    if (!open_flags_can_write(f->open_flags)) return err(VFS_ERR_PERM);
     if (handles[h].type == VFS_NODE_DIR) return err(VFS_ERR_ISDIR);
     while (total < len) {
         usize n = len - total;
@@ -740,9 +836,15 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
         if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
         usize wrote = 0;
         u64 ff = spin_lock_irqsave(&f->lock);
-        vfs_status_t vs = vfs_write(f->path, f->offset, chunk, n, &wrote);
+        if (f->open_flags & AURORA_O_APPEND) {
+            vfs_stat_t ast;
+            if (vfs_stat_ref(&f->ref, &ast) == VFS_OK) f->size = ast.size;
+            f->offset = f->size;
+        }
+        vfs_status_t vs = vfs_write_ref(&f->ref, f->offset, chunk, n, &wrote);
         if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return err(vs); }
         f->offset += wrote;
+        if (f->offset > f->size) f->size = f->offset;
         sync_handle_from_file(&handles[h], f);
         spin_unlock_irqrestore(&f->lock, ff);
         total += wrote;
@@ -771,13 +873,37 @@ syscall_result_t aurora_sys_write_console(u64 ptr, u64 len64) {
     return ok((i64)n);
 }
 
-syscall_result_t aurora_sys_open(u64 path_ptr) {
+syscall_result_t aurora_sys_open(u64 path_ptr, u64 flags64) {
     char path[SYSCALL_PATH_MAX];
-    if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    u32 flags = (u32)flags64;
+    if (!open_flags_valid(flags)) return err(VFS_ERR_INVAL);
+
     vfs_stat_t st;
+    memset(&st, 0, sizeof(st));
     vfs_status_t vs = vfs_stat(path, &st);
+    if (vs == VFS_ERR_NOENT && (flags & AURORA_O_CREAT)) {
+        if (flags & AURORA_O_DIRECTORY) return err(VFS_ERR_NOTDIR);
+        vs = vfs_create(path, 0, 0);
+        if (vs != VFS_OK) return err(vs);
+        vs = vfs_stat(path, &st);
+    } else if (vs == VFS_OK && (flags & AURORA_O_EXCL)) {
+        return err(VFS_ERR_EXIST);
+    }
     if (vs != VFS_OK) return err(vs);
-    i64 h = alloc_handle(active_handles(), path, &st);
+
+    if ((flags & AURORA_O_DIRECTORY) && st.type != VFS_NODE_DIR) return err(VFS_ERR_NOTDIR);
+    if (st.type == VFS_NODE_DIR && (flags & AURORA_O_TRUNC)) return err(VFS_ERR_ISDIR);
+    if (st.type == VFS_NODE_DIR && open_flags_can_write(flags)) return err(VFS_ERR_ISDIR);
+    if ((flags & AURORA_O_TRUNC) && st.type != VFS_NODE_FILE) return err(VFS_ERR_INVAL);
+    if (flags & AURORA_O_TRUNC) {
+        vs = vfs_truncate(path, 0);
+        if (vs != VFS_OK) return err(vs);
+        vs = vfs_stat(path, &st);
+        if (vs != VFS_OK) return err(vs);
+    }
+
+    i64 h = alloc_handle(active_handles(), path, &st, flags);
     return h >= 0 ? ok(h) : err(VFS_ERR_NOSPC);
 }
 
@@ -803,11 +929,29 @@ syscall_result_t aurora_sys_seek(u64 handle, u64 off64, u64 whence) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     i64 off = (i64)off64;
-    if (!valid_handle(handles, h) || off < 0 || whence != 0 || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
+    if (!valid_handle(handles, h) || whence > AURORA_SEEK_END || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
     sys_file_t *f = handle_file(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
     u64 ff = spin_lock_irqsave(&f->lock);
-    f->offset = (u64)off;
+    vfs_stat_t st;
+    if (vfs_stat_ref(&f->ref, &st) == VFS_OK) {
+        f->type = st.type;
+        f->size = st.size;
+        f->inode = st.inode;
+        f->fs_id = st.fs_id;
+        f->ref.type = st.type;
+        f->ref.size = st.size;
+    }
+    i64 base = 0;
+    if (whence == AURORA_SEEK_SET) base = 0;
+    else if (whence == AURORA_SEEK_CUR) base = (i64)f->offset;
+    else base = (i64)f->size;
+    i64 next = 0;
+    if (__builtin_add_overflow(base, off, &next) || next < 0) {
+        spin_unlock_irqrestore(&f->lock, ff);
+        return err(VFS_ERR_INVAL);
+    }
+    f->offset = (u64)next;
     sync_handle_from_file(&handles[h], f);
     spin_unlock_irqrestore(&f->lock, ff);
     return ok((i64)handles[h].offset);
@@ -822,12 +966,48 @@ syscall_result_t aurora_sys_stat(u64 path_ptr, u64 stat_out) {
     return copy_out_buf(stat_out, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
+syscall_result_t aurora_sys_lstat(u64 path_ptr, u64 stat_out) {
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path) || !stat_out) return err(VFS_ERR_INVAL);
+    vfs_stat_t st;
+    vfs_status_t vs = vfs_lstat(path, &st);
+    if (vs != VFS_OK) return err(vs);
+    return copy_out_buf(stat_out, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_symlink(u64 target_ptr, u64 link_path_ptr) {
+    char target[SYSCALL_PATH_MAX];
+    char link_path[SYSCALL_PATH_MAX];
+    if (!copy_symlink_target_arg(target_ptr, target) || !copy_path_arg(link_path_ptr, link_path)) return err(VFS_ERR_INVAL);
+    vfs_status_t vs = vfs_symlink(target, link_path);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_readlink(u64 path_ptr, u64 out_ptr, u64 size64) {
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path) || (!out_ptr && size64)) return err(VFS_ERR_INVAL);
+    if (size64 > SYSCALL_PATH_MAX) return err(VFS_ERR_INVAL);
+    char target[SYSCALL_PATH_MAX];
+    usize got = 0;
+    vfs_status_t vs = vfs_readlink(path, target, (usize)size64, &got);
+    if (vs != VFS_OK) return err(vs);
+    return copy_out_buf(out_ptr, target, got) ? ok((i64)got) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_link(u64 old_path_ptr, u64 new_path_ptr) {
+    char old_path[SYSCALL_PATH_MAX];
+    char new_path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(old_path_ptr, old_path) || !copy_path_arg(new_path_ptr, new_path)) return err(VFS_ERR_INVAL);
+    vfs_status_t vs = vfs_link(old_path, new_path);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
 syscall_result_t aurora_sys_list(u64 path_ptr, u64 callback, u64 ctx64) {
     if (process_user_active()) return err(VFS_ERR_UNSUPPORTED);
-    const char *path = (const char *)(uptr)path_ptr;
+    char path[SYSCALL_PATH_MAX];
     vfs_dir_iter_fn fn = (vfs_dir_iter_fn)(uptr)callback;
     void *ctx = (void *)(uptr)ctx64;
-    if (!path || !fn) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || !fn) return err(VFS_ERR_INVAL);
     vfs_status_t vs = vfs_list(path, fn, ctx);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
@@ -869,6 +1049,71 @@ syscall_result_t aurora_sys_truncate(u64 path_ptr, u64 size) {
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
+syscall_result_t aurora_sys_preallocate(u64 path_ptr, u64 size) {
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    vfs_status_t vs = vfs_preallocate(path, size);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_ftruncate(u64 handle, u64 size) {
+    sys_handle_t *handles = active_handles();
+    usize h = (usize)handle;
+    if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
+    sys_file_t *f = handle_file(&handles[h]);
+    if (!f) return err(VFS_ERR_NOENT);
+    if (!open_flags_can_write(f->open_flags)) return err(VFS_ERR_PERM);
+    u64 ff = spin_lock_irqsave(&f->lock);
+    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_ISDIR); }
+    vfs_status_t vs = vfs_truncate_ref(&f->ref, size);
+    if (vs == VFS_OK) {
+        vfs_stat_t st;
+        if (vfs_stat_ref(&f->ref, &st) == VFS_OK) {
+            f->type = st.type;
+            f->size = st.size;
+            f->inode = st.inode;
+            f->fs_id = st.fs_id;
+            f->ref.type = st.type;
+            f->ref.size = st.size;
+        } else {
+            f->size = size;
+            f->ref.size = size;
+        }
+        sync_handle_from_file(&handles[h], f);
+    }
+    spin_unlock_irqrestore(&f->lock, ff);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_fpreallocate(u64 handle, u64 size) {
+    sys_handle_t *handles = active_handles();
+    usize h = (usize)handle;
+    if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
+    sys_file_t *f = handle_file(&handles[h]);
+    if (!f) return err(VFS_ERR_NOENT);
+    if (!open_flags_can_write(f->open_flags)) return err(VFS_ERR_PERM);
+    u64 ff = spin_lock_irqsave(&f->lock);
+    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_ISDIR); }
+    vfs_status_t vs = vfs_preallocate_ref(&f->ref, size);
+    if (vs == VFS_OK) {
+        vfs_stat_t st;
+        if (vfs_stat_ref(&f->ref, &st) == VFS_OK) {
+            f->type = st.type;
+            f->size = st.size;
+            f->inode = st.inode;
+            f->fs_id = st.fs_id;
+            f->ref.type = st.type;
+            f->ref.size = st.size;
+        } else if (size > f->size) {
+            f->size = size;
+            f->ref.size = size;
+        }
+        sync_handle_from_file(&handles[h], f);
+    }
+    spin_unlock_irqrestore(&f->lock, ff);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
 syscall_result_t aurora_sys_rename(u64 old_path_ptr, u64 new_path_ptr) {
     char old_path[SYSCALL_PATH_MAX];
     char new_path[SYSCALL_PATH_MAX];
@@ -878,20 +1123,38 @@ syscall_result_t aurora_sys_rename(u64 old_path_ptr, u64 new_path_ptr) {
 }
 
 
+syscall_result_t aurora_sys_install_commit(u64 staged_path_ptr, u64 final_path_ptr) {
+    char staged_path[SYSCALL_PATH_MAX];
+    char final_path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(staged_path_ptr, staged_path) || !copy_path_arg(final_path_ptr, final_path)) return err(VFS_ERR_INVAL);
+    vfs_status_t vs = vfs_install_commit(staged_path, final_path);
+    return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+
 syscall_result_t aurora_sys_sync(void) {
     vfs_status_t vs = vfs_sync_all();
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
-syscall_result_t aurora_sys_fsync(u64 handle) {
+static syscall_result_t sys_fsync_common(u64 handle, bool data_only) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
     sys_file_t *f = handle_file(&handles[h]);
-    const char *path = f ? f->path : handles[h].path;
-    if (!path || !path[0]) return err(VFS_ERR_NOENT);
-    vfs_status_t vs = vfs_sync_path(path);
+    if (!f) return err(VFS_ERR_NOENT);
+    u64 ff = spin_lock_irqsave(&f->lock);
+    vfs_status_t vs = vfs_sync_ref(&f->ref, data_only);
+    spin_unlock_irqrestore(&f->lock, ff);
     return vs == VFS_OK ? ok(0) : err(vs);
+}
+
+syscall_result_t aurora_sys_fsync(u64 handle) {
+    return sys_fsync_common(handle, false);
+}
+
+syscall_result_t aurora_sys_fdatasync(u64 handle) {
+    return sys_fsync_common(handle, true);
 }
 
 syscall_result_t aurora_sys_statvfs(u64 path_ptr, u64 out_ptr) {
@@ -1063,6 +1326,25 @@ syscall_result_t aurora_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u64 e
     if (!copy_env_vector(envp_ptr, (u32)envc64, env_storage, envp)) return err(VFS_ERR_INVAL);
     process_status_t st = process_request_execve(path, (int)argc64, argv, (int)envc64, envp);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
+}
+
+syscall_result_t aurora_sys_chdir(u64 path_ptr) {
+    char path[SYSCALL_PATH_MAX];
+    if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    vfs_stat_t st;
+    vfs_status_t vs = vfs_stat(path, &st);
+    if (vs != VFS_OK) return err(vs);
+    if (st.type != VFS_NODE_DIR) return err(VFS_ERR_NOTDIR);
+    return syscall_set_cwd(path) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_getcwd(u64 out_ptr, u64 size64) {
+    if (!out_ptr || size64 == 0 || size64 > SYSCALL_PATH_MAX || (usize)size64 != size64) return err(VFS_ERR_INVAL);
+    char cwd[SYSCALL_PATH_MAX];
+    if (!syscall_get_cwd(cwd, sizeof(cwd))) return err(VFS_ERR_INVAL);
+    usize n = strlen(cwd) + 1u;
+    if (n > (usize)size64) return err(VFS_ERR_INVAL);
+    return copy_out_buf(out_ptr, cwd, n) ? ok((i64)(n - 1u)) : err(VFS_ERR_INVAL);
 }
 
 syscall_result_t aurora_sys_wait(u64 pid64, u64 out_ptr) {
@@ -1252,13 +1534,15 @@ syscall_result_t aurora_sys_fstat(u64 handle, u64 out_ptr) {
     }
     sys_file_t *f = handle_file(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
-    vfs_status_t vs = vfs_stat(f->path, &st);
+    vfs_status_t vs = vfs_stat_ref(&f->ref, &st);
     if (vs != VFS_OK) return err(vs);
     u64 ff = spin_lock_irqsave(&f->lock);
     f->type = st.type;
     f->size = st.size;
     f->inode = st.inode;
     f->fs_id = st.fs_id;
+    f->ref.type = st.type;
+    f->ref.size = st.size;
     sync_handle_from_file(&handles[h], f);
     spin_unlock_irqrestore(&f->lock, ff);
     return copy_out_buf(out_ptr, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
@@ -1288,6 +1572,13 @@ syscall_result_t aurora_sys_fdinfo(u64 handle, u64 out_ptr) {
     info.inode = handles[h].inode;
     info.fs_id = handles[h].fs_id;
     info.flags = handles[h].flags;
+    info.open_flags = 0;
+    sys_file_t *vf = handle_file(&handles[h]);
+    if (vf) {
+        u64 ff = spin_lock_irqsave(&vf->lock);
+        info.open_flags = vf->open_flags;
+        spin_unlock_irqrestore(&vf->lock, ff);
+    }
     strncpy(info.path, handles[h].path, sizeof(info.path) - 1u);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
 }
@@ -1326,7 +1617,7 @@ syscall_result_t aurora_sys_readdir(u64 handle, u64 index, u64 out_ptr) {
     ctx.target = index;
     sys_file_t *f = handle_file(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
-    vfs_status_t vs = vfs_list(f->path, readdir_pick, &ctx);
+    vfs_status_t vs = vfs_list_ref(&f->ref, readdir_pick, &ctx);
     if (vs != VFS_OK) return err(vs);
     if (!ctx.found) {
         aurora_dirent_t zero;
@@ -1533,15 +1824,151 @@ bool syscall_selftest(void) {
     vfs_stat_t rename_st;
     if (vfs_stat(rename_dst, &rename_st) != VFS_OK || rename_st.size != 4u || vfs_stat(rename_src, &rename_st) != VFS_ERR_NOENT) return false;
     (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)rename_dst, 0, 0, 0, 0, 0);
-    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)path, 0, 0, 0, 0, 0);
+    const char *stage_path = "/tmp/syscall-install.stage";
+    const char *final_path = "/tmp/syscall-install.bin";
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)stage_path, 0, 0, 0, 0, 0);
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)final_path, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_CREATE, (u64)(uptr)final_path, (u64)(uptr)"old", 3, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_CREATE, (u64)(uptr)stage_path, (u64)(uptr)"new", 3, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_INSTALL_COMMIT, (u64)(uptr)stage_path, (u64)(uptr)final_path, 0, 0, 0, 0);
+    if (r.error) return false;
+    if (vfs_stat(stage_path, &rename_st) != VFS_ERR_NOENT || vfs_stat(final_path, &rename_st) != VFS_OK || rename_st.size != 3u) return false;
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)final_path, 0, 0, 0, 0, 0);
+
+    const char *link_target = "/tmp/syscall-link-target.txt";
+    const char *hard_alias = "/tmp/syscall-link-hard.txt";
+    const char *sym_path = "/tmp/syscall-link-sym.ln";
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)hard_alias, 0, 0, 0, 0, 0);
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)sym_path, 0, 0, 0, 0, 0);
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)link_target, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_CREATE, (u64)(uptr)link_target, (u64)(uptr)"linked", 6u, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_LINK, (u64)(uptr)link_target, (u64)(uptr)hard_alias, 0, 0, 0, 0);
+    if (r.error) return false;
+    vfs_stat_t link_st;
+    vfs_stat_t alias_st;
+    if (vfs_stat(link_target, &link_st) != VFS_OK || vfs_stat(hard_alias, &alias_st) != VFS_OK || link_st.inode != alias_st.inode || link_st.nlink != 2u || alias_st.nlink != 2u) return false;
+    r = syscall_dispatch(AURORA_SYS_SYMLINK, (u64)(uptr)"syscall-link-target.txt", (u64)(uptr)sym_path, 0, 0, 0, 0);
+    if (r.error) return false;
+    memset(&alias_st, 0, sizeof(alias_st));
+    r = syscall_dispatch(AURORA_SYS_LSTAT, (u64)(uptr)sym_path, (u64)(uptr)&alias_st, 0, 0, 0, 0);
+    if (r.error || alias_st.type != VFS_NODE_SYMLINK || alias_st.size != strlen("syscall-link-target.txt") || alias_st.nlink != 1u) return false;
+    char linkbuf[64];
+    memset(linkbuf, 0, sizeof(linkbuf));
+    r = syscall_dispatch(AURORA_SYS_READLINK, (u64)(uptr)sym_path, (u64)(uptr)linkbuf, sizeof(linkbuf), 0, 0, 0);
+    if (r.error || r.value != (i64)strlen("syscall-link-target.txt") || memcmp(linkbuf, "syscall-link-target.txt", strlen("syscall-link-target.txt")) != 0) return false;
+    r = syscall_dispatch(AURORA_SYS_STAT, (u64)(uptr)sym_path, (u64)(uptr)&alias_st, 0, 0, 0, 0);
+    if (r.error || alias_st.type != VFS_NODE_FILE || alias_st.inode != link_st.inode) return false;
+    r = syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)link_target, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    char hardbuf[32];
+    usize hardgot = 0;
+    memset(hardbuf, 0, sizeof(hardbuf));
+    if (vfs_read(hard_alias, 0, hardbuf, sizeof(hardbuf) - 1u, &hardgot) != VFS_OK || hardgot != 6u || memcmp(hardbuf, "linked", 6u) != 0) return false;
+    if (vfs_stat(hard_alias, &alias_st) != VFS_OK || alias_st.nlink != 1u) return false;
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)sym_path, 0, 0, 0, 0, 0);
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)hard_alias, 0, 0, 0, 0, 0);
+
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)path, AURORA_O_RDWR, 0, 0, 0, 0);
     if (r.error || r.value <= 0) return false;
     u64 h = (u64)r.value;
     vfs_stat_t fst;
     r = syscall_dispatch(AURORA_SYS_FSTAT, h, (u64)(uptr)&fst, 0, 0, 0, 0);
     if (r.error || fst.type != VFS_NODE_FILE || fst.size != sizeof(seed) - 1u) return false;
     aurora_fdinfo_t fi;
+    char buf[32];
+    usize got = 0;
     r = syscall_dispatch(AURORA_SYS_FDINFO, h, (u64)(uptr)&fi, 0, 0, 0, 0);
-    if (r.error || fi.handle != h || strcmp(fi.path, path) != 0 || fi.flags != 0) return false;
+    if (r.error || fi.handle != h || strcmp(fi.path, path) != 0 || fi.flags != 0 || (fi.open_flags & AURORA_O_ACCMODE) != AURORA_O_RDWR) return false;
+    const char *fd_renamed = "/tmp/syscall-selftest-renamed.txt";
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)fd_renamed, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_RENAME, (u64)(uptr)path, (u64)(uptr)fd_renamed, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_SEEK, h, 0, AURORA_SEEK_SET, 0, 0, 0);
+    if (r.error) return false;
+    memset(buf, 0, sizeof(buf));
+    r = syscall_dispatch(AURORA_SYS_READ, h, (u64)(uptr)buf, sizeof(seed) - 1u, 0, 0, 0);
+    if (r.error || r.value != (i64)(sizeof(seed) - 1u) || memcmp(buf, seed, sizeof(seed) - 1u) != 0) return false;
+    r = syscall_dispatch(AURORA_SYS_WRITE, h, (u64)(uptr)"!", 1u, 0, 0, 0);
+    if (r.error || r.value != 1) return false;
+    r = syscall_dispatch(AURORA_SYS_FDATASYNC, h, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_FSTAT, h, (u64)(uptr)&fst, 0, 0, 0, 0);
+    if (r.error || fst.size != sizeof(seed)) return false;
+    r = syscall_dispatch(AURORA_SYS_FTRUNCATE, h, sizeof(seed) - 1u, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_FDATASYNC, h, 0, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_RENAME, (u64)(uptr)fd_renamed, (u64)(uptr)path, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_SEEK, h, 0, AURORA_SEEK_SET, 0, 0, 0);
+    if (r.error || r.value != 0) return false;
+
+    const char *oflags_path = "/tmp/syscall-open-flags.bin";
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)oflags_path, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR | AURORA_O_CLOEXEC, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    u64 fh = (u64)r.value;
+    memset(&fi, 0, sizeof(fi));
+    r = syscall_dispatch(AURORA_SYS_FDINFO, fh, (u64)(uptr)&fi, 0, 0, 0, 0);
+    if (r.error || !(fi.flags & AURORA_FD_CLOEXEC) || (fi.open_flags & (AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR)) != (AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR)) return false;
+    static const char oflags_seed[] = "abc";
+    r = syscall_dispatch(AURORA_SYS_WRITE, fh, (u64)(uptr)oflags_seed, sizeof(oflags_seed) - 1u, 0, 0, 0);
+    if (r.error || r.value != (i64)(sizeof(oflags_seed) - 1u)) return false;
+    r = syscall_dispatch(AURORA_SYS_SEEK, fh, (u64)-1ll, AURORA_SEEK_CUR, 0, 0, 0);
+    if (r.error || r.value != 2) return false;
+    r = syscall_dispatch(AURORA_SYS_SEEK, fh, 0, AURORA_SEEK_END, 0, 0, 0);
+    if (r.error || r.value != 3) return false;
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDONLY, 0, 0, 0, 0);
+    if (r.value != -1 || r.error != VFS_ERR_EXIST) return false;
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_RDONLY, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    u64 roh = (u64)r.value;
+    r = syscall_dispatch(AURORA_SYS_WRITE, roh, (u64)(uptr)"x", 1, 0, 0, 0);
+    if (r.value != -1 || r.error != VFS_ERR_PERM) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, roh, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_WRONLY | AURORA_O_APPEND, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    u64 ah = (u64)r.value;
+    r = syscall_dispatch(AURORA_SYS_WRITE, ah, (u64)(uptr)"Z", 1, 0, 0, 0);
+    if (r.error || r.value != 1) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, ah, 0, 0, 0, 0, 0);
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    if (vfs_read(oflags_path, 0, buf, sizeof(buf) - 1u, &got) != VFS_OK || got != 4u || memcmp(buf, "abcZ", 4u) != 0) return false;
+    r = syscall_dispatch(AURORA_SYS_FTRUNCATE, fh, 2u, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_FSTAT, fh, (u64)(uptr)&fst, 0, 0, 0, 0);
+    if (r.error || fst.size != 2u) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, fh, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_TRUNC | AURORA_O_RDWR, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    u64 th = (u64)r.value;
+    r = syscall_dispatch(AURORA_SYS_FSTAT, th, (u64)(uptr)&fst, 0, 0, 0, 0);
+    if (r.error || fst.size != 0u) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, th, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)oflags_path, AURORA_O_DIRECTORY, 0, 0, 0, 0);
+    if (r.value != -1 || r.error != VFS_ERR_NOTDIR) return false;
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)oflags_path, 0, 0, 0, 0, 0);
+
+    const char *fd_prealloc_path = "/disk0/syscall-fd-prealloc.bin";
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)fd_prealloc_path, 0, 0, 0, 0, 0);
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)fd_prealloc_path, AURORA_O_CREAT | AURORA_O_RDWR, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    u64 ph = (u64)r.value;
+    r = syscall_dispatch(AURORA_SYS_FPREALLOCATE, ph, 8192u, 0, 0, 0, 0);
+    if (r.error) return false;
+    r = syscall_dispatch(AURORA_SYS_FSTAT, ph, (u64)(uptr)&fst, 0, 0, 0, 0);
+    if (r.error || fst.size != 8192u) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, ph, 0, 0, 0, 0, 0);
+    (void)syscall_dispatch(AURORA_SYS_UNLINK, (u64)(uptr)fd_prealloc_path, 0, 0, 0, 0, 0);
+
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"/", AURORA_O_DIRECTORY, 0, 0, 0, 0);
+    if (r.error || r.value <= 0) return false;
+    (void)syscall_dispatch(AURORA_SYS_CLOSE, (u64)r.value, 0, 0, 0, 0, 0);
+
     r = syscall_dispatch(AURORA_SYS_FSYNC, h, 0, 0, 0, 0, 0);
     if (r.error) return false;
     aurora_statvfs_t sv;
@@ -1618,7 +2045,6 @@ bool syscall_selftest(void) {
     (void)syscall_dispatch(AURORA_SYS_CLOSE, p1[1], 0, 0, 0, 0, 0);
     (void)syscall_dispatch(AURORA_SYS_CLOSE, p2[0], 0, 0, 0, 0, 0);
     (void)syscall_dispatch(AURORA_SYS_CLOSE, p2[1], 0, 0, 0, 0, 0);
-    char buf[32];
     memset(buf, 0, sizeof(buf));
     r = syscall_dispatch(AURORA_SYS_READ, h, (u64)(uptr)buf, sizeof(buf) - 1u, 0, 0, 0);
     if (r.error || strcmp(buf, seed) != 0) return false;
@@ -1629,7 +2055,7 @@ bool syscall_selftest(void) {
     if (r.error) return false;
     (void)syscall_dispatch(AURORA_SYS_CLOSE, h, 0, 0, 0, 0, 0);
     memset(buf, 0, sizeof(buf));
-    usize got = 0;
+    got = 0;
     if (vfs_read(path, 0, buf, sizeof(buf) - 1u, &got) != VFS_OK || strstr(buf, "RUST") == 0) return false;
     r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"/", 0, 0, 0, 0, 0);
     if (r.error || r.value <= 0) return false;

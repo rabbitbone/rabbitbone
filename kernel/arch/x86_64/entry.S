@@ -6,7 +6,7 @@
 .extern __bss_end
 kernel_start:
     cli
-    mov rsp, 0x9fc00
+    mov rsp, 0x1f0000
     xor rbp, rbp
     mov r12, rdi
 

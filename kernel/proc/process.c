@@ -13,6 +13,7 @@
 #include <aurora/timer.h>
 #include <aurora/drivers.h>
 #include <aurora/rust.h>
+#include <aurora/panic.h>
 
 #define USER_IMAGE_BASE      0x0000010000000000ull
 #define USER_SPACE_LIMIT     0x0000800000000000ull
@@ -44,13 +45,15 @@ typedef struct active_process {
     user_mapping_t mappings[USER_MAX_MAPPINGS];
     usize mapping_count;
     u8 fd_snapshot[SYSCALL_USER_HANDLE_SNAPSHOT_BYTES];
+    char cwd[VFS_PATH_MAX];
 } active_process_t;
 
 extern void arch_user_enter(u64 entry, u64 user_rsp, u64 argc, u64 argv, u64 aux);
 extern void arch_user_resume(const cpu_regs_t *regs);
 extern void arch_user_return_from_interrupt(void) AURORA_NORETURN;
 
-static active_process_t current_proc;
+static active_process_t *current_proc_ptr;
+#define current_proc (*current_proc_ptr)
 static active_process_t *async_slots;
 static u32 async_next_rr;
 static i32 current_async_slot = -1;
@@ -60,6 +63,7 @@ static bool exit_requested;
 static bool fork_requested;
 static bool exec_requested;
 static active_process_t *exec_replacement;
+static active_process_t *exec_old_proc;
 static i32 requested_exit_code;
 static u32 next_user_pid = 1000;
 static u64 next_address_space_generation = 1;
@@ -75,7 +79,9 @@ void process_init(void) {
         return;
     }
     process_initialized = true;
-    memset(&current_proc, 0, sizeof(current_proc));
+    if (!current_proc_ptr) current_proc_ptr = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!current_proc_ptr) PANIC("process current allocation failed");
+    memset(current_proc_ptr, 0, sizeof(*current_proc_ptr));
     memset(&last_result, 0, sizeof(last_result));
     if (!process_table) process_table = (process_info_t *)kmalloc(sizeof(process_info_t) * PROCESS_TABLE_CAP);
     if (process_table) memset(process_table, 0, sizeof(process_info_t) * PROCESS_TABLE_CAP);
@@ -89,7 +95,11 @@ void process_init(void) {
     fork_requested = false;
     exec_requested = false;
     if (!exec_replacement) exec_replacement = (active_process_t *)kmalloc(sizeof(active_process_t));
-    if (exec_replacement) memset(exec_replacement, 0, sizeof(*exec_replacement));
+    if (!exec_replacement) PANIC("process exec replacement allocation failed");
+    memset(exec_replacement, 0, sizeof(*exec_replacement));
+    if (!exec_old_proc) exec_old_proc = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!exec_old_proc) PANIC("process exec old-state allocation failed");
+    memset(exec_old_proc, 0, sizeof(*exec_old_proc));
     requested_exit_code = 0;
     process_table_len = 0;
     process_table_next = 0;
@@ -234,7 +244,9 @@ static void load_slot_to_current(usize idx) {
 }
 
 static void clear_current_async(void) {
-    memset(&current_proc, 0, sizeof(current_proc));
+    if (!current_proc_ptr) current_proc_ptr = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!current_proc_ptr) PANIC("process current allocation failed");
+    memset(current_proc_ptr, 0, sizeof(*current_proc_ptr));
     current_async_slot = -1;
     syscall_reset_user_handles();
 }
@@ -246,6 +258,24 @@ u32 process_current_pid(void) {
 bool process_current_info(process_info_t *out) {
     if (!out || !current_proc.active) return false;
     fill_info_from_active(out, &current_proc);
+    return true;
+}
+
+bool process_current_cwd(char *out, usize out_size) {
+    if (!out || out_size == 0 || !current_proc.active || !current_proc.cwd[0]) return false;
+    usize n = strnlen(current_proc.cwd, out_size);
+    if (n >= out_size) return false;
+    memcpy(out, current_proc.cwd, n + 1u);
+    return true;
+}
+
+bool process_set_current_cwd(const char *path) {
+    if (!path || !path[0] || !current_proc.active) return false;
+    usize n = strnlen(path, VFS_PATH_MAX);
+    if (n == 0 || n >= VFS_PATH_MAX || path[0] != '/') return false;
+    memset(current_proc.cwd, 0, sizeof(current_proc.cwd));
+    memcpy(current_proc.cwd, path, n + 1u);
+    (void)sync_current_to_slot();
     return true;
 }
 
@@ -654,6 +684,8 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     p->active = true;
     p->state = PROCESS_STATE_READY;
     p->parent_pid = parent_pid;
+    if (current_proc.active && current_proc.cwd[0]) strncpy(p->cwd, current_proc.cwd, sizeof(p->cwd) - 1u);
+    else strncpy(p->cwd, "/", sizeof(p->cwd) - 1u);
     p->result.pid = next_user_pid++;
     p->result.started_ticks = pit_ticks();
     p->result.address_space = p->space.pml4_physical;
@@ -700,6 +732,7 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->active = true;
     dst->state = PROCESS_STATE_RUNNING;
     dst->parent_pid = current_proc.parent_pid;
+    strncpy(dst->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(dst->cwd) - 1u);
     dst->wait_pid = 0;
     dst->wait_out_ptr = 0;
     dst->wake_tick = 0;
@@ -741,8 +774,17 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
 }
 
 static void commit_exec_replacement(cpu_regs_t *regs) {
-    active_process_t old = current_proc;
-    if (!exec_replacement) return;
+    if (!exec_replacement || !exec_old_proc) return;
+
+    /*
+     * active_process_t is intentionally large: it contains the address-space
+     * mapping table and the fd snapshot.  Keeping the old image as a local
+     * value here can overflow the ring-0 syscall/interrupt stack during
+     * fork+exec pipelines.  Use the reusable heap-backed scratch process
+     * object instead and never materialize this structure on the kernel stack.
+     */
+    *exec_old_proc = current_proc;
+
     syscall_close_user_handles_with_flags(AURORA_FD_CLOEXEC);
     current_proc = *exec_replacement;
     memset(exec_replacement, 0, sizeof(*exec_replacement));
@@ -752,8 +794,9 @@ static void commit_exec_replacement(cpu_regs_t *regs) {
     if (regs) *regs = current_proc.regs;
     (void)sync_current_to_slot();
     vmm_switch_space(&current_proc.space);
-    release_mappings(&old);
-    vmm_space_destroy(&old.space);
+    release_mappings(exec_old_proc);
+    vmm_space_destroy(&exec_old_proc->space);
+    memset(exec_old_proc, 0, sizeof(*exec_old_proc));
     KLOG(LOG_INFO, "process", "exec pid=%u image=%s asid=%llu", current_proc.result.pid,
          current_proc.result.name, (unsigned long long)current_proc.result.address_space_generation);
 }
@@ -828,6 +871,7 @@ static bool clone_current_address_space(active_process_t *child) {
     child->active = true;
     child->state = PROCESS_STATE_READY;
     child->parent_pid = current_proc.result.pid;
+    strncpy(child->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(child->cwd) - 1u);
     child->result = current_proc.result;
     child->result.pid = next_user_pid++;
     child->result.started_ticks = pit_ticks();

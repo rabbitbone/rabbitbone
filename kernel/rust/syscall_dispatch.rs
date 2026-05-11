@@ -70,6 +70,17 @@ pub enum SyscallNo {
     Sync = 43,
     Fsync = 44,
     StatVfs = 45,
+    InstallCommit = 46,
+    Preallocate = 47,
+    Ftruncate = 48,
+    Fpreallocate = 49,
+    Chdir = 50,
+    Getcwd = 51,
+    Fdatasync = 52,
+    Symlink = 53,
+    Readlink = 54,
+    Link = 55,
+    Lstat = 56,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -84,6 +95,7 @@ const MAX_IO_BYTES: u64 = 1_048_576;
 const MAX_CREATE_BYTES: u64 = 65_536;
 const MAX_HANDLES: u64 = crate::abi::AURORA_PROCESS_HANDLE_CAP;
 const MAX_SLEEP_TICKS: u64 = 10_000;
+const MAX_PATH_BYTES: u64 = 256;
 const MAX_PROCESS_ARGS: u64 = 8;
 const MAX_PROCESS_ENVS: u64 = crate::abi::AURORA_ENV_MAX;
 const FD_CLOEXEC: u64 = crate::abi::AURORA_FD_CLOEXEC;
@@ -96,6 +108,15 @@ const TTY_MODE_RAW: u64 = crate::abi::AURORA_TTY_MODE_RAW;
 const TTY_MODE_ECHO: u64 = crate::abi::AURORA_TTY_MODE_ECHO;
 const TTY_MODE_CANON: u64 = crate::abi::AURORA_TTY_MODE_CANON;
 const TTY_READ_NONBLOCK: u64 = crate::abi::AURORA_TTY_READ_NONBLOCK;
+const OPEN_ACCMODE: u64 = crate::abi::AURORA_O_ACCMODE;
+const OPEN_CREAT: u64 = crate::abi::AURORA_O_CREAT;
+const OPEN_EXCL: u64 = crate::abi::AURORA_O_EXCL;
+const OPEN_TRUNC: u64 = crate::abi::AURORA_O_TRUNC;
+const OPEN_RDONLY: u64 = crate::abi::AURORA_O_RDONLY;
+const OPEN_SUPPORTED: u64 = OPEN_ACCMODE | OPEN_CREAT | OPEN_EXCL | OPEN_TRUNC | crate::abi::AURORA_O_APPEND | crate::abi::AURORA_O_DIRECTORY | crate::abi::AURORA_O_CLOEXEC;
+const SEEK_SET: u64 = crate::abi::AURORA_SEEK_SET;
+const SEEK_CUR: u64 = crate::abi::AURORA_SEEK_CUR;
+const SEEK_END: u64 = crate::abi::AURORA_SEEK_END;
 
 impl SyscallNo {
     pub const fn decode(raw: u64) -> Result<Self, DecodeError> {
@@ -146,6 +167,17 @@ impl SyscallNo {
             43 => Ok(Self::Sync),
             44 => Ok(Self::Fsync),
             45 => Ok(Self::StatVfs),
+            46 => Ok(Self::InstallCommit),
+            47 => Ok(Self::Preallocate),
+            48 => Ok(Self::Ftruncate),
+            49 => Ok(Self::Fpreallocate),
+            50 => Ok(Self::Chdir),
+            51 => Ok(Self::Getcwd),
+            52 => Ok(Self::Fdatasync),
+            53 => Ok(Self::Symlink),
+            54 => Ok(Self::Readlink),
+            55 => Ok(Self::Link),
+            56 => Ok(Self::Lstat),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -198,6 +230,17 @@ impl SyscallNo {
             Self::Sync => b"sync\0",
             Self::Fsync => b"fsync\0",
             Self::StatVfs => b"statvfs\0",
+            Self::InstallCommit => b"install_commit\0",
+            Self::Preallocate => b"preallocate\0",
+            Self::Ftruncate => b"ftruncate\0",
+            Self::Fpreallocate => b"fpreallocate\0",
+            Self::Chdir => b"chdir\0",
+            Self::Getcwd => b"getcwd\0",
+            Self::Fdatasync => b"fdatasync\0",
+            Self::Symlink => b"symlink\0",
+            Self::Readlink => b"readlink\0",
+            Self::Link => b"link\0",
+            Self::Lstat => b"lstat\0",
         }
     }
 }
@@ -205,7 +248,7 @@ impl SyscallNo {
 extern "C" {
     fn aurora_sys_version() -> SyscallResult;
     fn aurora_sys_write_console(ptr: u64, len: u64) -> SyscallResult;
-    fn aurora_sys_open(path: u64) -> SyscallResult;
+    fn aurora_sys_open(path: u64, flags: u64) -> SyscallResult;
     fn aurora_sys_close(handle: u64) -> SyscallResult;
     fn aurora_sys_read(handle: u64, buf: u64, len: u64) -> SyscallResult;
     fn aurora_sys_stat(path: u64, stat_out: u64) -> SyscallResult;
@@ -249,6 +292,17 @@ extern "C" {
     fn aurora_sys_sync() -> SyscallResult;
     fn aurora_sys_fsync(handle: u64) -> SyscallResult;
     fn aurora_sys_statvfs(path: u64, out: u64) -> SyscallResult;
+    fn aurora_sys_install_commit(staged_path: u64, final_path: u64) -> SyscallResult;
+    fn aurora_sys_preallocate(path: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_ftruncate(handle: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_fpreallocate(handle: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_chdir(path: u64) -> SyscallResult;
+    fn aurora_sys_getcwd(out: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_fdatasync(handle: u64) -> SyscallResult;
+    fn aurora_sys_symlink(target: u64, link_path: u64) -> SyscallResult;
+    fn aurora_sys_readlink(path: u64, out: u64, size: u64) -> SyscallResult;
+    fn aurora_sys_link(old_path: u64, new_path: u64) -> SyscallResult;
+    fn aurora_sys_lstat(path: u64, stat_out: u64) -> SyscallResult;
 }
 
 fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
@@ -259,7 +313,12 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::WriteConsole => {
             if a.a1 > MAX_CONSOLE_WRITE || (a.a0 == 0 && a.a1 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Open | SyscallNo::Mkdir | SyscallNo::Unlink | SyscallNo::Log | SyscallNo::Spawn | SyscallNo::Exec => {
+        SyscallNo::Open => {
+            let flags = a.a1;
+            let acc = flags & OPEN_ACCMODE;
+            if a.a0 == 0 || (flags & !OPEN_SUPPORTED) != 0 || acc == OPEN_ACCMODE || ((flags & OPEN_EXCL) != 0 && (flags & OPEN_CREAT) == 0) || ((flags & OPEN_TRUNC) != 0 && acc == OPEN_RDONLY) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Mkdir | SyscallNo::Unlink | SyscallNo::Log | SyscallNo::Spawn | SyscallNo::Exec | SyscallNo::Chdir => {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::SpawnV | SyscallNo::ExecV => {
@@ -268,19 +327,22 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::ExecVe => {
             if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PROCESS_ARGS || a.a2 == 0 || a.a3 > MAX_PROCESS_ENVS || (a.a3 != 0 && a.a4 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell | SyscallNo::Fsync => {
+        SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell | SyscallNo::Fsync | SyscallNo::Fdatasync => {
+            if valid_handle(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
+        }
+        SyscallNo::Ftruncate | SyscallNo::Fpreallocate => {
             if valid_handle(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Read | SyscallNo::Write => {
             if !valid_handle(a.a0) || a.a2 > MAX_IO_BYTES || (a.a2 != 0 && a.a1 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Seek => {
-            if !valid_handle(a.a0) || a.a2 != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !valid_handle(a.a0) || (a.a2 != SEEK_SET && a.a2 != SEEK_CUR && a.a2 != SEEK_END) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Create => {
             if a.a0 == 0 || a.a2 > MAX_CREATE_BYTES || (a.a1 == 0 && a.a2 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Stat => {
+        SyscallNo::Stat | SyscallNo::Lstat => {
             if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::List => {
@@ -326,14 +388,20 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::TtyReadKey => {
             if a.a0 == 0 || (a.a1 & !TTY_READ_NONBLOCK) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Truncate => {
+        SyscallNo::Truncate | SyscallNo::Preallocate => {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
-        SyscallNo::Rename => {
+        SyscallNo::Rename | SyscallNo::InstallCommit | SyscallNo::Symlink | SyscallNo::Link => {
             if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::StatVfs => {
             if a.a0 == 0 || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Getcwd => {
+            if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PATH_BYTES { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Readlink => {
+            if a.a0 == 0 || (a.a2 != 0 && a.a1 == 0) || a.a2 > MAX_PATH_BYTES { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
     }
 }
@@ -351,7 +419,7 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
         match decoded {
             SyscallNo::Version => aurora_sys_version(),
             SyscallNo::WriteConsole => aurora_sys_write_console(args.a0, args.a1),
-            SyscallNo::Open => aurora_sys_open(args.a0),
+            SyscallNo::Open => aurora_sys_open(args.a0, args.a1),
             SyscallNo::Close => aurora_sys_close(args.a0),
             SyscallNo::Read => aurora_sys_read(args.a0, args.a1, args.a2),
             SyscallNo::Stat => aurora_sys_stat(args.a0, args.a1),
@@ -395,6 +463,17 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::Sync => aurora_sys_sync(),
             SyscallNo::Fsync => aurora_sys_fsync(args.a0),
             SyscallNo::StatVfs => aurora_sys_statvfs(args.a0, args.a1),
+            SyscallNo::InstallCommit => aurora_sys_install_commit(args.a0, args.a1),
+            SyscallNo::Preallocate => aurora_sys_preallocate(args.a0, args.a1),
+            SyscallNo::Ftruncate => aurora_sys_ftruncate(args.a0, args.a1),
+            SyscallNo::Fpreallocate => aurora_sys_fpreallocate(args.a0, args.a1),
+            SyscallNo::Chdir => aurora_sys_chdir(args.a0),
+            SyscallNo::Getcwd => aurora_sys_getcwd(args.a0, args.a1),
+            SyscallNo::Fdatasync => aurora_sys_fdatasync(args.a0),
+            SyscallNo::Symlink => aurora_sys_symlink(args.a0, args.a1),
+            SyscallNo::Readlink => aurora_sys_readlink(args.a0, args.a1, args.a2),
+            SyscallNo::Link => aurora_sys_link(args.a0, args.a1),
+            SyscallNo::Lstat => aurora_sys_lstat(args.a0, args.a1),
         }
     }
 }
@@ -442,16 +521,44 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(43) != Ok(SyscallNo::Sync) { return false; }
     if SyscallNo::decode(44) != Ok(SyscallNo::Fsync) { return false; }
     if SyscallNo::decode(45) != Ok(SyscallNo::StatVfs) { return false; }
+    if SyscallNo::decode(46) != Ok(SyscallNo::InstallCommit) { return false; }
+    if SyscallNo::decode(47) != Ok(SyscallNo::Preallocate) { return false; }
+    if SyscallNo::decode(48) != Ok(SyscallNo::Ftruncate) { return false; }
+    if SyscallNo::decode(49) != Ok(SyscallNo::Fpreallocate) { return false; }
+    if SyscallNo::decode(50) != Ok(SyscallNo::Chdir) { return false; }
+    if SyscallNo::decode(51) != Ok(SyscallNo::Getcwd) { return false; }
+    if SyscallNo::decode(52) != Ok(SyscallNo::Fdatasync) { return false; }
+    if SyscallNo::decode(53) != Ok(SyscallNo::Symlink) { return false; }
+    if SyscallNo::decode(54) != Ok(SyscallNo::Readlink) { return false; }
+    if SyscallNo::decode(55) != Ok(SyscallNo::Link) { return false; }
+    if SyscallNo::decode(56) != Ok(SyscallNo::Lstat) { return false; }
     if SyscallNo::decode(crate::abi::AURORA_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Read, SysArgs { a0: 0, a1: 0x10000, a2: 1, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Read, SysArgs { a0: 1, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if SyscallNo::decode(50) != Ok(SyscallNo::Chdir) { return false; }
+    if SyscallNo::decode(51) != Ok(SyscallNo::Getcwd) { return false; }
     if validate_args(SyscallNo::Read, SysArgs { a0: 1, a1: 0x10000, a2: MAX_IO_BYTES + 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
-    if validate_args(SyscallNo::Seek, SysArgs { a0: 1, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Seek, SysArgs { a0: 1, a1: 0, a2: SEEK_CUR, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Seek, SysArgs { a0: 1, a1: 0, a2: 99, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Open, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Open, SysArgs { a0: 1, a1: OPEN_EXCL, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Open, SysArgs { a0: 1, a1: OPEN_TRUNC | OPEN_RDONLY, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Open, SysArgs { a0: 1, a1: OPEN_CREAT | OPEN_EXCL, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Create, SysArgs { a0: 1, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Preallocate, SysArgs { a0: 0, a1: 4096, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Preallocate, SysArgs { a0: 1, a1: 4096, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Ftruncate, SysArgs { a0: MAX_HANDLES, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Ftruncate, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Fpreallocate, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Chdir, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Chdir, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Getcwd, SysArgs { a0: 0, a1: MAX_PATH_BYTES, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Getcwd, SysArgs { a0: 0x10000, a1: MAX_PATH_BYTES + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Getcwd, SysArgs { a0: 0x10000, a1: MAX_PATH_BYTES, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+
     if validate_args(SyscallNo::ProcInfo, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::ProcInfo, SysArgs { a0: 0, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Spawn, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
@@ -509,8 +616,19 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::Sync, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Fsync, SysArgs { a0: MAX_HANDLES - 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Fsync, SysArgs { a0: MAX_HANDLES, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Fdatasync, SysArgs { a0: MAX_HANDLES - 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Fdatasync, SysArgs { a0: MAX_HANDLES, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Symlink, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Symlink, SysArgs { a0: 0, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Readlink, SysArgs { a0: 0x10000, a1: 0x20000, a2: MAX_PATH_BYTES, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Readlink, SysArgs { a0: 0x10000, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Link, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Lstat, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::StatVfs, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::InstallCommit, SysArgs { a0: 0x10000, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::InstallCommit, SysArgs { a0: 0, a1: 0x20000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::InstallCommit, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     true
 }

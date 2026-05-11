@@ -59,6 +59,17 @@ enum au_syscall_id {
     AU_SYS_SYNC = AURORA_SYS_SYNC,
     AU_SYS_FSYNC = AURORA_SYS_FSYNC,
     AU_SYS_STATVFS = AURORA_SYS_STATVFS,
+    AU_SYS_INSTALL_COMMIT = AURORA_SYS_INSTALL_COMMIT,
+    AU_SYS_PREALLOCATE = AURORA_SYS_PREALLOCATE,
+    AU_SYS_FTRUNCATE = AURORA_SYS_FTRUNCATE,
+    AU_SYS_FPREALLOCATE = AURORA_SYS_FPREALLOCATE,
+    AU_SYS_CHDIR = AURORA_SYS_CHDIR,
+    AU_SYS_GETCWD = AURORA_SYS_GETCWD,
+    AU_SYS_FDATASYNC = AURORA_SYS_FDATASYNC,
+    AU_SYS_SYMLINK = AURORA_SYS_SYMLINK,
+    AU_SYS_READLINK = AURORA_SYS_READLINK,
+    AU_SYS_LINK = AURORA_SYS_LINK,
+    AU_SYS_LSTAT = AURORA_SYS_LSTAT,
 };
 
 typedef struct au_result {
@@ -74,6 +85,7 @@ typedef struct au_stat {
     unsigned int mode;
     unsigned int inode;
     unsigned int fs_id;
+    unsigned int nlink;
 } au_stat_t;
 
 typedef aurora_fdinfo_t au_fdinfo_t;
@@ -127,10 +139,12 @@ static inline void au_exit(int code) {
 
 au_i64 au_write_console(const char *s, au_usize n);
 au_i64 au_open(const char *path);
+au_i64 au_open2(const char *path, unsigned int flags);
 au_i64 au_close(au_i64 h);
 au_i64 au_read(au_i64 h, void *buf, au_usize n);
 au_i64 au_write(au_i64 h, const void *buf, au_usize n);
 au_i64 au_seek(au_i64 h, au_u64 off);
+au_i64 au_seek_ex(au_i64 h, au_i64 off, unsigned int whence);
 au_i64 au_create(const char *path, const void *data, au_usize n);
 au_i64 au_mkdir(const char *path);
 au_i64 au_unlink(const char *path);
@@ -138,8 +152,19 @@ au_i64 au_truncate(const char *path, au_u64 size);
 au_i64 au_rename(const char *old_path, const char *new_path);
 au_i64 au_sync(void);
 au_i64 au_fsync(au_i64 h);
+au_i64 au_fdatasync(au_i64 h);
 au_i64 au_statvfs(const char *path, au_statvfs_t *out);
+au_i64 au_install_commit(const char *staged_path, const char *final_path);
+au_i64 au_preallocate(const char *path, au_u64 size);
+au_i64 au_ftruncate(au_i64 h, au_u64 size);
+au_i64 au_fpreallocate(au_i64 h, au_u64 size);
+au_i64 au_chdir(const char *path);
+au_i64 au_getcwd(char *out, au_usize size);
 au_i64 au_stat(const char *path, au_stat_t *out);
+au_i64 au_lstat(const char *path, au_stat_t *out);
+au_i64 au_symlink(const char *target, const char *link_path);
+au_i64 au_readlink(const char *path, char *out, au_usize size);
+au_i64 au_link(const char *old_path, const char *new_path);
 au_i64 au_log(const char *msg);
 au_i64 au_ticks(void);
 au_i64 au_getpid(void);

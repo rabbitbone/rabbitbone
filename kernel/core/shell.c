@@ -144,7 +144,7 @@ static void cmd_ext4(void) {
                 report.errors);
         ext4_perf_stats_t ps;
         if (ext4_get_perf_stats(&mnt, &ps) == EXT4_OK) {
-            kprintf("ext4: perf cache=%u dirty=%u hits=%llu stores=%llu evict=%llu flush=%llu inval=%llu journal=%llu raw_r=%llu raw_w=%llu data_w=%llu d_hits=%llu d_stores=%llu d_evict=%llu d_flush=%llu d_inval=%llu alloc_scan=%llu alloc_wrap=%llu zero_w=%llu zero_skip=%llu unw_alloc=%llu unw_conv=%llu unw_zero=%llu repair=%llu repair_cnt=%llu repair_csum=%llu repair_htree=%llu\n",
+            kprintf("ext4: perf cache=%u dirty=%u hits=%llu stores=%llu evict=%llu flush=%llu inval=%llu journal=%llu raw_r=%llu raw_w=%llu data_w=%llu d_hits=%llu d_stores=%llu d_evict=%llu d_flush=%llu d_inval=%llu alloc_scan=%llu alloc_wrap=%llu zero_w=%llu zero_skip=%llu unw_alloc=%llu unw_conv=%llu unw_zero=%llu repair=%llu repair_cnt=%llu repair_csum=%llu repair_htree=%llu repair_dirent=%llu\n",
                     ps.cache_slots, ps.dirty_slots,
                     (unsigned long long)ps.cache_hits, (unsigned long long)ps.cache_stores,
                     (unsigned long long)ps.cache_evictions, (unsigned long long)ps.cache_flushes,
@@ -158,7 +158,7 @@ static void cmd_ext4(void) {
                     (unsigned long long)ps.unwritten_allocations, (unsigned long long)ps.unwritten_conversions,
                     (unsigned long long)ps.unwritten_zero_fills,
                     (unsigned long long)ps.repair_runs, (unsigned long long)ps.repair_counter_fixes,
-                    (unsigned long long)ps.repair_checksum_fixes, (unsigned long long)ps.repair_htree_rebuilds);
+                    (unsigned long long)ps.repair_checksum_fixes, (unsigned long long)ps.repair_htree_rebuilds, (unsigned long long)ps.repair_dirent_fixes);
         }
         ext4_inode_disk_t root;
         st = ext4_read_inode(&mnt, EXT4_ROOT_INO, &root);

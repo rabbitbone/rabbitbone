@@ -71,6 +71,105 @@ static void check(bool expr, const char *name) {
     else fail(name);
 }
 
+static const char *ktest_disk_raw_path(const char *disk_path) {
+    return (disk_path && strncmp(disk_path, "/disk0", 6u) == 0) ? disk_path + 6 : disk_path;
+}
+
+#define KTEST_CLEANUP_BATCH 32u
+
+typedef struct ktest_cleanup_batch {
+    const char *prefix;
+    char names[KTEST_CLEANUP_BATCH][VFS_NAME_MAX];
+    vfs_node_type_t types[KTEST_CLEANUP_BATCH];
+    u32 count;
+    bool overflow;
+} ktest_cleanup_batch_t;
+
+static bool ktest_name_has_prefix(const char *name, const char *prefix) {
+    if (!name) return false;
+    if (!prefix || !prefix[0]) return true;
+    return strncmp(name, prefix, strlen(prefix)) == 0;
+}
+
+static bool ktest_cleanup_collect_cb(const vfs_dirent_t *e, void *ctx) {
+    ktest_cleanup_batch_t *b = (ktest_cleanup_batch_t *)ctx;
+    if (!e || !b) return true;
+    if (strcmp(e->name, ".") == 0 || strcmp(e->name, "..") == 0) return true;
+    if (!ktest_name_has_prefix(e->name, b->prefix)) return true;
+    if (b->count >= KTEST_CLEANUP_BATCH) {
+        b->overflow = true;
+        return false;
+    }
+    strncpy(b->names[b->count], e->name, VFS_NAME_MAX - 1u);
+    b->names[b->count][VFS_NAME_MAX - 1u] = 0;
+    b->types[b->count] = e->type;
+    ++b->count;
+    return true;
+}
+
+static ktest_cleanup_batch_t *ktest_cleanup_collect(const char *path, const char *prefix, vfs_status_t *status_out) {
+    ktest_cleanup_batch_t *batch = (ktest_cleanup_batch_t *)kmalloc(sizeof(*batch));
+    if (!batch) {
+        if (status_out) *status_out = VFS_ERR_NOMEM;
+        return 0;
+    }
+    memset(batch, 0, sizeof(*batch));
+    batch->prefix = prefix;
+    vfs_status_t st = vfs_list(path, ktest_cleanup_collect_cb, batch);
+    if (status_out) *status_out = st;
+    if (st != VFS_OK) {
+        kfree(batch);
+        return 0;
+    }
+    return batch;
+}
+
+static bool ktest_remove_tree(const char *path) {
+    if (!path) return false;
+    vfs_stat_t st;
+    vfs_status_t sv = vfs_lstat(path, &st);
+    if (sv == VFS_ERR_NOENT) return true;
+    if (sv != VFS_OK) return false;
+    if (st.type == VFS_NODE_DIR) {
+        for (u32 pass = 0; pass < 128u; ++pass) {
+            vfs_status_t lv = VFS_OK;
+            ktest_cleanup_batch_t *batch = ktest_cleanup_collect(path, 0, &lv);
+            if (!batch) return lv == VFS_OK;
+            if (batch->count == 0) { kfree(batch); break; }
+            bool removed_any = false;
+            for (u32 i = 0; i < batch->count; ++i) {
+                char child[VFS_PATH_MAX];
+                ksnprintf(child, sizeof(child), "%s/%s", path, batch->names[i]);
+                if (ktest_remove_tree(child)) removed_any = true;
+            }
+            bool overflow = batch->overflow;
+            kfree(batch);
+            if (!removed_any && !overflow) break;
+        }
+    }
+    sv = vfs_unlink(path);
+    return sv == VFS_OK || sv == VFS_ERR_NOENT;
+}
+
+static void ktest_cleanup_disk_prefix(const char *prefix) {
+    if (!prefix || !prefix[0]) return;
+    for (u32 pass = 0; pass < 256u; ++pass) {
+        vfs_status_t lv = VFS_OK;
+        ktest_cleanup_batch_t *batch = ktest_cleanup_collect("/disk0", prefix, &lv);
+        if (!batch) break;
+        if (batch->count == 0) { kfree(batch); break; }
+        bool removed_any = false;
+        for (u32 i = 0; i < batch->count; ++i) {
+            char path[VFS_PATH_MAX];
+            ksnprintf(path, sizeof(path), "/disk0/%s", batch->names[i]);
+            if (ktest_remove_tree(path)) removed_any = true;
+        }
+        bool overflow = batch->overflow;
+        kfree(batch);
+        if (!removed_any && !overflow) break;
+    }
+}
+
 typedef struct seen_name_ctx {
     const char *name;
     bool seen;
@@ -226,7 +325,95 @@ static void test_vfs_ramfs_devfs(void) {
     memset(buf, 0, sizeof(buf));
     got = 0;
     check(vfs_read(file, 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && strcmp(buf, "aXYZ") == 0, "ramfs read modified file");
-    check(vfs_unlink(file) == VFS_OK, "ramfs unlink file");
+
+    vfs_stat_t dir_st_before;
+    vfs_stat_t dir_st_after;
+    const char *subdir = "/tmp/ktest-vfs/subdir";
+    (void)vfs_unlink(subdir);
+    check(vfs_stat(dir, &dir_st_before) == VFS_OK && dir_st_before.type == VFS_NODE_DIR && dir_st_before.nlink >= 2u, "ramfs directory nlink baseline");
+    check(vfs_mkdir(subdir) == VFS_OK, "ramfs mkdir child directory for nlink");
+    check(vfs_stat(dir, &dir_st_after) == VFS_OK && dir_st_after.nlink == dir_st_before.nlink + 1u, "ramfs parent directory nlink increments on mkdir");
+    check(vfs_unlink(subdir) == VFS_OK, "ramfs unlink empty child directory for nlink");
+    check(vfs_stat(dir, &dir_st_after) == VFS_OK && dir_st_after.nlink == dir_st_before.nlink, "ramfs parent directory nlink decrements on rmdir");
+
+    const char *hl_src = "/tmp/ktest-vfs/hlink-src.txt";
+    const char *hl_dst = "/tmp/ktest-vfs/hlink-dst.txt";
+    (void)vfs_unlink(hl_dst);
+    (void)vfs_unlink(hl_src);
+    check(vfs_create(hl_src, "hard", 4u) == VFS_OK, "ramfs hardlink source create");
+    check(vfs_link(hl_src, hl_dst) == VFS_OK, "ramfs hardlink create");
+    vfs_stat_t hl_src_st;
+    vfs_stat_t hl_dst_st;
+    check(vfs_stat(hl_src, &hl_src_st) == VFS_OK && vfs_stat(hl_dst, &hl_dst_st) == VFS_OK && hl_src_st.inode == hl_dst_st.inode && hl_src_st.nlink == 2u && hl_dst_st.nlink == 2u, "ramfs hardlink shares inode and link count");
+    wrote = 0;
+    check(vfs_write(hl_dst, 0, "HARD", 4u, &wrote) == VFS_OK && wrote == 4u, "ramfs hardlink write through alias");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_read(hl_src, 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && got == 4u && memcmp(buf, "HARD", 4u) == 0, "ramfs hardlink source sees alias write");
+    check(vfs_unlink(hl_src) == VFS_OK, "ramfs unlink one hardlink");
+    check(vfs_stat(hl_dst, &hl_dst_st) == VFS_OK && hl_dst_st.nlink == 1u && hl_dst_st.size == 4u, "ramfs hardlink survives source unlink");
+    check(vfs_unlink(hl_dst) == VFS_OK, "ramfs unlink final hardlink");
+
+    const char *sym_target = "/tmp/ktest-vfs/symlink-target.txt";
+    const char *sym_path = "/tmp/ktest-vfs/symlink.ln";
+    (void)vfs_unlink(sym_path);
+    (void)vfs_unlink(sym_target);
+    check(vfs_create(sym_target, "target", 6u) == VFS_OK, "ramfs symlink target create");
+    check(vfs_symlink("symlink-target.txt", sym_path) == VFS_OK, "ramfs symlink create relative target");
+    vfs_stat_t sym_lst;
+    check(vfs_lstat(sym_path, &sym_lst) == VFS_OK && sym_lst.type == VFS_NODE_SYMLINK && sym_lst.size == strlen("symlink-target.txt") && sym_lst.nlink == 1u, "ramfs lstat sees symlink inode");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_readlink(sym_path, buf, sizeof(buf), &got) == VFS_OK && got == strlen("symlink-target.txt") && memcmp(buf, "symlink-target.txt", got) == 0, "ramfs readlink returns raw target");
+    check(vfs_stat(sym_path, &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size == 6u, "ramfs stat follows symlink");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_read(sym_path, 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && got == 6u && memcmp(buf, "target", 6u) == 0, "ramfs read follows symlink");
+    check(vfs_unlink(sym_path) == VFS_OK && vfs_stat(sym_target, &st) == VFS_OK, "ramfs unlink symlink keeps target");
+
+    const char *sym2 = "/tmp/ktest-vfs/symlink-hard.ln";
+    const char *sym_hard = "/tmp/ktest-vfs/symlink-hard-alias.ln";
+    (void)vfs_unlink(sym_hard);
+    (void)vfs_unlink(sym2);
+    check(vfs_symlink("symlink-target.txt", sym2) == VFS_OK, "ramfs symlink hardlink source create");
+    check(vfs_link(sym2, sym_hard) == VFS_OK, "ramfs hardlink to symlink inode create");
+    vfs_stat_t sym2_st;
+    vfs_stat_t sym_hard_st;
+    check(vfs_lstat(sym2, &sym2_st) == VFS_OK && vfs_lstat(sym_hard, &sym_hard_st) == VFS_OK && sym2_st.type == VFS_NODE_SYMLINK && sym2_st.inode == sym_hard_st.inode && sym2_st.nlink == 2u && sym_hard_st.nlink == 2u, "ramfs hardlink to symlink preserves symlink inode");
+    check(vfs_unlink(sym2) == VFS_OK, "ramfs unlink original symlink hardlink");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_lstat(sym_hard, &sym_hard_st) == VFS_OK && sym_hard_st.nlink == 1u && vfs_readlink(sym_hard, buf, sizeof(buf), &got) == VFS_OK && got == strlen("symlink-target.txt"), "ramfs symlink hardlink survives unlink");
+    check(vfs_unlink(sym_hard) == VFS_OK && vfs_unlink(sym_target) == VFS_OK, "ramfs symlink hardlink cleanup");
+
+    const char *long_sym = "/tmp/ktest-vfs/long-symlink.ln";
+    static const char long_sym_target[] = "this/is/a/long/symlink/target/that/exercises/raw-target-storage-without-inline-shortcuts";
+    (void)vfs_unlink(long_sym);
+    check(vfs_symlink(long_sym_target, long_sym) == VFS_OK, "ramfs long symlink create");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_lstat(long_sym, &sym_lst) == VFS_OK && sym_lst.type == VFS_NODE_SYMLINK && sym_lst.size == strlen(long_sym_target) && vfs_readlink(long_sym, buf, sizeof(buf), &got) == VFS_OK && got == strlen(long_sym_target) && memcmp(buf, long_sym_target, got) == 0, "ramfs long symlink lstat/readlink");
+    check(vfs_unlink(long_sym) == VFS_OK, "ramfs long symlink cleanup");
+
+    vfs_node_ref_t file_ref;
+    const char *renamed = "/tmp/ktest-vfs/renamed.txt";
+    (void)vfs_unlink(renamed);
+    check(vfs_get_ref(file, &file_ref) == VFS_OK && file_ref.inode != 0, "vfs captures inode ref for file");
+    check(vfs_rename(file, renamed) == VFS_OK, "ramfs rename open-ref target");
+    memset(buf, 0, sizeof(buf));
+    got = 0;
+    check(vfs_read_ref(&file_ref, 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && got == 4u && memcmp(buf, "aXYZ", 4u) == 0, "vfs read_ref survives rename");
+    wrote = 0;
+    check(vfs_write_ref(&file_ref, 4u, "!", 1u, &wrote) == VFS_OK && wrote == 1u, "vfs write_ref survives rename");
+    check(vfs_truncate_ref(&file_ref, 2u) == VFS_OK, "vfs truncate_ref targets inode");
+    check(vfs_stat_ref(&file_ref, &st) == VFS_OK && st.size == 2u, "vfs stat_ref sees truncated inode");
+    check(vfs_sync_ref(&file_ref, true) == VFS_OK && vfs_sync_ref(&file_ref, false) == VFS_OK, "vfs sync_ref file data/full");
+    check(vfs_sync_parent_dir(renamed) == VFS_OK, "vfs sync parent directory after rename");
+    vfs_node_ref_t dir_ref;
+    seen_name_ctx_t renamed_seen = { "renamed.txt", false };
+    check(vfs_get_ref(dir, &dir_ref) == VFS_OK && vfs_list_ref(&dir_ref, list_seen_name, &renamed_seen) == VFS_OK && renamed_seen.seen, "vfs list_ref targets directory inode");
+    check(vfs_stat(file, &st) == VFS_ERR_NOENT, "ramfs old rename path absent");
+    check(vfs_unlink(renamed) == VFS_OK, "ramfs unlink file");
     check(vfs_unlink(dir) == VFS_OK, "ramfs unlink empty dir");
 
     u8 zeros[32];
@@ -326,6 +513,7 @@ static void test_tarfs_module(void) {
 
 static void test_block_mbr_ext4(void) {
     suite_begin("block/mbr/ext4/disk0");
+    u8 *repair_scratch = (u8 *)kmalloc(4096u);
     block_device_t fake;
     memset(&fake, 0, sizeof(fake));
     fake.sector_count = 16u;
@@ -346,6 +534,7 @@ static void test_block_mbr_ext4(void) {
         skip("MBR read");
         skip("EXT4 raw mount");
         skip("VFS /disk0 read");
+        kfree(repair_scratch);
         suite_end();
         return;
     }
@@ -389,11 +578,16 @@ static void test_block_mbr_ext4(void) {
     memset(&sv, 0, sizeof(sv));
     check(vfs_statvfs("/disk0", &sv) == VFS_OK && sv.block_size >= 1024u && sv.total_blocks > 0u && sv.free_blocks <= sv.total_blocks && (sv.flags & VFS_STATVFS_FLAG_PERSISTENT) != 0, "VFS statvfs exposes EXT4 capacity and persistence flags");
     check(vfs_sync_path("/disk0") == VFS_OK && vfs_sync_all() == VFS_OK, "VFS sync flushes EXT4 writeback state");
+    ktest_cleanup_disk_prefix("aurora-");
 
     const char *rw_path = "/disk0/aurora-rw.txt";
     const char rw_payload[] = "Aurora EXT4 write path survives VFS create/write/read/unlink";
-    (void)vfs_unlink(rw_path);
-    check(vfs_create(rw_path, rw_payload, sizeof(rw_payload) - 1u) == VFS_OK, "VFS create /disk0 file through ext4 writer");
+    vfs_status_t rw_cleanup = vfs_unlink(rw_path);
+    vfs_status_t rw_create = vfs_create(rw_path, rw_payload, sizeof(rw_payload) - 1u);
+    if (rw_create != VFS_OK) {
+        kprintf("[ detail] ext4 rw create cleanup=%s create=%s\n", vfs_status_name(rw_cleanup), vfs_status_name(rw_create));
+    }
+    check(rw_create == VFS_OK, "VFS create /disk0 file through ext4 writer");
     if (part) {
         ext4_mount_t verify_mnt;
         ext4_inode_disk_t created_inode;
@@ -423,13 +617,113 @@ static void test_block_mbr_ext4(void) {
     check(vfs_read(rw_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == 12u, "VFS read ext4 truncated contents");
     check(vfs_truncate(rw_path, 8192u + 17u) == VFS_OK, "VFS expand ext4 file through truncate");
     check(vfs_stat(rw_path, &trunc_st) == VFS_OK && trunc_st.size == 8192u + 17u, "VFS stat ext4 expanded size");
+    vfs_node_ref_t ext4_ref;
+    check(vfs_get_ref(rw_path, &ext4_ref) == VFS_OK && ext4_ref.inode != 0, "VFS captures EXT4 inode ref before rename");
     const char *renamed_path = "/disk0/aurora-rw-renamed.txt";
     (void)vfs_unlink(renamed_path);
     check(vfs_rename(rw_path, renamed_path) == VFS_OK, "VFS rename ext4 file");
     check(vfs_stat(rw_path, &trunc_st) == VFS_ERR_NOENT && vfs_stat(renamed_path, &trunc_st) == VFS_OK && trunc_st.size == 8192u + 17u, "VFS observes ext4 renamed file");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read_ref(&ext4_ref, 0, text, 12u, &got) == VFS_OK && got == 12u && memcmp(text, "Aurora persi", 12u) == 0, "VFS read_ref survives EXT4 rename");
+    wrote = 0;
+    check(vfs_write_ref(&ext4_ref, 0, "FD", 2u, &wrote) == VFS_OK && wrote == 2u, "VFS write_ref survives EXT4 rename");
+    check(vfs_sync_ref(&ext4_ref, true) == VFS_OK && vfs_sync_ref(&ext4_ref, false) == VFS_OK, "VFS sync_ref EXT4 file data/full");
+    check(vfs_sync_parent_dir(renamed_path) == VFS_OK, "VFS fsync parent dir after EXT4 rename");
+
+    const char *replace_src = "/disk0/aurora-replace-src.txt";
+    const char *replace_dst = "/disk0/aurora-replace-dst.txt";
+    (void)vfs_unlink(replace_src);
+    (void)vfs_unlink(replace_dst);
+    check(vfs_create(replace_dst, "old-file", 8u) == VFS_OK && vfs_create(replace_src, "new-file", 8u) == VFS_OK, "VFS prepares ext4 rename-overwrite files");
+    check(vfs_rename(replace_src, replace_dst) == VFS_OK, "VFS rename overwrites existing ext4 file atomically");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_stat(replace_src, &trunc_st) == VFS_ERR_NOENT && vfs_read(replace_dst, 0, text, 8u, &got) == VFS_OK && got == 8u && memcmp(text, "new-file", 8u) == 0, "VFS rename-overwrite exposes replacement contents");
+
+    const char *install_stage = "/disk0/aurora-app.stage";
+    const char *install_final = "/disk0/aurora-app.bin";
+    (void)vfs_unlink(install_stage);
+    (void)vfs_unlink(install_final);
+    check(vfs_create(install_final, "app-v1", 6u) == VFS_OK && vfs_create(install_stage, "app-v2", 6u) == VFS_OK, "VFS prepares staged ext4 app install");
+    check(vfs_install_commit(install_stage, install_final) == VFS_OK, "VFS install_commit swaps staged ext4 app into final path");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_stat(install_stage, &trunc_st) == VFS_ERR_NOENT && vfs_read(install_final, 0, text, 6u, &got) == VFS_OK && got == 6u && memcmp(text, "app-v2", 6u) == 0, "VFS install_commit preserves final app payload");
+    check(vfs_sync_path(install_final) == VFS_OK, "VFS install_commit result fsyncs through EXT4");
+    (void)vfs_unlink(install_final);
+    (void)vfs_unlink(replace_dst);
+
+    const char *ext_hl_src = "/disk0/aurora-hlink-src.txt";
+    const char *ext_hl_dst = "/disk0/aurora-hlink-dst.txt";
+    (void)vfs_unlink(ext_hl_dst);
+    (void)vfs_unlink(ext_hl_src);
+    check(vfs_create(ext_hl_src, "hard", 4u) == VFS_OK, "EXT4 hardlink source create");
+    check(vfs_link(ext_hl_src, ext_hl_dst) == VFS_OK, "EXT4 hardlink create");
+    vfs_stat_t ext_hl_src_st;
+    vfs_stat_t ext_hl_dst_st;
+    check(vfs_stat(ext_hl_src, &ext_hl_src_st) == VFS_OK && vfs_stat(ext_hl_dst, &ext_hl_dst_st) == VFS_OK && ext_hl_src_st.inode == ext_hl_dst_st.inode && ext_hl_src_st.nlink == 2u && ext_hl_dst_st.nlink == 2u, "EXT4 hardlink shares inode and link count");
+    wrote = 0;
+    check(vfs_write(ext_hl_dst, 0, "HARD", 4u, &wrote) == VFS_OK && wrote == 4u, "EXT4 hardlink write through alias");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(ext_hl_src, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == 4u && memcmp(text, "HARD", 4u) == 0, "EXT4 hardlink source sees alias write");
+    check(vfs_unlink(ext_hl_src) == VFS_OK, "EXT4 unlink one hardlink");
+    check(vfs_stat(ext_hl_dst, &ext_hl_dst_st) == VFS_OK && ext_hl_dst_st.nlink == 1u && ext_hl_dst_st.size == 4u, "EXT4 hardlink survives source unlink");
+    check(vfs_unlink(ext_hl_dst) == VFS_OK, "EXT4 unlink final hardlink");
+
+    const char *ext_sym_target = "/disk0/aurora-sym-target.txt";
+    const char *ext_sym_path = "/disk0/aurora-sym.ln";
+    (void)vfs_unlink(ext_sym_path);
+    (void)vfs_unlink(ext_sym_target);
+    check(vfs_create(ext_sym_target, "target", 6u) == VFS_OK, "EXT4 symlink target create");
+    check(vfs_symlink("aurora-sym-target.txt", ext_sym_path) == VFS_OK, "EXT4 symlink create relative target");
+    vfs_stat_t ext_sym_lst;
+    check(vfs_lstat(ext_sym_path, &ext_sym_lst) == VFS_OK && ext_sym_lst.type == VFS_NODE_SYMLINK && ext_sym_lst.size == strlen("aurora-sym-target.txt") && ext_sym_lst.nlink == 1u, "EXT4 lstat sees symlink inode");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_readlink(ext_sym_path, text, sizeof(text), &got) == VFS_OK && got == strlen("aurora-sym-target.txt") && memcmp(text, "aurora-sym-target.txt", got) == 0, "EXT4 readlink returns raw target");
+    check(vfs_stat(ext_sym_path, &trunc_st) == VFS_OK && trunc_st.type == VFS_NODE_FILE && trunc_st.size == 6u, "EXT4 stat follows symlink");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_read(ext_sym_path, 0, text, sizeof(text) - 1u, &got) == VFS_OK && got == 6u && memcmp(text, "target", 6u) == 0, "EXT4 read follows symlink");
+    check(vfs_unlink(ext_sym_path) == VFS_OK && vfs_stat(ext_sym_target, &trunc_st) == VFS_OK, "EXT4 unlink symlink keeps target");
+
+    const char *ext_sym2 = "/disk0/aurora-sym-hard.ln";
+    const char *ext_sym_hard = "/disk0/aurora-sym-hard-alias.ln";
+    (void)vfs_unlink(ext_sym_hard);
+    (void)vfs_unlink(ext_sym2);
+    check(vfs_symlink("aurora-sym-target.txt", ext_sym2) == VFS_OK, "EXT4 symlink hardlink source create");
+    check(vfs_link(ext_sym2, ext_sym_hard) == VFS_OK, "EXT4 hardlink to symlink inode create");
+    vfs_stat_t ext_sym2_st;
+    vfs_stat_t ext_sym_hard_st;
+    check(vfs_lstat(ext_sym2, &ext_sym2_st) == VFS_OK && vfs_lstat(ext_sym_hard, &ext_sym_hard_st) == VFS_OK && ext_sym2_st.type == VFS_NODE_SYMLINK && ext_sym2_st.inode == ext_sym_hard_st.inode && ext_sym2_st.nlink == 2u && ext_sym_hard_st.nlink == 2u, "EXT4 hardlink to symlink preserves symlink inode");
+    check(vfs_unlink(ext_sym2) == VFS_OK, "EXT4 unlink original symlink hardlink");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_lstat(ext_sym_hard, &ext_sym_hard_st) == VFS_OK && ext_sym_hard_st.nlink == 1u && vfs_readlink(ext_sym_hard, text, sizeof(text), &got) == VFS_OK && got == strlen("aurora-sym-target.txt"), "EXT4 symlink hardlink survives unlink");
+    check(vfs_unlink(ext_sym_hard) == VFS_OK && vfs_unlink(ext_sym_target) == VFS_OK, "EXT4 symlink hardlink cleanup");
+
+    const char *ext_long_sym = "/disk0/aurora-long-sym.ln";
+    const char ext_long_sym_target[] = "this/is/a/long/symlink/target/that/exercises/ext4-extent-backed-target-storage";
+    (void)vfs_unlink(ext_long_sym);
+    check(vfs_symlink(ext_long_sym_target, ext_long_sym) == VFS_OK, "EXT4 long symlink create");
+    memset(text, 0, sizeof(text));
+    got = 0;
+    check(vfs_lstat(ext_long_sym, &ext_sym_lst) == VFS_OK && ext_sym_lst.type == VFS_NODE_SYMLINK && ext_sym_lst.size == strlen(ext_long_sym_target) && vfs_readlink(ext_long_sym, text, sizeof(text), &got) == VFS_OK && got == strlen(ext_long_sym_target) && memcmp(text, ext_long_sym_target, got) == 0, "EXT4 long symlink lstat/readlink");
+    check(vfs_unlink(ext_long_sym) == VFS_OK, "EXT4 long symlink cleanup");
+
+    (void)vfs_unlink("/disk0/aurora-dir/subdir");
     (void)vfs_unlink("/disk0/aurora-dir/child.txt");
     (void)vfs_unlink("/disk0/aurora-dir");
     check(vfs_mkdir("/disk0/aurora-dir") == VFS_OK, "VFS mkdir on ext4");
+    vfs_stat_t ext_dir_before;
+    vfs_stat_t ext_dir_after;
+    check(vfs_stat("/disk0/aurora-dir", &ext_dir_before) == VFS_OK && ext_dir_before.type == VFS_NODE_DIR && ext_dir_before.nlink >= 2u, "EXT4 directory nlink baseline");
+    check(vfs_mkdir("/disk0/aurora-dir/subdir") == VFS_OK, "EXT4 mkdir child directory for nlink");
+    check(vfs_stat("/disk0/aurora-dir", &ext_dir_after) == VFS_OK && ext_dir_after.nlink == ext_dir_before.nlink + 1u, "EXT4 parent directory nlink increments on mkdir");
+    check(vfs_unlink("/disk0/aurora-dir/subdir") == VFS_OK, "EXT4 unlink empty child directory for nlink");
+    check(vfs_stat("/disk0/aurora-dir", &ext_dir_after) == VFS_OK && ext_dir_after.nlink == ext_dir_before.nlink, "EXT4 parent directory nlink decrements on rmdir");
     check(vfs_create("/disk0/aurora-dir/child.txt", "x", 1u) == VFS_OK, "VFS create child on ext4");
     check(vfs_unlink("/disk0/aurora-dir") == VFS_ERR_NOTEMPTY, "VFS rejects unlink non-empty ext4 dir");
     check(vfs_unlink("/disk0/aurora-dir/child.txt") == VFS_OK, "VFS unlink ext4 child");
@@ -461,10 +755,11 @@ static void test_block_mbr_ext4(void) {
         ext4_mount_t perf_mnt_before;
         ext4_perf_stats_t perf_before;
         ext4_perf_stats_t perf_after;
-        static char perf_block[4096];
+        char *perf_block = 0;
         bool perf_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &perf_mnt_before) == EXT4_OK &&
                        ext4_get_perf_stats(&perf_mnt_before, &perf_before) == EXT4_OK &&
-                       perf_mnt_before.block_size <= sizeof(perf_block) &&
+                       perf_mnt_before.block_size <= 4096u &&
+                       (perf_block = (char *)kmalloc((usize)perf_mnt_before.block_size)) != 0 &&
                        vfs_create(perf_path, 0, 0) == VFS_OK;
         if (perf_ok) {
             for (usize pi = 0; pi < (usize)perf_mnt_before.block_size; ++pi) perf_block[pi] = (char)('A' + (pi % 23u));
@@ -474,6 +769,7 @@ static void test_block_mbr_ext4(void) {
                       ext4_get_perf_stats(&perf_mnt_before, &perf_after) == EXT4_OK &&
                       perf_after.zero_block_skips > perf_before.zero_block_skips;
         }
+        if (perf_block) kfree(perf_block);
         check(perf_ok, "EXT4 full-block data allocation skips eager zero-write safely");
         check(vfs_unlink(perf_path) == VFS_OK, "VFS unlink ext4 full-block perf file");
 
@@ -482,26 +778,79 @@ static void test_block_mbr_ext4(void) {
         ext4_mount_t buffered_mnt;
         ext4_perf_stats_t buffered_before;
         ext4_perf_stats_t buffered_after;
-        static char buffered_read[4096];
+        char *buffered_write = 0;
+        char *buffered_read = 0;
         bool buffered_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &buffered_mnt) == EXT4_OK &&
                            ext4_get_perf_stats(&buffered_mnt, &buffered_before) == EXT4_OK &&
-                           buffered_mnt.block_size <= sizeof(perf_block) &&
+                           buffered_mnt.block_size <= 4096u &&
+                           (buffered_write = (char *)kmalloc((usize)buffered_mnt.block_size)) != 0 &&
+                           (buffered_read = (char *)kmalloc((usize)buffered_mnt.block_size)) != 0 &&
                            vfs_create(buffered_path, 0, 0) == VFS_OK;
         if (buffered_ok) {
-            for (usize bi = 0; bi < (usize)buffered_mnt.block_size; ++bi) perf_block[bi] = (char)('a' + (bi % 19u));
+            for (usize bi = 0; bi < (usize)buffered_mnt.block_size; ++bi) buffered_write[bi] = (char)('a' + (bi % 19u));
             wrote = 0;
             memset(buffered_read, 0, (usize)buffered_mnt.block_size);
-            buffered_ok = vfs_write(buffered_path, 0, perf_block, (usize)buffered_mnt.block_size, &wrote) == VFS_OK &&
+            buffered_ok = vfs_write(buffered_path, 0, buffered_write, (usize)buffered_mnt.block_size, &wrote) == VFS_OK &&
                           wrote == (usize)buffered_mnt.block_size &&
                           vfs_read(buffered_path, 0, buffered_read, (usize)buffered_mnt.block_size, &got) == VFS_OK &&
                           got == (usize)buffered_mnt.block_size &&
-                          memcmp(buffered_read, perf_block, (usize)buffered_mnt.block_size) == 0 &&
+                          memcmp(buffered_read, buffered_write, (usize)buffered_mnt.block_size) == 0 &&
                           ext4_get_perf_stats(&buffered_mnt, &buffered_after) == EXT4_OK &&
                           buffered_after.data_cache_stores > buffered_before.data_cache_stores &&
                           buffered_after.data_cache_hits > buffered_before.data_cache_hits;
         }
         check(buffered_ok, "EXT4 buffered data cache serves immediate readback before sync");
         check(vfs_unlink(buffered_path) == VFS_OK, "VFS unlink ext4 buffered-data file");
+
+        const char *readahead_path = "/disk0/aurora-readahead-data.bin";
+        (void)vfs_unlink(readahead_path);
+        ext4_perf_stats_t read_policy_before;
+        ext4_perf_stats_t read_policy_after;
+        bool read_policy_ok = ext4_get_perf_stats(&buffered_mnt, &read_policy_before) == EXT4_OK &&
+                              vfs_create(readahead_path, 0, 0) == VFS_OK;
+        if (read_policy_ok && buffered_write) {
+            for (u32 ri = 0; ri < 3u && read_policy_ok; ++ri) {
+                for (usize bi = 0; bi < (usize)buffered_mnt.block_size; ++bi) buffered_write[bi] = (char)('R' + ri + (bi % 7u));
+                wrote = 0;
+                read_policy_ok = vfs_write(readahead_path, (u64)ri * buffered_mnt.block_size, buffered_write, (usize)buffered_mnt.block_size, &wrote) == VFS_OK &&
+                                 wrote == (usize)buffered_mnt.block_size;
+            }
+            memset(buffered_read, 0, (usize)buffered_mnt.block_size);
+            read_policy_ok = read_policy_ok &&
+                             vfs_sync_path(readahead_path) == VFS_OK &&
+                             ext4_get_perf_stats(&buffered_mnt, &read_policy_before) == EXT4_OK &&
+                             vfs_read(readahead_path, 0, buffered_read, (usize)buffered_mnt.block_size, &got) == VFS_OK &&
+                             got == (usize)buffered_mnt.block_size &&
+                             ext4_get_perf_stats(&buffered_mnt, &read_policy_after) == EXT4_OK &&
+                             read_policy_after.data_cache_clean_stores > read_policy_before.data_cache_clean_stores &&
+                             read_policy_after.data_cache_readahead > read_policy_before.data_cache_readahead;
+        }
+        check(read_policy_ok, "EXT4 data cache read miss installs clean page and read-ahead");
+        check(vfs_unlink(readahead_path) == VFS_OK, "VFS unlink ext4 readahead-data file");
+
+        const char *pressure_path = "/disk0/aurora-cache-pressure.bin";
+        (void)vfs_unlink(pressure_path);
+        ext4_perf_stats_t pressure_before;
+        ext4_perf_stats_t pressure_after;
+        bool pressure_ok = ext4_get_perf_stats(&buffered_mnt, &pressure_before) == EXT4_OK &&
+                           vfs_create(pressure_path, 0, 0) == VFS_OK;
+        if (pressure_ok && buffered_write) {
+            for (u32 pi = 0; pi < 32u && pressure_ok; ++pi) {
+                for (usize bi = 0; bi < (usize)buffered_mnt.block_size; ++bi) buffered_write[bi] = (char)('p' + (pi % 11u));
+                wrote = 0;
+                pressure_ok = vfs_write(pressure_path, (u64)pi * buffered_mnt.block_size, buffered_write, (usize)buffered_mnt.block_size, &wrote) == VFS_OK &&
+                              wrote == (usize)buffered_mnt.block_size;
+            }
+            pressure_ok = pressure_ok &&
+                          ext4_get_perf_stats(&buffered_mnt, &pressure_after) == EXT4_OK &&
+                          pressure_after.data_cache_pressure_flushes > pressure_before.data_cache_pressure_flushes &&
+                          pressure_after.data_cache_writeback_runs > pressure_before.data_cache_writeback_runs &&
+                          vfs_sync_path(pressure_path) == VFS_OK;
+        }
+        check(pressure_ok, "EXT4 data cache pressure triggers bounded writeback");
+        check(vfs_unlink(pressure_path) == VFS_OK, "VFS unlink ext4 cache-pressure file");
+        if (buffered_write) kfree(buffered_write);
+        if (buffered_read) kfree(buffered_read);
 
         const char *unwritten_path = "/disk0/aurora-unwritten.bin";
         (void)vfs_unlink(unwritten_path);
@@ -511,7 +860,7 @@ static void test_block_mbr_ext4(void) {
         ext4_extent_report_t unw_report;
         ext4_perf_stats_t unw_before;
         ext4_perf_stats_t unw_after;
-        static char unw_read[128];
+        char unw_read[128];
         bool unw_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &unw_mnt) == EXT4_OK &&
                       ext4_get_perf_stats(&unw_mnt, &unw_before) == EXT4_OK &&
                       unw_mnt.block_size * 3u <= 16384u &&
@@ -541,14 +890,48 @@ static void test_block_mbr_ext4(void) {
                          got == 3u && unw_read[0] == 0 && unw_read[1] == 'Z' && unw_read[2] == 0;
         check(unw_convert_ok, "EXT4 converts a written unwritten extent block without leaking stale data");
         check(vfs_truncate(unwritten_path, 0) == VFS_OK && vfs_unlink(unwritten_path) == VFS_OK, "VFS truncate/unlink ext4 unwritten preallocation file");
+
+        const char *vfs_prealloc_path = "/disk0/aurora-vfs-prealloc.bin";
+        (void)vfs_unlink(vfs_prealloc_path);
+        bool vfs_prealloc_ok = vfs_create(vfs_prealloc_path, 0, 0) == VFS_OK &&
+                               vfs_preallocate(vfs_prealloc_path, unw_mnt.block_size * 5u + 19u) == VFS_OK;
+        vfs_stat_t vfs_prealloc_st;
+        memset(&vfs_prealloc_st, 0, sizeof(vfs_prealloc_st));
+        u8 vfs_prealloc_buf[32];
+        memset(vfs_prealloc_buf, 0xa5, sizeof(vfs_prealloc_buf));
+        usize vfs_prealloc_got = 0;
+        vfs_prealloc_ok = vfs_prealloc_ok && vfs_stat(vfs_prealloc_path, &vfs_prealloc_st) == VFS_OK &&
+                          vfs_prealloc_st.size == unw_mnt.block_size * 5u + 19u &&
+                          vfs_read(vfs_prealloc_path, unw_mnt.block_size * 4u + 7u, vfs_prealloc_buf, sizeof(vfs_prealloc_buf), &vfs_prealloc_got) == VFS_OK &&
+                          vfs_prealloc_got == sizeof(vfs_prealloc_buf);
+        bool vfs_prealloc_zero = vfs_prealloc_ok;
+        for (usize vi = 0; vi < sizeof(vfs_prealloc_buf); ++vi) if (vfs_prealloc_buf[vi] != 0) vfs_prealloc_zero = false;
+        check(vfs_prealloc_ok && vfs_prealloc_zero, "VFS preallocate exposes zero-readable EXT4 unwritten extents");
+        const char vfs_prealloc_payload[] = "prealloc-write";
+        usize vfs_prealloc_written = 0;
+        memset(vfs_prealloc_buf, 0, sizeof(vfs_prealloc_buf));
+        bool vfs_prealloc_convert = vfs_write(vfs_prealloc_path, unw_mnt.block_size * 2u + 3u, vfs_prealloc_payload, sizeof(vfs_prealloc_payload) - 1u, &vfs_prealloc_written) == VFS_OK &&
+                                    vfs_prealloc_written == sizeof(vfs_prealloc_payload) - 1u &&
+                                    vfs_read(vfs_prealloc_path, unw_mnt.block_size * 2u + 3u, vfs_prealloc_buf, sizeof(vfs_prealloc_payload) - 1u, &vfs_prealloc_got) == VFS_OK &&
+                                    vfs_prealloc_got == sizeof(vfs_prealloc_payload) - 1u &&
+                                    memcmp(vfs_prealloc_buf, vfs_prealloc_payload, sizeof(vfs_prealloc_payload) - 1u) == 0;
+        check(vfs_prealloc_convert, "VFS write converts preallocated EXT4 unwritten blocks");
+        check(vfs_truncate(vfs_prealloc_path, 0) == VFS_OK && vfs_unlink(vfs_prealloc_path) == VFS_OK, "VFS truncate/unlink ext4 preallocated file");
     } else {
         skip("EXT4 full-block data allocation skips eager zero-write safely");
         skip("VFS unlink ext4 full-block perf file");
         skip("EXT4 buffered data cache serves immediate readback before sync");
         skip("VFS unlink ext4 buffered-data file");
+        skip("EXT4 data cache read miss installs clean page and read-ahead");
+        skip("VFS unlink ext4 readahead-data file");
+        skip("EXT4 data cache pressure triggers bounded writeback");
+        skip("VFS unlink ext4 cache-pressure file");
         skip("EXT4 unwritten preallocation reads back as zero-filled data");
         skip("EXT4 converts a written unwritten extent block without leaking stale data");
         skip("VFS truncate/unlink ext4 unwritten preallocation file");
+        skip("VFS preallocate exposes zero-readable EXT4 unwritten extents");
+        skip("VFS write converts preallocated EXT4 unwritten blocks");
+        skip("VFS truncate/unlink ext4 preallocated file");
     }
 
     const char *indexed_path = "/disk0/aurora-indexed-extents.bin";
@@ -608,7 +991,10 @@ static void test_block_mbr_ext4(void) {
     }
     check(vfs_unlink(indexed_path) == VFS_OK, "VFS unlink ext4 indexed extent file");
 
-    const char *split_path = "/disk0/aurora-extent-split.bin";
+    ktest_cleanup_disk_prefix("aurora-extent-split");
+    char split_path[96];
+    ksnprintf(split_path, sizeof(split_path), "/disk0/aurora-extent-split.bin");
+    const char *split_raw = ktest_disk_raw_path(split_path);
     (void)vfs_unlink(split_path);
     u64 split_free_before = 0;
     bool split_baseline_ok = false;
@@ -621,34 +1007,38 @@ static void test_block_mbr_ext4(void) {
         split_free_before = before_report.sb_free_blocks;
     }
     check(vfs_create(split_path, 0, 0) == VFS_OK, "VFS create ext4 extent leaf-split stress file");
-    bool split_writes_ok = true;
-    for (u32 i = 0; i < 96u; ++i) {
+    vfs_node_ref_t split_ref;
+    bool split_ref_ok = vfs_get_ref(split_path, &split_ref) == VFS_OK;
+    check(split_ref_ok, "VFS captures ext4 leaf-split inode ref");
+    bool split_writes_ok = split_ref_ok;
+    enum { EXT4_SPLIT_KTEST_EXTENTS = 96u };
+    for (u32 i = 0; split_writes_ok && i < EXT4_SPLIT_KTEST_EXTENTS; ++i) {
         char ch = (char)('a' + (i % 26u));
         wrote = 0;
-        if (vfs_write(split_path, (u64)i * 8192ull, &ch, 1u, &wrote) != VFS_OK || wrote != 1u) {
+        if (vfs_write_ref(&split_ref, (u64)i * 8192ull, &ch, 1u, &wrote) != VFS_OK || wrote != 1u) {
             split_writes_ok = false;
             break;
         }
     }
-    check(split_writes_ok, "EXT4 writes 96 sparse extents and splits indexed leaves");
+    check(split_writes_ok, "EXT4 writes sparse extents and splits indexed leaves");
     if (part) {
         ext4_mount_t split_mnt;
         ext4_inode_disk_t split_inode;
         u32 split_ino = 0;
         ext4_extent_report_t split_extents;
         bool split_tree = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &split_mnt) == EXT4_OK &&
-                          ext4_lookup_path(&split_mnt, "/aurora-extent-split.bin", &split_inode, &split_ino) == EXT4_OK &&
+                          ext4_lookup_path(&split_mnt, split_raw, &split_inode, &split_ino) == EXT4_OK &&
                           split_ino != 0 && ext4_inspect_inode_extents(&split_mnt, &split_inode, &split_extents) == EXT4_OK &&
                           split_extents.uses_extents && split_extents.depth == 1u &&
                           split_extents.root_entries >= 2u && split_extents.leaf_nodes >= 2u &&
-                          split_extents.extent_entries == 96u && split_extents.data_blocks == 96u &&
+                          split_extents.extent_entries == EXT4_SPLIT_KTEST_EXTENTS && split_extents.data_blocks == EXT4_SPLIT_KTEST_EXTENTS &&
                           split_extents.metadata_blocks >= 2u && split_extents.errors == 0;
         check(split_tree, "EXT4 indexed extent root tracks multiple leaf blocks after split");
     } else {
         skip("EXT4 indexed extent root tracks multiple leaf blocks after split");
     }
     bool split_read_ok = true;
-    for (u32 i = 0; i < 96u; i += 19u) {
+    for (u32 i = 0; i < EXT4_SPLIT_KTEST_EXTENTS; i += 17u) {
         char ch = 0;
         got = 0;
         if (vfs_read(split_path, (u64)i * 8192ull, &ch, 1u, &got) != VFS_OK || got != 1u || ch != (char)('a' + (i % 26u))) {
@@ -669,7 +1059,7 @@ static void test_block_mbr_ext4(void) {
         u32 split_demote_ino = 0;
         ext4_extent_report_t split_demote_extents;
         bool split_demoted_inline = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &split_demote_mnt) == EXT4_OK &&
-                                    ext4_lookup_path(&split_demote_mnt, "/aurora-extent-split.bin", &split_demote_inode, &split_demote_ino) == EXT4_OK &&
+                                    ext4_lookup_path(&split_demote_mnt, split_raw, &split_demote_inode, &split_demote_ino) == EXT4_OK &&
                                     split_demote_ino != 0 &&
                                     ext4_inspect_inode_extents(&split_demote_mnt, &split_demote_inode, &split_demote_extents) == EXT4_OK &&
                                     split_demote_extents.uses_extents && split_demote_extents.depth == 0u &&
@@ -682,36 +1072,43 @@ static void test_block_mbr_ext4(void) {
     }
     check(vfs_unlink(split_path) == VFS_OK, "VFS unlink ext4 multi-leaf indexed extent file");
 
-    const char *deep_path = "/disk0/aurora-depth2-extents.bin";
+    ktest_cleanup_disk_prefix("aurora-depth2-extents");
+    char deep_path[96];
+    ksnprintf(deep_path, sizeof(deep_path), "/disk0/aurora-depth2-extents.bin");
+    const char *deep_raw = ktest_disk_raw_path(deep_path);
     (void)vfs_unlink(deep_path);
     check(vfs_create(deep_path, 0, 0) == VFS_OK, "VFS create ext4 depth-2 extent stress file");
-    bool deep_writes_ok = true;
-    for (u32 i = 0; i < 360u; ++i) {
+    vfs_node_ref_t deep_ref;
+    bool deep_ref_ok = vfs_get_ref(deep_path, &deep_ref) == VFS_OK;
+    check(deep_ref_ok, "VFS captures ext4 depth-2 inode ref");
+    bool deep_writes_ok = deep_ref_ok;
+    enum { EXT4_DEPTH2_KTEST_EXTENTS = 360u };
+    for (u32 i = 0; deep_writes_ok && i < EXT4_DEPTH2_KTEST_EXTENTS; ++i) {
         char ch = (char)('A' + (i % 26u));
         wrote = 0;
-        if (vfs_write(deep_path, (u64)i * 8192ull, &ch, 1u, &wrote) != VFS_OK || wrote != 1u) {
+        if (vfs_write_ref(&deep_ref, (u64)i * 8192ull, &ch, 1u, &wrote) != VFS_OK || wrote != 1u) {
             deep_writes_ok = false;
             break;
         }
     }
-    check(deep_writes_ok, "EXT4 writes 360 sparse extents and grows tree past root leaf-index capacity");
+    check(deep_writes_ok, "EXT4 writes enough sparse extents to grow past root leaf-index capacity");
     if (part) {
         ext4_mount_t deep_mnt;
         ext4_inode_disk_t deep_inode;
         u32 deep_ino = 0;
         ext4_extent_report_t deep_extents;
         bool deep_tree = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &deep_mnt) == EXT4_OK &&
-                         ext4_lookup_path(&deep_mnt, "/aurora-depth2-extents.bin", &deep_inode, &deep_ino) == EXT4_OK &&
+                         ext4_lookup_path(&deep_mnt, deep_raw, &deep_inode, &deep_ino) == EXT4_OK &&
                          deep_ino != 0 && ext4_inspect_inode_extents(&deep_mnt, &deep_inode, &deep_extents) == EXT4_OK &&
                          deep_extents.uses_extents && deep_extents.depth == 2u && deep_extents.index_nodes >= 1u &&
-                         deep_extents.leaf_nodes >= 5u && deep_extents.extent_entries == 360u &&
-                         deep_extents.data_blocks == 360u && deep_extents.errors == 0;
+                         deep_extents.leaf_nodes >= 5u && deep_extents.extent_entries == EXT4_DEPTH2_KTEST_EXTENTS &&
+                         deep_extents.data_blocks == EXT4_DEPTH2_KTEST_EXTENTS && deep_extents.errors == 0;
         check(deep_tree, "EXT4 supports depth > 1 indexed extent tree");
     } else {
         skip("EXT4 supports depth > 1 indexed extent tree");
     }
     bool deep_read_ok = true;
-    for (u32 i = 0; i < 360u; i += 71u) {
+    for (u32 i = 0; i < EXT4_DEPTH2_KTEST_EXTENTS; i += 42u) {
         char ch = 0;
         got = 0;
         if (vfs_read(deep_path, (u64)i * 8192ull, &ch, 1u, &got) != VFS_OK || got != 1u || ch != (char)('A' + (i % 26u))) {
@@ -727,7 +1124,7 @@ static void test_block_mbr_ext4(void) {
         u32 deep_demote_ino = 0;
         ext4_extent_report_t deep_demote_extents;
         bool deep_demoted = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &deep_demote_mnt) == EXT4_OK &&
-                            ext4_lookup_path(&deep_demote_mnt, "/aurora-depth2-extents.bin", &deep_demote_inode, &deep_demote_ino) == EXT4_OK &&
+                            ext4_lookup_path(&deep_demote_mnt, deep_raw, &deep_demote_inode, &deep_demote_ino) == EXT4_OK &&
                             deep_demote_ino != 0 && ext4_inspect_inode_extents(&deep_demote_mnt, &deep_demote_inode, &deep_demote_extents) == EXT4_OK &&
                             deep_demote_extents.uses_extents && deep_demote_extents.depth == 0u && deep_demote_extents.data_blocks == 1u &&
                             deep_demote_extents.metadata_blocks == 0u && deep_demote_extents.errors == 0;
@@ -737,19 +1134,22 @@ static void test_block_mbr_ext4(void) {
     }
     check(vfs_unlink(deep_path) == VFS_OK, "VFS unlink ext4 depth-2 extent file");
 
-    const char *htree_dir = "/disk0/aurora-htree";
+    ktest_cleanup_disk_prefix("aurora-htree");
+    char htree_dir[96];
+    ksnprintf(htree_dir, sizeof(htree_dir), "/disk0/aurora-htree");
+    const char *htree_raw_path = ktest_disk_raw_path(htree_dir);
     for (u32 i = 0; i < 20u; ++i) {
-        char pbuf[64];
-        ksnprintf(pbuf, sizeof(pbuf), "/disk0/aurora-htree/f%02u.txt", i);
+        char pbuf[128];
+        ksnprintf(pbuf, sizeof(pbuf), "%s/f%02u.txt", htree_dir, i);
         (void)vfs_unlink(pbuf);
     }
     (void)vfs_unlink(htree_dir);
     check(vfs_mkdir(htree_dir) == VFS_OK, "VFS mkdir ext4 htree candidate dir");
     bool htree_create_ok = true;
     for (u32 i = 0; i < 20u; ++i) {
-        char pbuf[64];
+        char pbuf[128];
         char payload = (char)('0' + (i % 10u));
-        ksnprintf(pbuf, sizeof(pbuf), "/disk0/aurora-htree/f%02u.txt", i);
+        ksnprintf(pbuf, sizeof(pbuf), "%s/f%02u.txt", htree_dir, i);
         if (vfs_create(pbuf, &payload, 1u) != VFS_OK) { htree_create_ok = false; break; }
     }
     check(htree_create_ok, "EXT4 creates enough directory entries to build htree index");
@@ -759,7 +1159,7 @@ static void test_block_mbr_ext4(void) {
         u32 htree_ino = 0;
         ext4_fsck_report_t htree_report;
         bool htree_indexed = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &htree_mnt) == EXT4_OK &&
-                             ext4_lookup_path(&htree_mnt, "/aurora-htree", &htree_inode, &htree_ino) == EXT4_OK &&
+                             ext4_lookup_path(&htree_mnt, htree_raw_path, &htree_inode, &htree_ino) == EXT4_OK &&
                              (htree_inode.i_flags & 0x00001000u) != 0 && htree_inode.i_file_acl_lo != 0 &&
                              ext4_validate_metadata(&htree_mnt, &htree_report) == EXT4_OK && htree_report.htree_dirs >= 1u &&
                              htree_report.htree_entries >= 20u && htree_report.htree_errors == 0;
@@ -767,27 +1167,29 @@ static void test_block_mbr_ext4(void) {
     } else {
         skip("EXT4 maintains persistent htree-indexed directory metadata");
     }
+    char htree_child19[128];
+    ksnprintf(htree_child19, sizeof(htree_child19), "%s/f19.txt", htree_dir);
     char htree_read = 0;
     got = 0;
-    check(vfs_read("/disk0/aurora-htree/f19.txt", 0, &htree_read, 1u, &got) == VFS_OK && got == 1u && htree_read == '9', "EXT4 htree lookup resolves indexed directory entry");
+    check(vfs_read(htree_child19, 0, &htree_read, 1u, &got) == VFS_OK && got == 1u && htree_read == '9', "EXT4 htree lookup resolves indexed directory entry");
     if (part) {
         ext4_mount_t repair_mnt;
         ext4_inode_disk_t repair_dir;
         u32 repair_dir_ino = 0;
-        u8 htree_raw[4096];
-        bool repair_ok = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &repair_mnt) == EXT4_OK &&
-                         ext4_lookup_path(&repair_mnt, "/aurora-htree", &repair_dir, &repair_dir_ino) == EXT4_OK &&
-                         repair_dir_ino != 0 && repair_dir.i_file_acl_lo != 0 && repair_mnt.block_size <= sizeof(htree_raw) &&
+        u8 *htree_block = repair_scratch;
+        bool repair_ok = htree_block && ext4_mount_bounded(dev, part->lba_first, part->sector_count, &repair_mnt) == EXT4_OK &&
+                         ext4_lookup_path(&repair_mnt, htree_raw_path, &repair_dir, &repair_dir_ino) == EXT4_OK &&
+                         repair_dir_ino != 0 && repair_dir.i_file_acl_lo != 0 && repair_mnt.block_size <= 4096u &&
                          ext4_sync_metadata(&repair_mnt) == EXT4_OK;
         if (repair_ok) {
             u64 index_block = repair_dir.i_file_acl_lo;
             u64 first_sector = part->lba_first + (index_block * repair_mnt.block_size) / BLOCKDEV_SECTOR_SIZE;
             u32 sector_count = (u32)(repair_mnt.block_size / BLOCKDEV_SECTOR_SIZE);
-            repair_ok = sector_count != 0 && sector_count <= sizeof(htree_raw) / BLOCKDEV_SECTOR_SIZE &&
-                        block_read(dev, first_sector, sector_count, htree_raw) == BLOCK_OK;
+            repair_ok = sector_count != 0 && sector_count <= 4096u / BLOCKDEV_SECTOR_SIZE &&
+                        block_read(dev, first_sector, sector_count, htree_block) == BLOCK_OK;
             if (repair_ok) {
-                htree_raw[0] ^= 0x5au;
-                repair_ok = block_write(dev, first_sector, sector_count, htree_raw) == BLOCK_OK;
+                htree_block[0] ^= 0x5au;
+                repair_ok = block_write(dev, first_sector, sector_count, htree_block) == BLOCK_OK;
             }
         }
         ext4_mount_t corrupt_mnt;
@@ -801,18 +1203,86 @@ static void test_block_mbr_ext4(void) {
                         corrupt_report.htree_errors > 0 &&
                         ext4_repair_metadata(&corrupt_mnt, &repair_report) == EXT4_OK &&
                         repair_report.errors == 0 && repair_report.repaired_htree >= 1u &&
-                        vfs_read("/disk0/aurora-htree/f19.txt", 0, &repaired_read, 1u, &repaired_got) == VFS_OK &&
+                        vfs_read(htree_child19, 0, &repaired_read, 1u, &repaired_got) == VFS_OK &&
                         repaired_got == 1u && repaired_read == '9';
         check(repaired, "EXT4 repair-lite rebuilds corrupted htree metadata");
     } else {
         skip("EXT4 repair-lite rebuilds corrupted htree metadata");
     }
     for (u32 i = 0; i < 20u; ++i) {
-        char pbuf[64];
-        ksnprintf(pbuf, sizeof(pbuf), "/disk0/aurora-htree/f%02u.txt", i);
+        char pbuf[128];
+        ksnprintf(pbuf, sizeof(pbuf), "%s/f%02u.txt", htree_dir, i);
         (void)vfs_unlink(pbuf);
     }
     check(vfs_unlink(htree_dir) == VFS_OK, "VFS unlink empty ext4 htree directory");
+
+    ktest_cleanup_disk_prefix("aurora-dirent-repair");
+    char dirent_dir[96];
+    char dirent_child[128];
+    ksnprintf(dirent_dir, sizeof(dirent_dir), "/disk0/aurora-dirent-repair");
+    ksnprintf(dirent_child, sizeof(dirent_child), "%s/file.txt", dirent_dir);
+    const char *dirent_raw = ktest_disk_raw_path(dirent_dir);
+    (void)vfs_unlink(dirent_child);
+    (void)vfs_unlink(dirent_dir);
+    check(vfs_mkdir(dirent_dir) == VFS_OK && vfs_create(dirent_child, "R", 1u) == VFS_OK, "VFS prepares ext4 dirent repair target");
+    if (part) {
+        typedef struct raw_dirent_for_test { u32 inode; u16 rec_len; u8 name_len; u8 file_type; char name[]; } raw_dirent_for_test_t;
+        ext4_mount_t dirent_mnt;
+        ext4_inode_disk_t dirent_inode;
+        u32 dirent_ino = 0;
+        u8 *raw_dir_block = repair_scratch;
+        bool dirent_repair_ok = raw_dir_block && ext4_mount_bounded(dev, part->lba_first, part->sector_count, &dirent_mnt) == EXT4_OK &&
+                                ext4_lookup_path(&dirent_mnt, dirent_raw, &dirent_inode, &dirent_ino) == EXT4_OK &&
+                                dirent_ino != 0 && dirent_mnt.block_size <= 4096u &&
+                                ext4_sync_metadata(&dirent_mnt) == EXT4_OK;
+        if (dirent_repair_ok) {
+            const u16 *ew = (const u16 *)dirent_inode.i_block;
+            const u32 *ed = (const u32 *)dirent_inode.i_block;
+            u64 phys = ((u64)ew[9] << 32) | ed[5];
+            u64 first_sector = part->lba_first + (phys * dirent_mnt.block_size) / BLOCKDEV_SECTOR_SIZE;
+            u32 sector_count = (u32)(dirent_mnt.block_size / BLOCKDEV_SECTOR_SIZE);
+            dirent_repair_ok = ew[0] == EXT4_EXTENT_MAGIC && ew[3] == 0 && phys != 0 && sector_count != 0 &&
+                                block_read(dev, first_sector, sector_count, raw_dir_block) == BLOCK_OK;
+            if (dirent_repair_ok) {
+                bool corrupted = false;
+                usize ppos = 0;
+                while (ppos + 8u <= dirent_mnt.block_size) {
+                    raw_dirent_for_test_t *de = (raw_dirent_for_test_t *)(raw_dir_block + ppos);
+                    u16 rec_len = de->rec_len;
+                    if (rec_len < 8u || ppos + rec_len > dirent_mnt.block_size) break;
+                    if (de->inode && de->name_len == 8u && memcmp(de->name, "file.txt", 8u) == 0) {
+                        u16 used = (u16)((8u + de->name_len + 3u) & ~3u);
+                        if (rec_len >= used + 8u) {
+                            de->rec_len = used;
+                            raw_dirent_for_test_t *free_de = (raw_dirent_for_test_t *)(raw_dir_block + ppos + used);
+                            memset(free_de, 0, rec_len - used);
+                            free_de->rec_len = (u16)(rec_len - used);
+                            free_de->name_len = 99u;
+                            free_de->file_type = 7u;
+                            corrupted = true;
+                        }
+                        break;
+                    }
+                    ppos += rec_len;
+                }
+                dirent_repair_ok = corrupted && block_write(dev, first_sector, sector_count, raw_dir_block) == BLOCK_OK;
+            }
+        }
+        ext4_mount_t broken_dirent_mnt;
+        ext4_fsck_report_t broken_dirent_report;
+        ext4_fsck_report_t fixed_dirent_report;
+        char dirent_payload = 0;
+        usize dirent_got = 0;
+        bool fixed_dirent = dirent_repair_ok &&
+                            ext4_mount_bounded(dev, part->lba_first, part->sector_count, &broken_dirent_mnt) == EXT4_OK &&
+                            ext4_validate_metadata(&broken_dirent_mnt, &broken_dirent_report) == EXT4_ERR_CORRUPT && broken_dirent_report.errors > 0 &&
+                            ext4_repair_metadata(&broken_dirent_mnt, &fixed_dirent_report) == EXT4_OK && fixed_dirent_report.errors == 0 && fixed_dirent_report.repaired_dirents >= 1u &&
+                            vfs_read(dirent_child, 0, &dirent_payload, 1u, &dirent_got) == VFS_OK && dirent_got == 1u && dirent_payload == 'R';
+        check(fixed_dirent, "EXT4 repair-lite normalizes corrupted dirent rec_len/free slot metadata");
+    } else {
+        skip("EXT4 repair-lite normalizes corrupted dirent rec_len/free slot metadata");
+    }
+    check(vfs_unlink(dirent_child) == VFS_OK && vfs_unlink(dirent_dir) == VFS_OK, "VFS cleanup ext4 dirent repair target");
 
     if (part && split_baseline_ok) {
         ext4_mount_t after_mnt;
@@ -848,6 +1318,7 @@ static void test_block_mbr_ext4(void) {
         skip("EXT4 metadata remains consistent after mutation tests");
         skip("EXT4 repair-lite reconciles corrupted free counters");
     }
+    kfree(repair_scratch);
     suite_end();
 }
 
@@ -858,8 +1329,23 @@ static void test_syscall_task_timer_elf(void) {
     check(aurora_rust_syscall_selftest(), "Rust syscall decoder/validator selftest");
     r = syscall_dispatch(AURORA_SYS_CLOSE, AURORA_PROCESS_HANDLE_CAP, 0, 0, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall rejects handle equal to ABI cap before C backend");
-    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"relative/path", 0, 0, 0, 0, 0);
-    check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust path policy rejects relative syscall path");
+    char cwd_buf[VFS_PATH_MAX];
+    memset(cwd_buf, 0, sizeof(cwd_buf));
+    r = syscall_dispatch(AURORA_SYS_GETCWD, (u64)(uptr)cwd_buf, sizeof(cwd_buf), 0, 0, 0, 0);
+    check(r.error == 0 && strcmp(cwd_buf, "/") == 0, "syscall getcwd returns initial root cwd");
+    r = syscall_dispatch(AURORA_SYS_CHDIR, (u64)(uptr)"/disk0", 0, 0, 0, 0, 0);
+    check(r.error == 0, "syscall chdir accepts persistent EXT4 directory");
+    memset(cwd_buf, 0, sizeof(cwd_buf));
+    r = syscall_dispatch(AURORA_SYS_GETCWD, (u64)(uptr)cwd_buf, sizeof(cwd_buf), 0, 0, 0, 0);
+    check(r.error == 0 && strcmp(cwd_buf, "/disk0") == 0, "syscall getcwd reflects changed cwd");
+    aurora_statvfs_t cwd_sv;
+    memset(&cwd_sv, 0, sizeof(cwd_sv));
+    r = syscall_dispatch(AURORA_SYS_STATVFS, (u64)(uptr)".", (u64)(uptr)&cwd_sv, 0, 0, 0, 0);
+    check(r.error == 0 && strcmp(cwd_sv.fs_name, "ext4") == 0, "relative syscall path resolves against cwd");
+    r = syscall_dispatch(AURORA_SYS_CHDIR, (u64)(uptr)"/", 0, 0, 0, 0, 0);
+    check(r.error == 0, "syscall chdir restores root cwd");
+    r = syscall_dispatch(AURORA_SYS_OPEN, (u64)(uptr)"/bad\\path", 0, 0, 0, 0, 0);
+    check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall rejects disallowed path bytes before C backend");
     r = syscall_dispatch(AURORA_SYS_CREATE, (u64)(uptr)"/tmp/too-large", (u64)(uptr)"x", 65537u, 0, 0, 0);
     check(r.value == -1 && r.error == VFS_ERR_INVAL, "Rust syscall caps create payload size");
     r = syscall_dispatch(AURORA_SYS_STAT, (u64)(uptr)"/etc/motd", 0, 0, 0, 0, 0);
@@ -874,7 +1360,7 @@ static void test_syscall_task_timer_elf(void) {
     check(r.error == 0, "Rust-dispatched sync flushes mounted filesystems");
 
     check(syscall_selftest(), "Rust-dispatched syscall filesystem/process-control selftest");
-    check(strcmp(syscall_name(AURORA_SYS_WRITE), "write") == 0 && strcmp(syscall_name(AURORA_SYS_GETPID), "getpid") == 0 && strcmp(syscall_name(AURORA_SYS_PROCINFO), "procinfo") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWN), "spawn") == 0 && strcmp(syscall_name(AURORA_SYS_WAIT), "wait") == 0 && strcmp(syscall_name(AURORA_SYS_YIELD), "yield") == 0 && strcmp(syscall_name(AURORA_SYS_SLEEP), "sleep") == 0 && strcmp(syscall_name(AURORA_SYS_SCHEDINFO), "schedinfo") == 0 && strcmp(syscall_name(AURORA_SYS_DUP), "dup") == 0 && strcmp(syscall_name(AURORA_SYS_TELL), "tell") == 0 && strcmp(syscall_name(AURORA_SYS_FSTAT), "fstat") == 0 && strcmp(syscall_name(AURORA_SYS_FDINFO), "fdinfo") == 0 && strcmp(syscall_name(AURORA_SYS_READDIR), "readdir") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWNV), "spawnv") == 0 && strcmp(syscall_name(AURORA_SYS_PREEMPTINFO), "preemptinfo") == 0 && strcmp(syscall_name(AURORA_SYS_TRUNCATE), "truncate") == 0 && strcmp(syscall_name(AURORA_SYS_RENAME), "rename") == 0 && strcmp(syscall_name(AURORA_SYS_SYNC), "sync") == 0 && strcmp(syscall_name(AURORA_SYS_FSYNC), "fsync") == 0 && strcmp(syscall_name(AURORA_SYS_STATVFS), "statvfs") == 0 && strcmp(syscall_name(999), "unknown") == 0, "syscall name table");
+    check(strcmp(syscall_name(AURORA_SYS_WRITE), "write") == 0 && strcmp(syscall_name(AURORA_SYS_GETPID), "getpid") == 0 && strcmp(syscall_name(AURORA_SYS_PROCINFO), "procinfo") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWN), "spawn") == 0 && strcmp(syscall_name(AURORA_SYS_WAIT), "wait") == 0 && strcmp(syscall_name(AURORA_SYS_YIELD), "yield") == 0 && strcmp(syscall_name(AURORA_SYS_SLEEP), "sleep") == 0 && strcmp(syscall_name(AURORA_SYS_SCHEDINFO), "schedinfo") == 0 && strcmp(syscall_name(AURORA_SYS_DUP), "dup") == 0 && strcmp(syscall_name(AURORA_SYS_TELL), "tell") == 0 && strcmp(syscall_name(AURORA_SYS_FSTAT), "fstat") == 0 && strcmp(syscall_name(AURORA_SYS_FDINFO), "fdinfo") == 0 && strcmp(syscall_name(AURORA_SYS_READDIR), "readdir") == 0 && strcmp(syscall_name(AURORA_SYS_SPAWNV), "spawnv") == 0 && strcmp(syscall_name(AURORA_SYS_PREEMPTINFO), "preemptinfo") == 0 && strcmp(syscall_name(AURORA_SYS_TRUNCATE), "truncate") == 0 && strcmp(syscall_name(AURORA_SYS_RENAME), "rename") == 0 && strcmp(syscall_name(AURORA_SYS_SYNC), "sync") == 0 && strcmp(syscall_name(AURORA_SYS_FSYNC), "fsync") == 0 && strcmp(syscall_name(AURORA_SYS_STATVFS), "statvfs") == 0 && strcmp(syscall_name(AURORA_SYS_INSTALL_COMMIT), "install_commit") == 0 && strcmp(syscall_name(AURORA_SYS_CHDIR), "chdir") == 0 && strcmp(syscall_name(AURORA_SYS_GETCWD), "getcwd") == 0 && strcmp(syscall_name(999), "unknown") == 0, "syscall name table");
     r = syscall_dispatch(AURORA_SYS_TICKS, 0, 0, 0, 0, 0, 0);
     check(r.error == 0 && r.value >= 0, "syscall ticks");
 
@@ -986,7 +1472,7 @@ static void test_user_processes(void) {
     const char *badpath_argv[] = { "/bin/badpath" };
     ps = process_exec("/bin/badpath", 1, badpath_argv, &r);
     bool badpath_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
-    check(badpath_ok, "ring3 /bin/badpath exercises Rust path-policy rejection");
+    check(badpath_ok, "ring3 /bin/badpath exercises path-policy and cwd-relative syscalls");
     if (!badpath_ok) detail_process_result("/bin/badpath", ps, &r);
 
     const char *stat_argv[] = { "/bin/statcheck" };

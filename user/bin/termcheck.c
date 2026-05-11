@@ -18,19 +18,6 @@ int main(int argc, char **argv, char **envp) {
     if (ev.code != AURORA_KEY_NONE && ev.code != AURORA_KEY_CHAR && ev.code < AURORA_KEY_UP) return 6;
     if (au_tty_setmode(old) != 0) return 7;
 
-    char move_home[6];
-    move_home[0] = '\x1b';
-    move_home[1] = '[';
-    move_home[2] = '1';
-    move_home[3] = ';';
-    move_home[4] = '1';
-    move_home[5] = 'H';
-    if (write_console_bytes(move_home, sizeof(move_home)) != 0) return 8;
-
-    char clear_line[3];
-    clear_line[0] = '\x1b';
-    clear_line[1] = '[';
-    clear_line[2] = 'K';
-    if (write_console_bytes(clear_line, sizeof(clear_line)) != 0) return 9;
+    if (write_console_bytes("", 0) != 0) return 8;
     return 0;
 }

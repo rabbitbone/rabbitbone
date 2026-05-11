@@ -47,8 +47,12 @@ if max_alloc_sym >= syms['__kernel_end']:
     print(f'kernel layout check: symbol {max_alloc_name} at 0x{max_alloc_sym:x} is beyond __kernel_end=0x{syms["__kernel_end"]:x}', file=sys.stderr)
     sys.exit(1)
 
-EARLY_STACK_TOP = 0x9fc00
+LOW_MEMORY_RESERVED_START = 0x9f000
+EARLY_STACK_TOP = 0x1f0000
 MIN_EARLY_STACK_BYTES = 64 * 1024
+if syms['__kernel_end'] > LOW_MEMORY_RESERVED_START:
+    print(f'kernel layout check: kernel low-memory image overlaps reserved BIOS/video region: __kernel_end=0x{syms["__kernel_end"]:x} limit=0x{LOW_MEMORY_RESERVED_START:x}', file=sys.stderr)
+    sys.exit(1)
 if syms['__kernel_end'] + MIN_EARLY_STACK_BYTES > EARLY_STACK_TOP:
     print(f'kernel layout check: early stack margin too small: __kernel_end=0x{syms["__kernel_end"]:x} stack_top=0x{EARLY_STACK_TOP:x} min={MIN_EARLY_STACK_BYTES}', file=sys.stderr)
     sys.exit(1)

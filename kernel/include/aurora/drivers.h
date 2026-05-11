@@ -37,6 +37,7 @@ void keyboard_init(void);
 void keyboard_irq(void);
 bool keyboard_getc(char *out);
 bool keyboard_get_event(aurora_key_event_t *out);
+bool keyboard_try_get_event(aurora_key_event_t *out);
 bool keyboard_peek_event(aurora_key_event_t *out);
 u32 keyboard_pending(void);
 
