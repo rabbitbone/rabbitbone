@@ -54,9 +54,17 @@ jobs:
 
       - name: Check release tag is new
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "::error::Release tag ${{ steps.version.outputs.tag }} already exists. Bump include/aurora/version.h before publishing code changes."
+          tag="${{ steps.version.outputs.tag }}"
+          target="$(git ls-remote --tags origin "refs/tags/${tag}^{}" | awk '{print $1}')"
+          if [ -z "$target" ]; then
+            target="$(git ls-remote --tags origin "refs/tags/${tag}" | awk '{print $1}')"
+          fi
+          if [ -n "$target" ] && [ "$target" != "$GITHUB_SHA" ]; then
+            echo "::error::Release tag ${tag} already points at ${target}; bump include/aurora/version.h before publishing code changes."
             exit 1
+          fi
+          if [ -n "$target" ]; then
+            echo "::notice::Release tag ${tag} already points at this commit; continuing validation."
           fi
 
       - name: Build and test image
@@ -112,6 +120,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "GitHub release ${{ steps.version.outputs.tag }} already exists; keeping existing assets."
+            exit 0
+          fi
           gh release create "${{ steps.version.outputs.tag }}" \
             "dist/aurora-${{ steps.version.outputs.version }}.img" \
             "dist/aurora-${{ steps.version.outputs.version }}.img.sha256" \
