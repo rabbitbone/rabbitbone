@@ -70,12 +70,21 @@ enum au_syscall_id {
     AU_SYS_READLINK = AURORA_SYS_READLINK,
     AU_SYS_LINK = AURORA_SYS_LINK,
     AU_SYS_LSTAT = AURORA_SYS_LSTAT,
+    AU_SYS_THEME = AURORA_SYS_THEME,
+    AU_SYS_CRED = AURORA_SYS_CRED,
+    AU_SYS_SUDO = AURORA_SYS_SUDO,
+    AU_SYS_CHMOD = AURORA_SYS_CHMOD,
+    AU_SYS_CHOWN = AURORA_SYS_CHOWN,
+    AU_SYS_KCTL = AURORA_SYS_KCTL,
 };
 
 typedef struct au_result {
     au_i64 value;
     au_i64 error;
 } au_result_t;
+
+static inline int au_result_ok(au_result_t r) { return r.error == 0; }
+static inline au_i64 au_result_code(au_result_t r) { return r.error ? r.error : r.value; }
 
 typedef aurora_procinfo_t au_procinfo_t;
 
@@ -86,6 +95,8 @@ typedef struct au_stat {
     unsigned int inode;
     unsigned int fs_id;
     unsigned int nlink;
+    unsigned int uid;
+    unsigned int gid;
 } au_stat_t;
 
 typedef aurora_fdinfo_t au_fdinfo_t;
@@ -96,6 +107,8 @@ typedef aurora_pipeinfo_t au_pipeinfo_t;
 typedef aurora_ttyinfo_t au_ttyinfo_t;
 typedef aurora_key_event_t au_key_event_t;
 typedef aurora_statvfs_t au_statvfs_t;
+typedef aurora_credinfo_t au_credinfo_t;
+typedef aurora_userinfo_t au_userinfo_t;
 
 #define AU_STDIN AURORA_STDIN
 #define AU_STDOUT AURORA_STDOUT
@@ -171,11 +184,19 @@ au_i64 au_getpid(void);
 au_i64 au_procinfo(unsigned int pid, au_procinfo_t *out);
 au_i64 au_spawn(const char *path);
 au_i64 au_spawnv(const char *path, unsigned int argc, const char *const *argv);
+au_i64 au_spawn_wait(const char *path, au_procinfo_t *out);
+au_i64 au_spawnv_wait(const char *path, unsigned int argc, const char *const *argv, au_procinfo_t *out);
 au_i64 au_wait(unsigned int pid, au_procinfo_t *out);
 au_i64 au_yield(void);
 au_i64 au_sleep(au_u64 ticks);
 au_i64 au_schedinfo(au_schedinfo_t *out);
 au_i64 au_preemptinfo(au_preemptinfo_t *out);
+au_i64 au_theme(unsigned int op, unsigned int value);
+au_i64 au_cred(unsigned int op, const void *arg0, const void *arg1, au_u64 value);
+au_i64 au_sudo(unsigned int op, const char *password, au_u64 value);
+au_i64 au_chmod(const char *path, unsigned int mode);
+au_i64 au_chown(const char *path, unsigned int uid, unsigned int gid);
+au_i64 au_kctl(unsigned int op, char *out, au_usize out_size, const char *arg);
 au_i64 au_fork(void);
 au_i64 au_exec(const char *path);
 au_i64 au_execv(const char *path, unsigned int argc, const char *const *argv);

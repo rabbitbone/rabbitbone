@@ -1,0 +1,73 @@
+void scheduler_dump(void) {
+    ensure_init();
+    sched_stats_t st;
+    scheduler_stats(&st);
+    kprintf("scheduler: queued=%u running=%u done=%u failed=%u enq=%u dispatch=%u yields=%u sleeps=%u next_job=%u\n",
+            st.queued, st.running, st.completed, st.failed, st.total_enqueued, st.total_dispatched,
+            st.total_yields, st.total_sleeps, st.next_job_id);
+    kprintf("preempt: enabled=%u quantum=%u slice=%u timer=%llu user=%llu kernel=%llu preemptions=%llu last_tick=%llu rip=%p\n",
+            st.preempt_enabled, st.quantum_ticks, st.current_slice_ticks,
+            (unsigned long long)st.total_timer_ticks, (unsigned long long)st.user_ticks,
+            (unsigned long long)st.kernel_ticks, (unsigned long long)st.total_preemptions,
+            (unsigned long long)last_preempt_ticks, (void *)(uptr)last_preempt_rip);
+    u64 flags = spin_lock_irqsave(&scheduler_lock);
+    if (!queue) { spin_unlock_irqrestore(&scheduler_lock, flags); return; }
+    kprintf("  job   pid   state    exit  path\n");
+    for (usize i = 0; i < SCHED_QUEUE_CAP; ++i) {
+        if (queue[i].info.state == SCHED_JOB_EMPTY) continue;
+        kprintf("  %-5u %-5u %-8s %-5d %s\n", queue[i].info.job_id, queue[i].info.pid,
+                scheduler_job_state_name(queue[i].info.state), queue[i].info.exit_code, queue[i].info.path);
+    }
+    spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+bool scheduler_selftest(void) {
+    scheduler_init();
+    scheduler_snapshot_t empty_snap;
+    memset(&empty_snap, 0, sizeof(empty_snap));
+    empty_snap.magic = SCHED_SNAPSHOT_MAGIC;
+    empty_snap.next_job_id_copy = 1u;
+    empty_snap.preempt_enabled_copy = true;
+    empty_snap.quantum_ticks_copy = SCHED_DEFAULT_QUANTUM_TICKS;
+    empty_snap.initialized_copy = false;
+    if (!scheduler_snapshot_restore(&empty_snap, sizeof(empty_snap))) return false;
+    scheduler_init();
+    sched_stats_t stats;
+    scheduler_stats(&stats);
+    if (stats.queued || stats.completed || stats.total_enqueued) return false;
+    const char *hello_argv[] = { "/bin/hello" };
+    const char *iso_argv[] = { "/bin/isolate" };
+    u32 j1 = 0;
+    u32 j2 = 0;
+    if (!scheduler_enqueue("/bin/hello", 1, hello_argv, &j1) || !scheduler_enqueue("/bin/isolate", 1, iso_argv, &j2)) return false;
+    if (!j1 || !j2 || j1 == j2) return false;
+    scheduler_stats(&stats);
+    if (stats.queued != 2 || stats.total_enqueued != 2) return false;
+    if (scheduler_run_ready(1) != 1) return false;
+    sched_job_info_t info1;
+    sched_job_info_t info2;
+    if (!scheduler_get_job(j1, &info1) || info1.state != SCHED_JOB_DONE || info1.exit_code != 7 || info1.pid == 0) return false;
+    if (!scheduler_get_job(j2, &info2) || info2.state != SCHED_JOB_QUEUED) return false;
+    if (!scheduler_wait_job(j2, &info2) || info2.state != SCHED_JOB_DONE || info2.exit_code != 41 || info2.pid == 0) return false;
+    scheduler_note_yield();
+    scheduler_note_sleep(1);
+    cpu_regs_t regs;
+    memset(&regs, 0, sizeof(regs));
+    regs.cs = 0x08;
+    regs.rip = 0xffffffff80001000ull;
+    scheduler_tick(&regs);
+    aurora_preemptinfo_t pi;
+    if (!scheduler_preempt_info(&pi) || pi.quantum_ticks != quantum_ticks || pi.total_timer_ticks == 0) return false;
+    scheduler_stats(&stats);
+    if (stats.total_dispatched != 2 || stats.total_yields == 0 || stats.total_sleeps == 0 || stats.total_timer_ticks == 0) return false;
+    if (scheduler_wait_job(0xffffffffu, &info2)) return false;
+    bool reuse_ok = true;
+    u32 last_job = 0;
+    for (u32 i = 0; i < SCHED_QUEUE_CAP + 1u; ++i) {
+        u32 jid = 0;
+        if (!scheduler_enqueue("/bin/hello", 1, hello_argv, &jid) || scheduler_run_ready(1) != 1) { reuse_ok = false; break; }
+        last_job = jid;
+    }
+    if (!reuse_ok || !scheduler_get_job(last_job, &info2) || info2.state != SCHED_JOB_DONE) return false;
+    return true;
+}

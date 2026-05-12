@@ -112,6 +112,8 @@ static int digit_value(char c) {
 
 u64 strtou64(const char *s, const char **end, int base) {
     const char *p = s;
+    if (!s) { if (end) *end = s; return 0; }
+    if (base != 0 && (base < 2 || base > 16)) { if (end) *end = s; return 0; }
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
     if (base == 0) {
         if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { base = 16; p += 2; }
@@ -120,13 +122,21 @@ u64 strtou64(const char *s, const char **end, int base) {
     }
     u64 value = 0;
     int any = 0;
+    int overflow = 0;
     for (;;) {
         int d = digit_value(*p);
         if (d < 0 || d >= base) break;
+        if (value > (0xffffffffffffffffull - (u64)d) / (u64)base) {
+            overflow = 1;
+            value = 0xffffffffffffffffull;
+            ++p;
+            while ((d = digit_value(*p)) >= 0 && d < base) ++p;
+            break;
+        }
         value = value * (u64)base + (u64)d;
         ++p;
         any = 1;
     }
-    if (end) *end = any ? p : s;
+    if (end) *end = (any || overflow) ? p : s;
     return value;
 }

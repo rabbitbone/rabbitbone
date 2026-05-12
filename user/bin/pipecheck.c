@@ -58,16 +58,31 @@ static int check_stdio_pipeline(void) {
         return 48;
     }
     if (au_close((au_i64)stdfds[1]) != 0) return 49;
+    char out[256];
+    au_memset(out, 0, sizeof(out));
+    au_usize total = 0;
+    for (;;) {
+        au_i64 events = au_poll((au_i64)stdfds[0], AURORA_POLL_READ | AURORA_POLL_HUP);
+        if (events < 0) return 52;
+        if ((events & AURORA_POLL_READ) != 0) {
+            char tmp[64];
+            au_i64 got = au_read((au_i64)stdfds[0], tmp, sizeof(tmp));
+            if (got < 0) return 53;
+            if (got == 0 && (events & AURORA_POLL_HUP) != 0) break;
+            for (au_i64 i = 0; i < got && total + 1u < sizeof(out); ++i) out[total++] = tmp[i];
+            continue;
+        }
+        if ((events & AURORA_POLL_HUP) != 0) break;
+        (void)au_yield();
+    }
     au_procinfo_t info;
     au_memset(&info, 0, sizeof(info));
     if (au_wait((unsigned int)child, &info) != 0) return 50;
     if (info.exit_code != 0 || info.state != 2u) return 51;
-    char out[256];
-    au_memset(out, 0, sizeof(out));
-    au_i64 got = au_read((au_i64)stdfds[0], out, sizeof(out) - 1u);
-    if (got <= 0) return 52;
-    if (!contains(out, (au_usize)got, "Hello")) return 53;
-    if (au_poll((au_i64)stdfds[0], AURORA_POLL_READ) != 0) return 54;
+    if (total == 0) return 54;
+    if (!contains(out, total, "Hello")) return 55;
+    if (au_poll((au_i64)stdfds[0], AURORA_POLL_READ) != AURORA_POLL_HUP) return 56;
+    if (au_close((au_i64)stdfds[0]) != 0) return 57;
     return 0;
 }
 

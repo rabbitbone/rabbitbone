@@ -5,9 +5,11 @@
 bool path_is_absolute(const char *path) { return path && path[0] == '/'; }
 
 static bool push_component(char comps[][VFS_NAME_MAX], usize *count, const char *comp, usize len) {
+    if (!comps || !count || !comp) return false;
     if (len == 0 || (len == 1 && comp[0] == '.')) return true;
     if (len == 2 && comp[0] == '.' && comp[1] == '.') {
-        if (*count > 0) --*count;
+        if (*count == 0) return false;
+        --*count;
         return true;
     }
     if (len >= VFS_NAME_MAX || *count >= 32u) return false;
@@ -19,23 +21,27 @@ static bool push_component(char comps[][VFS_NAME_MAX], usize *count, const char 
 
 bool path_normalize(const char *in, char *out, usize out_size) {
     if (!in || !out || out_size < 2u) return false;
+    usize in_len = strnlen(in, VFS_PATH_MAX);
+    if (in_len == 0 || in_len >= VFS_PATH_MAX || in[0] != '/') return false;
     char comps[32][VFS_NAME_MAX];
     usize count = 0;
-    const char *p = in;
-    while (*p) {
-        while (*p == '/') ++p;
-        const char *start = p;
-        while (*p && *p != '/') ++p;
-        if (!push_component(comps, &count, start, (usize)(p - start))) return false;
+    usize i = 0;
+    while (i < in_len) {
+        while (i < in_len && in[i] == '/') ++i;
+        usize start = i;
+        while (i < in_len && in[i] != '/') ++i;
+        if (!push_component(comps, &count, in + start, i - start)) return false;
     }
     usize pos = 0;
     out[pos++] = '/';
-    for (usize i = 0; i < count; ++i) {
-        usize len = strlen(comps[i]);
-        if (pos + len + (i + 1u < count ? 1u : 0u) + 1u > out_size) return false;
-        memcpy(out + pos, comps[i], len);
+    for (usize c = 0; c < count; ++c) {
+        usize len = strnlen(comps[c], VFS_NAME_MAX);
+        if (len >= VFS_NAME_MAX) return false;
+        usize extra = len + (c + 1u < count ? 1u : 0u) + 1u;
+        if (extra > out_size || pos > out_size - extra) return false;
+        memcpy(out + pos, comps[c], len);
         pos += len;
-        if (i + 1u < count) out[pos++] = '/';
+        if (c + 1u < count) out[pos++] = '/';
     }
     out[pos] = 0;
     return true;
@@ -51,8 +57,9 @@ const char *path_basename(const char *path) {
 bool path_join(const char *base, const char *leaf, char *out, usize out_size) {
     if (!base || !leaf || !out) return false;
     char tmp[VFS_PATH_MAX * 2u];
-    usize bl = strlen(base);
-    usize ll = strlen(leaf);
+    usize bl = strnlen(base, VFS_PATH_MAX);
+    usize ll = strnlen(leaf, VFS_PATH_MAX);
+    if (bl == 0 || bl >= VFS_PATH_MAX || ll >= VFS_PATH_MAX) return false;
     usize need = 0;
     if (__builtin_add_overflow(bl, ll, &need) || __builtin_add_overflow(need, 2u, &need)) return false;
     if (need > sizeof(tmp)) return false;

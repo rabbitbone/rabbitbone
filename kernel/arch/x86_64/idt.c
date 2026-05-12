@@ -90,6 +90,7 @@ static void syscall_int80(cpu_regs_t *regs) {
 
     if (no == AURORA_SYS_EXIT && regs_from_user(regs) && process_user_active()) {
         process_exit_current_from_syscall(regs, (i32)a0);
+        return;
     }
 
     syscall_result_t r = syscall_dispatch(no, a0, regs->rsi, regs->rdx, regs->r10, regs->r8, regs->r9);
@@ -101,6 +102,7 @@ static void syscall_int80(cpu_regs_t *regs) {
 void interrupt_dispatch(cpu_regs_t *regs) {
     if (regs->vector < 256 && handlers[regs->vector]) {
         handlers[regs->vector](regs);
+        if (regs->vector >= 32 && regs->vector < 48) pic_send_eoi((u8)(regs->vector - 32));
         return;
     }
     if (regs->vector < 32) default_exception(regs);

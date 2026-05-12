@@ -2,14 +2,14 @@
 #include <aurora/console.h>
 
 #define BOOTINFO_E820_MAX 64u
-#define BOOTINFO_LOW_IDENTITY_LIMIT (1024ull * 1024ull * 1024ull)
+#define BOOTINFO_IDENTITY_LIMIT (1024ull * 1024ull * 1024ull)
 
 static bool range_ok(u64 base, u64 bytes) {
     if (bytes == 0) return true;
     u64 end = 0;
     if (__builtin_add_overflow(base, bytes, &end)) return false;
 #if !defined(AURORA_HOST_TEST)
-    if (base == 0 || end > BOOTINFO_LOW_IDENTITY_LIMIT) return false;
+    if (base == 0 || end > BOOTINFO_IDENTITY_LIMIT) return false;
 #endif
     return true;
 }

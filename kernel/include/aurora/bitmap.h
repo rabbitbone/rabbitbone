@@ -10,6 +10,7 @@ typedef struct bitmap {
     usize bit_count;
 } bitmap_t;
 
+/* If storage is null, bitmap_init creates an empty bitmap instead of retaining an invalid backing pointer. */
 void bitmap_init(bitmap_t *bm, u64 *storage, usize bits);
 void bitmap_set(bitmap_t *bm, usize bit);
 void bitmap_clear(bitmap_t *bm, usize bit);

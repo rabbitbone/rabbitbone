@@ -9,9 +9,9 @@ static inline u8 inb(u16 port) { u8 v; __asm__ volatile("inb %1, %0" : "=a"(v) :
 static inline u16 inw(u16 port) { u16 v; __asm__ volatile("inw %1, %0" : "=a"(v) : "Nd"(port)); return v; }
 static inline u32 inl(u16 port) { u32 v; __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(port)); return v; }
 static inline void io_wait(void) { outb(0x80, 0); }
-static inline void cpu_hlt(void) { __asm__ volatile("hlt"); }
-static inline void cpu_cli(void) { __asm__ volatile("cli"); }
-static inline void cpu_sti(void) { __asm__ volatile("sti"); }
+static inline void cpu_hlt(void) { __asm__ volatile("hlt" ::: "memory"); }
+static inline void cpu_cli(void) { __asm__ volatile("cli" ::: "memory"); }
+static inline void cpu_sti(void) { __asm__ volatile("sti" ::: "memory"); }
 static inline u64 read_cr2(void) { u64 v; __asm__ volatile("mov %%cr2, %0" : "=r"(v)); return v; }
 static inline u64 read_cr3(void) { u64 v; __asm__ volatile("mov %%cr3, %0" : "=r"(v)); return v; }
 

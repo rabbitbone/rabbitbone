@@ -1,4 +1,5 @@
 #include <aurora/devfs.h>
+#include <aurora/abi.h>
 #include <aurora/libc.h>
 #include <aurora/kmem.h>
 #include <aurora/console.h>
@@ -54,14 +55,14 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
     if (strcmp(path, "/") == 0) {
         memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_DIR;
-        out->mode = 0555;
+        out->mode = 0555; out->uid = AURORA_UID_ROOT; out->gid = AURORA_GID_ROOT;
         return VFS_OK;
     }
     const devfs_entry_t *e = find_entry(path);
     if (!e) return VFS_ERR_NOENT;
     memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_DEV;
-    out->mode = 0666;
+    out->mode = 0666; out->uid = AURORA_UID_ROOT; out->gid = AURORA_GID_ROOT;
     out->inode = e->inode;
     out->fs_id = mnt->fs_id;
     return VFS_OK;
@@ -70,6 +71,7 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
 static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void *buffer, usize size, usize *read_out) {
     (void)offset;
     if (read_out) *read_out = 0;
+    if (size && !buffer) return VFS_ERR_INVAL;
     const devfs_entry_t *e = find_entry(path);
     if (!e) return VFS_ERR_NOENT;
     u8 *out = (u8 *)buffer;
@@ -82,12 +84,18 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
             return VFS_OK;
         case DEV_PRNG: {
             devfs_state_t *s = (devfs_state_t *)mnt->ctx;
-            u64 flags = spin_lock_irqsave(&s->prng_lock);
-            for (usize i = 0; i < size; ++i) {
-                if ((i & 7u) == 0) xorshift(s);
-                out[i] = (u8)(s->prng_state >> ((i & 7u) * 8u));
+            usize done = 0;
+            while (done < size) {
+                usize chunk = size - done;
+                if (chunk > 256u) chunk = 256u;
+                u64 flags = spin_lock_irqsave(&s->prng_lock);
+                for (usize i = 0; i < chunk; ++i) {
+                    if (((done + i) & 7u) == 0) xorshift(s);
+                    out[done + i] = (u8)(s->prng_state >> (((done + i) & 7u) * 8u));
+                }
+                spin_unlock_irqrestore(&s->prng_lock, flags);
+                done += chunk;
             }
-            spin_unlock_irqrestore(&s->prng_lock, flags);
             if (read_out) *read_out = size;
             return VFS_OK;
         }

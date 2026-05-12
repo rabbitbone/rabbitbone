@@ -51,6 +51,10 @@ bool scheduler_preempt_info(aurora_preemptinfo_t *out);
 bool scheduler_set_quantum(u32 quantum_ticks);
 void scheduler_dump(void);
 bool scheduler_selftest(void);
+usize scheduler_snapshot_size(void);
+bool scheduler_snapshot_save(void *buffer, usize size);
+bool scheduler_snapshot_restore(const void *buffer, usize size);
+void scheduler_reset_for_test(void);
 
 #if defined(__cplusplus)
 }

@@ -1,10 +1,14 @@
 .intel_syntax noprefix
 .code16
 .include "boot_config.inc"
+.if (STAGE2_SECTORS < 1) || (STAGE2_SECTORS > 64)
+.error "STAGE2_SECTORS must fit the 0x8000..0xffff stage2 load window"
+.endif
 .section .text
 .global stage1_start
 stage1_start:
     cli
+    cld
     xor ax, ax
     mov ds, ax
     mov es, ax

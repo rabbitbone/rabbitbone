@@ -15,5 +15,5 @@ void pit_init(u32 hz) {
     ticks = 0;
 }
 
-void pit_irq(void) { ++ticks; }
-u64 pit_ticks(void) { return ticks; }
+void pit_irq(void) { __atomic_add_fetch(&ticks, 1u, __ATOMIC_RELAXED); }
+u64 pit_ticks(void) { return __atomic_load_n(&ticks, __ATOMIC_RELAXED); }

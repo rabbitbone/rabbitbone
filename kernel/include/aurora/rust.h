@@ -53,6 +53,7 @@ bool aurora_rust_user_range_check(u64 addr, usize size);
 bool aurora_rust_user_copy_step(u64 addr, usize remaining, aurora_rust_user_copy_step_t *out);
 bool aurora_rust_usercopy_selftest(void);
 bool aurora_rust_path_policy_check(const u8 *ptr, usize max_len);
+bool aurora_rust_path_no_traversal_check(const u8 *ptr, usize max_len, bool allow_relative);
 bool aurora_rust_path_policy_selftest(void);
 
 #if defined(__cplusplus)

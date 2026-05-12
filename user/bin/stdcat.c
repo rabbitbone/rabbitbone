@@ -1,11 +1,36 @@
 #include <aurora_sys.h>
 
+static int startswith(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    while (*prefix) {
+        if (*s++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
+static int waitable_input(au_i64 in) {
+    au_fdinfo_t fi;
+    au_memset(&fi, 0, sizeof(fi));
+    if (au_fdinfo(in, &fi) != 0) return 0;
+    return startswith(fi.path, "pipe:") || startswith(fi.path, "console:");
+}
+
 static int copy_fd_to_stdout(au_i64 in) {
     char buf[160];
+    int waitable = waitable_input(in);
     for (;;) {
         au_i64 got = au_read(in, buf, sizeof(buf));
         if (got < 0) return 20;
-        if (got == 0) return 0;
+        if (got == 0) {
+            if (!waitable) return 0;
+            au_i64 ev = au_poll(in, AURORA_POLL_READ | AURORA_POLL_HUP);
+            if (ev < 0) return 20;
+            if ((ev & AURORA_POLL_HUP) != 0 && (ev & AURORA_POLL_READ) == 0) return 0;
+            if ((ev & AURORA_POLL_READ) == 0) {
+                (void)au_sleep(1);
+            }
+            continue;
+        }
         au_i64 off = 0;
         while (off < got) {
             au_i64 wrote = au_write((au_i64)AURORA_STDOUT, buf + off, (au_usize)(got - off));

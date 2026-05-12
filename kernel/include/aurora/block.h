@@ -24,12 +24,15 @@ typedef struct block_device {
     char name[16];
     u64 sector_count;
     u32 sector_size;
+    u32 buffer_alignment;
+    u32 max_transfer_sectors;
+    u32 flags;
     void *ctx;
     block_read_fn read;
     block_write_fn write;
 } block_device_t;
 
-void block_register(block_device_t *dev);
+bool block_register(block_device_t *dev);
 block_device_t *block_get(usize index);
 usize block_count(void);
 block_status_t block_read(block_device_t *dev, u64 lba, u32 count, void *buffer);

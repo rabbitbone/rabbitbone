@@ -31,6 +31,29 @@ typedef _Bool bool;
 #define AURORA_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 #define AURORA_ALIGN_UP(v, a) (((v) + ((a) - 1)) & ~((a) - 1))
 #define AURORA_ALIGN_DOWN(v, a) ((v) & ~((a) - 1))
+
+static inline bool aurora_is_power_of_two_u64(u64 v) {
+    return v != 0 && (v & (v - 1u)) == 0;
+}
+
+static inline bool aurora_align_up_u64_checked(u64 v, u64 alignment, u64 *out) {
+    if (!out || !aurora_is_power_of_two_u64(alignment)) return false;
+    u64 addend = alignment - 1u;
+    u64 tmp = 0;
+    if (__builtin_add_overflow(v, addend, &tmp)) return false;
+    *out = tmp & ~addend;
+    return true;
+}
+
+static inline bool aurora_align_up_usize_checked(usize v, usize alignment, usize *out) {
+    if (!out || alignment == 0 || (alignment & (alignment - 1u)) != 0) return false;
+    usize addend = alignment - 1u;
+    usize tmp = 0;
+    if (__builtin_add_overflow(v, addend, &tmp)) return false;
+    *out = tmp & ~addend;
+    return true;
+}
+
 #define AURORA_PACKED __attribute__((packed))
 #define AURORA_NORETURN __attribute__((noreturn))
 #define AURORA_WEAK __attribute__((weak))

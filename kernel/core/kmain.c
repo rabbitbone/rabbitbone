@@ -22,8 +22,11 @@
 #include <aurora/user_bins.h>
 #include <aurora/version.h>
 #include <aurora/tty.h>
+#include <aurora/libc.h>
 
+#ifdef AURORA_DEBUG_SHELL
 extern void shell_run(void);
+#endif
 extern void aurora_cpp_api_selftest(void);
 
 static void kernel_mount_filesystems(void) {
@@ -60,6 +63,9 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     pit_init(100);
     keyboard_init();
     tty_init();
+    task_init();
+    process_init();
+    scheduler_init();
     pic_clear_mask(0);
     pic_clear_mask(1);
     cpu_sti();
@@ -67,11 +73,20 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     ata_pio_init();
     kernel_mount_filesystems();
     syscall_init();
-    task_init();
-    process_init();
-    scheduler_init();
     aurora_cpp_api_selftest();
 
     KLOG(LOG_INFO, "kernel", "initialized: block_devices=%llu", (unsigned long long)block_count());
+
+#ifdef AURORA_DEBUG_SHELL
     shell_run();
+#else
+    const char *init_argv[] = { "/sbin/init" };
+    u32 init_pid = 0;
+    process_status_t init_status = process_spawn_async("/sbin/init", 1, init_argv, &init_pid);
+    if (init_status != PROC_OK) {
+        PANIC("failed to start /sbin/init: %s", process_status_name(init_status));
+    }
+    KLOG(LOG_INFO, "kernel", "started /sbin/init pid=%u", init_pid);
+    process_scheduler_loop();
+#endif
 }

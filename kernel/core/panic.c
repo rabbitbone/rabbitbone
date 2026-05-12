@@ -3,6 +3,7 @@
 #include <aurora/log.h>
 #include <aurora/arch/io.h>
 #include <aurora/libc.h>
+#include <aurora/drivers.h>
 
 static volatile u32 g_panic_active;
 
@@ -11,64 +12,132 @@ static AURORA_NORETURN void panic_halt_forever(void) {
     for (;;) cpu_hlt();
 }
 
-static void panic_write_u64(const char *name, u64 value) {
+static void panic_serial_line(const char *s) {
+    if (!s) return;
+    serial_write(s);
+}
+
+static void panic_serial_printf(const char *fmt, ...) {
+    char buf[512];
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    kvsnprintf(buf, sizeof(buf), fmt, ap);
+    __builtin_va_end(ap);
+    serial_write(buf);
+}
+
+static void panic_write_u64_console(const char *name, u64 value) {
     kprintf("%s=%p ", name, (void *)(uptr)value);
 }
 
-static void panic_dump_regs(const cpu_regs_t *r) {
+static void panic_write_u64_serial(const char *name, u64 value) {
+    panic_serial_printf("%s=%p ", name, (void *)(uptr)value);
+}
+
+static void panic_dump_regs_console(const cpu_regs_t *r) {
     if (!r) return;
     kprintf("vector=%llu error=%llx cr2=%p cr3=%p\n",
             (unsigned long long)r->vector,
             (unsigned long long)r->error,
             (void *)(uptr)read_cr2(),
             (void *)(uptr)read_cr3());
-    panic_write_u64("rip", r->rip);
-    panic_write_u64("cs", r->cs);
-    panic_write_u64("rflags", r->rflags);
-    panic_write_u64("rsp", r->rsp);
-    panic_write_u64("ss", r->ss);
+    panic_write_u64_console("rip", r->rip);
+    panic_write_u64_console("cs", r->cs);
+    panic_write_u64_console("rflags", r->rflags);
+    panic_write_u64_console("rsp", r->rsp);
+    panic_write_u64_console("ss", r->ss);
     console_write("\n");
-    panic_write_u64("rax", r->rax);
-    panic_write_u64("rbx", r->rbx);
-    panic_write_u64("rcx", r->rcx);
-    panic_write_u64("rdx", r->rdx);
+    panic_write_u64_console("rax", r->rax);
+    panic_write_u64_console("rbx", r->rbx);
+    panic_write_u64_console("rcx", r->rcx);
+    panic_write_u64_console("rdx", r->rdx);
     console_write("\n");
-    panic_write_u64("rsi", r->rsi);
-    panic_write_u64("rdi", r->rdi);
-    panic_write_u64("rbp", r->rbp);
+    panic_write_u64_console("rsi", r->rsi);
+    panic_write_u64_console("rdi", r->rdi);
+    panic_write_u64_console("rbp", r->rbp);
     console_write("\n");
-    panic_write_u64("r8", r->r8);
-    panic_write_u64("r9", r->r9);
-    panic_write_u64("r10", r->r10);
-    panic_write_u64("r11", r->r11);
+    panic_write_u64_console("r8", r->r8);
+    panic_write_u64_console("r9", r->r9);
+    panic_write_u64_console("r10", r->r10);
+    panic_write_u64_console("r11", r->r11);
     console_write("\n");
-    panic_write_u64("r12", r->r12);
-    panic_write_u64("r13", r->r13);
-    panic_write_u64("r14", r->r14);
-    panic_write_u64("r15", r->r15);
+    panic_write_u64_console("r12", r->r12);
+    panic_write_u64_console("r13", r->r13);
+    panic_write_u64_console("r14", r->r14);
+    panic_write_u64_console("r15", r->r15);
     console_write("\n");
+}
+
+static void panic_dump_regs_serial(const cpu_regs_t *r) {
+    if (!r) return;
+    panic_serial_printf("vector=%llu error=%llx cr2=%p cr3=%p\n",
+                        (unsigned long long)r->vector,
+                        (unsigned long long)r->error,
+                        (void *)(uptr)read_cr2(),
+                        (void *)(uptr)read_cr3());
+    panic_write_u64_serial("rip", r->rip);
+    panic_write_u64_serial("cs", r->cs);
+    panic_write_u64_serial("rflags", r->rflags);
+    panic_write_u64_serial("rsp", r->rsp);
+    panic_write_u64_serial("ss", r->ss);
+    panic_serial_line("\n");
+    panic_write_u64_serial("rax", r->rax);
+    panic_write_u64_serial("rbx", r->rbx);
+    panic_write_u64_serial("rcx", r->rcx);
+    panic_write_u64_serial("rdx", r->rdx);
+    panic_serial_line("\n");
+    panic_write_u64_serial("rsi", r->rsi);
+    panic_write_u64_serial("rdi", r->rdi);
+    panic_write_u64_serial("rbp", r->rbp);
+    panic_serial_line("\n");
+    panic_write_u64_serial("r8", r->r8);
+    panic_write_u64_serial("r9", r->r9);
+    panic_write_u64_serial("r10", r->r10);
+    panic_write_u64_serial("r11", r->r11);
+    panic_serial_line("\n");
+    panic_write_u64_serial("r12", r->r12);
+    panic_write_u64_serial("r13", r->r13);
+    panic_write_u64_serial("r14", r->r14);
+    panic_write_u64_serial("r15", r->r15);
+    panic_serial_line("\n");
 }
 
 static AURORA_NORETURN void panic_emit(const char *file, int line, const cpu_regs_t *regs, const char *msg) {
     cpu_cli();
     if (__sync_lock_test_and_set(&g_panic_active, 1u) != 0) {
+        serial_write("\n*** AURORA KERNEL PANIC REENTERED ***\n");
         console_write("\n*** AURORA KERNEL PANIC REENTERED ***\n");
         if (msg) {
+            serial_write(msg);
+            serial_write("\n");
             console_write(msg);
             console_write("\n");
         }
         panic_halt_forever();
     }
 
-    console_set_color(15, 4);
-    console_write("\n*** AURORA KERNEL PANIC ***\n");
-    kprintf("at %s:%d\n", file ? file : "?", line);
+    panic_serial_printf("\n========== AURORA KERNEL PANIC ==========" "\n");
+    panic_serial_printf("theme=%s at %s:%d\n", console_theme_name(console_theme()), file ? file : "?", line);
+    if (msg) panic_serial_printf("message=%s\n", msg);
+    panic_dump_regs_serial(regs);
+    panic_serial_line("--- kernel log ring ---\n");
+    log_dump_ring(panic_serial_line);
+    panic_serial_line("--- end panic log, system halted ---\n");
+
+    console_panic_begin();
+    console_write("================================================================================\n");
+    console_write("                            AURORA KERNEL PANIC                                 \n");
+    console_write("================================================================================\n\n");
+    kprintf("Location: %s:%d\n", file ? file : "?", line);
+    kprintf("Theme: %s\n", console_theme_name(console_theme()));
     if (msg) {
+        console_write("Message: ");
         console_write(msg);
-        console_write("\n");
+        console_write("\n\n");
         kprintf("[FATAL] panic: %s\n", msg);
     }
-    panic_dump_regs(regs);
+    panic_dump_regs_console(regs);
+    console_write("\nFull panic record and kernel log were written to COM1 / VMware aurora-com1.log.\n");
     console_write("System halted.\n");
     panic_halt_forever();
 }

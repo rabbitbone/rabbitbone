@@ -13,6 +13,7 @@ extern "C" {
 
 void gdt_init(void);
 void gdt_set_kernel_stack(uptr rsp0);
+uptr gdt_current_kernel_stack(void);
 uptr gdt_kernel_stack_top(void);
 void gdt_set_ist(u8 index, uptr rsp);
 uptr gdt_ist_top(u8 index);

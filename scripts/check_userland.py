@@ -7,6 +7,8 @@ ELF_MAGIC = b'\x7fELF'
 EM_X86_64 = 62
 ET_EXEC = 2
 PT_LOAD = 1
+PF_X = 1
+PF_W = 2
 
 
 def check(path: Path) -> None:
@@ -32,6 +34,8 @@ def check(path: Path) -> None:
         if p_type != PT_LOAD:
             continue
         loads += 1
+        if (p_flags & (PF_W | PF_X)) == (PF_W | PF_X):
+            raise SystemExit(f'{path}: writable+executable PT_LOAD segment is forbidden')
         if p_filesz > p_memsz:
             raise SystemExit(f'{path}: filesz > memsz')
         if p_vaddr < 0x0000010000000000 or p_vaddr + p_memsz >= 0x0000800000000000:

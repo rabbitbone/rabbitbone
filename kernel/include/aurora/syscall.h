@@ -64,6 +64,12 @@ typedef enum aurora_syscall_no {
     AURORA_SYSCALL_READLINK = AURORA_SYS_READLINK,
     AURORA_SYSCALL_LINK = AURORA_SYS_LINK,
     AURORA_SYSCALL_LSTAT = AURORA_SYS_LSTAT,
+    AURORA_SYSCALL_THEME = AURORA_SYS_THEME,
+    AURORA_SYSCALL_CRED = AURORA_SYS_CRED,
+    AURORA_SYSCALL_SUDO = AURORA_SYS_SUDO,
+    AURORA_SYSCALL_CHMOD = AURORA_SYS_CHMOD,
+    AURORA_SYSCALL_CHOWN = AURORA_SYS_CHOWN,
+    AURORA_SYSCALL_KCTL = AURORA_SYS_KCTL,
     AURORA_SYSCALL_MAX = AURORA_SYS_MAX
 } aurora_syscall_no_t;
 
@@ -81,6 +87,7 @@ void syscall_save_user_handles(void *dst, usize dst_size);
 bool syscall_retain_user_handle_snapshot(const void *src, usize src_size);
 void syscall_release_user_handle_snapshot(void *src, usize src_size);
 void syscall_close_user_handles_with_flags(u32 flags);
+void syscall_close_all_user_handles(void);
 bool syscall_load_user_handles(const void *src, usize src_size);
 usize syscall_user_handle_snapshot_size(void);
 

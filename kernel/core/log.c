@@ -1,5 +1,6 @@
 #include <aurora/log.h>
 #include <aurora/console.h>
+#include <aurora/drivers.h>
 #include <aurora/libc.h>
 #include <aurora/spinlock.h>
 
@@ -43,7 +44,9 @@ void log_write(log_level_t level, const char *component, const char *fmt, ...) {
     ring[write_index][LOG_LINE_LEN - 1] = 0;
     write_index = (write_index + 1) % LOG_LINES;
     if (total_lines < LOG_LINES) ++total_lines;
-    console_write(line);
+    bool process_routine = component && strcmp(component, "process") == 0 && level < LOG_WARN;
+    if (process_routine) serial_write(line);
+    else console_write(line);
     spin_unlock_irqrestore(&log_lock, flags);
 }
 

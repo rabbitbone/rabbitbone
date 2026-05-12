@@ -1,0 +1,186 @@
+static bool copy_to_process_user_space(active_process_t *p, uptr user, const void *src, usize size) {
+    if (!p || !p->active || (!src && size) || !user_addr_range_valid(user, size)) return false;
+    const u8 *s = (const u8 *)src;
+    usize done = 0;
+    while (done < size) {
+        uptr addr = 0;
+        if (__builtin_add_overflow(user, (uptr)done, &addr)) return false;
+        uptr phys = 0;
+        u64 flags = 0;
+        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return false;
+        aurora_rust_user_copy_step_t step_info;
+        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
+        usize n = step_info.chunk;
+        memcpy((void *)phys, s + done, n);
+        done += n;
+    }
+    return true;
+}
+
+bool process_copy_string_from_user(uptr user, char *out, usize out_size) {
+    if (!out || out_size == 0) return false;
+    for (usize i = 0; i < out_size; ++i) {
+        char c = 0;
+        uptr ch_addr = 0;
+        if (__builtin_add_overflow(user, (uptr)i, &ch_addr) || !process_copy_from_user(&c, ch_addr, 1u)) {
+            out[0] = 0;
+            return false;
+        }
+        out[i] = c;
+        if (c == 0) return true;
+    }
+    out[out_size - 1u] = 0;
+    return false;
+}
+
+static void release_mappings(active_process_t *p) {
+    if (!p) return;
+    for (usize i = 0; i < p->mapping_count; ++i) {
+        (void)vmm_space_unmap_4k(&p->space, p->mappings[i].virt);
+        if (p->mappings[i].phys) memory_free_page((void *)p->mappings[i].phys);
+    }
+    p->mapping_count = 0;
+}
+
+static user_mapping_t *find_mapping(active_process_t *p, uptr virt) {
+    if (!p) return 0;
+    for (usize i = 0; i < p->mapping_count; ++i) {
+        if (p->mappings[i].virt == virt) return &p->mappings[i];
+    }
+    return 0;
+}
+
+static bool merge_page_flags(u64 old_flags, u64 segment_flags, u64 *merged_out) {
+    bool wants_write = ((old_flags | segment_flags) & VMM_WRITE) != 0;
+    bool wants_exec = ((old_flags & VMM_NX) == 0) || ((segment_flags & VMM_NX) == 0);
+    if (wants_write && wants_exec) return false;
+    u64 merged = VMM_USER;
+    if (wants_write) merged |= VMM_WRITE;
+    if (!wants_exec) merged |= VMM_NX;
+    if (merged_out) *merged_out = merged;
+    return true;
+}
+
+static process_status_t track_mapping(active_process_t *p, uptr virt, uptr phys, u64 final_flags) {
+    if (p->mapping_count >= USER_MAX_MAPPINGS) return PROC_ERR_NOMEM;
+    p->mappings[p->mapping_count].virt = virt;
+    p->mappings[p->mapping_count].phys = phys;
+    p->mappings[p->mapping_count].final_flags = final_flags;
+    ++p->mapping_count;
+    p->result.mapped_pages = p->mapping_count;
+    return PROC_OK;
+}
+
+static process_status_t map_user_page(active_process_t *p, uptr virt, u64 flags) {
+    if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
+    if (find_mapping(p, virt)) return PROC_ERR_RANGE;
+    void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+    if (!page) return PROC_ERR_NOMEM;
+    memset(page, 0, PAGE_SIZE);
+    (void)vmm_space_unmap_4k(&p->space, virt);
+    u64 final_flags = VMM_USER | flags;
+    if (!vmm_space_map_4k(&p->space, virt, (uptr)page, final_flags)) {
+        memory_free_page(page);
+        return PROC_ERR_NOMEM;
+    }
+    process_status_t st = track_mapping(p, virt, (uptr)page, final_flags);
+    if (st != PROC_OK) {
+        (void)vmm_space_unmap_4k(&p->space, virt);
+        memory_free_page(page);
+    }
+    return st;
+}
+
+static process_status_t ensure_image_page(active_process_t *p, uptr virt, u64 segment_final_flags) {
+    if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
+    user_mapping_t *m = find_mapping(p, virt);
+    if (m) {
+        u64 merged = 0;
+        if (!merge_page_flags(m->final_flags, segment_final_flags, &merged)) return PROC_ERR_FORMAT;
+        m->final_flags = merged;
+        if (!vmm_space_protect_4k(&p->space, virt, m->final_flags | VMM_WRITE)) return PROC_ERR_RANGE;
+        return PROC_OK;
+    }
+    void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+    if (!page) return PROC_ERR_NOMEM;
+    memset(page, 0, PAGE_SIZE);
+    if (!vmm_space_map_4k(&p->space, virt, (uptr)page, segment_final_flags | VMM_WRITE)) {
+        memory_free_page(page);
+        return PROC_ERR_NOMEM;
+    }
+    process_status_t st = track_mapping(p, virt, (uptr)page, segment_final_flags);
+    if (st != PROC_OK) {
+        (void)vmm_space_unmap_4k(&p->space, virt);
+        memory_free_page(page);
+    }
+    return st;
+}
+
+static process_status_t protect_loaded_image(active_process_t *p, usize first_mapping, usize last_mapping) {
+    if (!p || first_mapping > last_mapping || last_mapping > p->mapping_count) return PROC_ERR_INVAL;
+    for (usize i = first_mapping; i < last_mapping; ++i) {
+        if (!vmm_space_protect_4k(&p->space, p->mappings[i].virt, p->mappings[i].final_flags)) return PROC_ERR_RANGE;
+    }
+    return PROC_OK;
+}
+
+static process_status_t copy_to_user_space(active_process_t *p, uptr user, const void *src, usize size) {
+    if (!user_addr_range_valid(user, size)) return PROC_ERR_RANGE;
+    const u8 *s = (const u8 *)src;
+    usize done = 0;
+    while (done < size) {
+        uptr addr = 0;
+        if (__builtin_add_overflow(user, (uptr)done, &addr)) return PROC_ERR_RANGE;
+        uptr phys = 0;
+        u64 flags = 0;
+        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return PROC_ERR_RANGE;
+        aurora_rust_user_copy_step_t step_info;
+        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
+        usize n = step_info.chunk;
+        memcpy((void *)phys, s + done, n);
+        done += n;
+    }
+    return PROC_OK;
+}
+
+static process_status_t zero_user_space(active_process_t *p, uptr user, usize size) {
+    static const u8 zeros[64] = {0};
+    while (size) {
+        usize n = size > sizeof(zeros) ? sizeof(zeros) : size;
+        process_status_t st = copy_to_user_space(p, user, zeros, n);
+        if (st != PROC_OK) return st;
+        if (__builtin_add_overflow(user, (uptr)n, &user)) return PROC_ERR_RANGE;
+        size -= n;
+    }
+    return PROC_OK;
+}
+
+static process_status_t read_vfs_to_user(active_process_t *p, const char *path, u64 file_off, uptr user, usize size) {
+    usize done = 0;
+    while (done < size) {
+        uptr addr = 0;
+        if (__builtin_add_overflow(user, (uptr)done, &addr)) return PROC_ERR_RANGE;
+        uptr phys = 0;
+        u64 flags = 0;
+        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return PROC_ERR_RANGE;
+        aurora_rust_user_copy_step_t step_info;
+        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
+        usize n = step_info.chunk;
+        u64 disk_off = 0;
+        if (__builtin_add_overflow(file_off, (u64)done, &disk_off)) return PROC_ERR_RANGE;
+        usize got = 0;
+        vfs_status_t vs = vfs_read(path, disk_off, (void *)phys, n, &got);
+        if (vs != VFS_OK) return PROC_ERR_IO;
+        if (got != n) return PROC_ERR_IO;
+        done += n;
+    }
+    return PROC_OK;
+}
+
+static u64 elf_segment_page_flags(const elf64_phdr_t *ph) {
+    u64 flags = VMM_USER;
+    if (ph->p_flags & ELF64_PF_W) flags |= VMM_WRITE;
+    if (!(ph->p_flags & ELF64_PF_X)) flags |= VMM_NX;
+    return flags;
+}
+

@@ -66,7 +66,7 @@ def main() -> int:
     if text != expected:
         raise SystemExit(f"AURORA_VERSION_TEXT is {text}, expected {expected}")
 
-    expected_abi = 0x100 + fix
+    expected_abi = (patch << 8) | fix
     if abi != expected_abi:
         raise SystemExit(f"AURORA_SYSCALL_ABI_VERSION is 0x{abi:08x}, expected 0x{expected_abi:08x}")
 

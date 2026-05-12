@@ -26,7 +26,12 @@ required = [
     'aurora_rust_user_copy_step',
     'aurora_rust_usercopy_selftest',
 ]
-missing = [sym for sym in required if sym not in out]
+seen = set()
+for line in out.splitlines():
+    parts = line.split()
+    if len(parts) >= 3:
+        seen.add(parts[-1])
+missing = [sym for sym in required if sym not in seen]
 if missing:
     for sym in missing:
         print(f'missing Rust symbol: {sym}')

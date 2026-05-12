@@ -14,6 +14,8 @@ extern "C" {
 #define ELF64_PF_X 1u
 #define ELF64_PF_W 2u
 #define ELF64_PF_R 4u
+#define ELF64_AURORA_USER_IMAGE_BASE 0x0000010000000000ull
+#define ELF64_AURORA_USER_SPACE_LIMIT 0x0000800000000000ull
 
 typedef enum elf_status {
     ELF_OK = 0,
@@ -67,6 +69,8 @@ typedef struct elf_loaded_image {
 } elf_loaded_image_t;
 
 elf_status_t elf64_validate_header(const elf64_ehdr_t *hdr, u64 file_size);
+elf_status_t elf64_validate_load_segment(const elf64_phdr_t *ph, u64 file_size, u64 user_min, u64 user_limit);
+bool elf64_ranges_overlap(u64 a_start, u64 a_end, u64 b_start, u64 b_end);
 elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out);
 void elf64_free_image(elf_loaded_image_t *img);
 const char *elf_status_name(elf_status_t st);

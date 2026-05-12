@@ -35,12 +35,11 @@ static tty_mode_slot_t *tty_find_slot_locked(u32 pid, bool create) {
         if (tty_modes[i].used && tty_modes[i].pid == pid) return &tty_modes[i];
         if (!tty_modes[i].used && !free_slot) free_slot = &tty_modes[i];
     }
-    if (!create) return 0;
-    tty_mode_slot_t *slot = free_slot ? free_slot : &tty_modes[pid % TTY_MODE_SLOTS];
-    slot->used = true;
-    slot->pid = pid;
-    slot->mode = kernel_tty_mode;
-    return slot;
+    if (!create || !free_slot) return 0;
+    free_slot->used = true;
+    free_slot->pid = pid;
+    free_slot->mode = TTY_DEFAULT_MODE;
+    return free_slot;
 }
 
 void tty_init(void) {

@@ -48,6 +48,10 @@ void task_get_stats(task_stats_t *out);
 void task_dump(void);
 const char *task_state_name(task_state_t state);
 bool task_selftest(void);
+usize task_snapshot_size(void);
+bool task_snapshot_save(void *buffer, usize size);
+bool task_snapshot_restore(const void *buffer, usize size);
+void task_reset_for_test(void);
 
 #if defined(__cplusplus)
 }

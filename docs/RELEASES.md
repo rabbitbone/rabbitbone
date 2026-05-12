@@ -3,6 +3,20 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.0
+
+First full `0.0.2.x` release line, compared with `0.0.1.40`.
+
+`0.0.1.49` was the final preparatory slice for this release; its cwd-relative filesystem work is included here.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.0` / `0x00000200`.
+- Promoted the storage/runtime work landed after `0.0.1.40` into the `0.0.2.x` line: cwd-relative filesystem operations, userland wrappers, EXT4/VFS/ramfs path plumbing, and runtime bad-path/descriptor coverage.
+- Kept the app-storage surface from the `0.0.1.41` through `0.0.1.49` preparation window: `sync`, descriptor-backed `fsync`, `statvfs`, atomic `install_commit`, and `preallocate`.
+- Preserved the EXT4 durability work from the same window: ordered metadata journaling/recovery, data-before-metadata writeback, orphan cleanup, cache-coherent repair scans, metadata checksum validation, htree/free-counter/dirent repair-lite, extent-backed directories, and unwritten extent conversion.
+- Added the packaged `/sbin/init` and `/bin/aursh` userland shell path to the default image alongside the existing diagnostic programs.
+- Split several large kernel, userland, test, and installer modules into smaller checked-in implementation fragments while keeping the public build targets and runtime behavior intact.
+- Extended split-source integrity, userland, boot-sector, stage2-layout, Rust-symbol, and release-version checks so the release can be validated from source.
+
 ## 0.0.1.49
 
 Preparatory update for the upcoming `0.0.2.0` line.

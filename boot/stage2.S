@@ -4,10 +4,23 @@
 .equ E820_BUFFER, 0x5000
 .equ E820_MAX_ENTRIES, 64
 .equ BOOTINFO_VERSION, 1
+.equ KERNEL_LOAD_BASE, 0x10000
+.equ KERNEL_LOAD_LIMIT, 0x90000
+.equ KERNEL_LOAD_MAX_SECTORS, ((KERNEL_LOAD_LIMIT - KERNEL_LOAD_BASE) / 512)
+.if (STAGE2_SECTORS < 1) || (STAGE2_SECTORS > 64)
+.error "STAGE2_SECTORS must fit the stage2 load window"
+.endif
+.if (KERNEL_SECTORS < 1) || (KERNEL_SECTORS > KERNEL_LOAD_MAX_SECTORS)
+.error "KERNEL_SECTORS exceeds the fixed low-memory kernel load window"
+.endif
+.if (KERNEL_LBA < 1)
+.error "KERNEL_LBA must be non-zero"
+.endif
 .section .text
 .global stage2_start
 stage2_start:
     cli
+    cld
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -121,15 +134,18 @@ load_kernel:
 
     mov ax, [sectors_done]
     shl ax, 5
-    add ax, 0x1000
+    add ax, KERNEL_LOAD_BASE >> 4
     mov [dap_segment], ax
     mov word ptr [dap_offset], 0
 
-    xor eax, eax
-    mov ax, [sectors_done]
-    add eax, KERNEL_LBA
+    xor ecx, ecx
+    mov cx, [sectors_done]
+    mov eax, (KERNEL_LBA & 0xffffffff)
+    mov edx, (KERNEL_LBA >> 32)
+    add eax, ecx
+    adc edx, 0
     mov [dap_lba_low], eax
-    mov dword ptr [dap_lba_high], 0
+    mov [dap_lba_high], edx
 
     mov dl, [boot_drive]
     mov si, offset dap
@@ -175,10 +191,78 @@ collect_e820:
     ret
 
 enable_a20:
+    call check_a20
+    test ax, ax
+    jnz .ok
     in al, 0x92
     or al, 0x02
     and al, 0xfe
     out 0x92, al
+    call check_a20
+    test ax, ax
+    jnz .ok
+    call enable_a20_kbc
+    call check_a20
+    test ax, ax
+    jz a20_error
+.ok:
+    ret
+
+wait_kbc_input_clear:
+    push cx
+    mov cx, 0xffff
+.wait_kbc_clear:
+    in al, 0x64
+    test al, 0x02
+    jz .ready_kbc_clear
+    loop .wait_kbc_clear
+.ready_kbc_clear:
+    pop cx
+    ret
+
+enable_a20_kbc:
+    call wait_kbc_input_clear
+    mov al, 0xd1
+    out 0x64, al
+    call wait_kbc_input_clear
+    mov al, 0xdf
+    out 0x60, al
+    call wait_kbc_input_clear
+    ret
+
+check_a20:
+    pushf
+    push ds
+    push es
+    push si
+    push di
+    cli
+    xor ax, ax
+    mov ds, ax
+    mov si, 0x0500
+    mov ax, 0xffff
+    mov es, ax
+    mov di, 0x0510
+    mov al, byte ptr [si]
+    mov byte ptr [a20_saved_low], al
+    mov al, byte ptr es:[di]
+    mov byte ptr [a20_saved_high], al
+    mov byte ptr [si], 0x00
+    mov byte ptr es:[di], 0xff
+    cmp byte ptr [si], 0xff
+    mov ax, 0
+    je .restore
+    mov ax, 1
+.restore:
+    mov bl, byte ptr [a20_saved_high]
+    mov byte ptr es:[di], bl
+    mov bl, byte ptr [a20_saved_low]
+    mov byte ptr [si], bl
+    pop di
+    pop si
+    pop es
+    pop ds
+    popf
     ret
 
 disk_error:
@@ -188,13 +272,43 @@ disk_error:
     hlt
     jmp .hang
 
+a20_error:
+    mov si, offset msg_a20_error
+    call puts16
+.hang_a20:
+    hlt
+    jmp .hang_a20
+
 .code32
+check_cpu_features32:
+    mov eax, 1
+    cpuid
+    test edx, (1 << 6)
+    jz cpu_feature_error32
+    mov eax, 0x80000000
+    cpuid
+    cmp eax, 0x80000001
+    jb cpu_feature_error32
+    mov eax, 0x80000001
+    cpuid
+    test edx, (1 << 20)
+    jz cpu_feature_error32
+    test edx, (1 << 29)
+    jz cpu_feature_error32
+    ret
+cpu_feature_error32:
+    cli
+.hang_cpu_feature:
+    hlt
+    jmp .hang_cpu_feature
+
 protected_entry:
+    call check_cpu_features32
     mov ax, 0x20
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov esp, 0x70000
+    mov esp, 0x9c000
 
     mov eax, offset pml4
     mov cr3, eax
@@ -225,7 +339,7 @@ long_mode_entry:
     mov ss, ax
     mov fs, ax
     mov gs, ax
-    mov rsp, 0x70000
+    mov rsp, 0x9c000
 
     mov rsi, offset msg_lm_active
     call serial_puts64
@@ -236,8 +350,10 @@ long_mode_entry:
     mov al, byte ptr [boot_drive]
     mov qword ptr [bootinfo + 16], rax
     mov qword ptr [bootinfo + 24], E820_BUFFER
-    mov qword ptr [bootinfo + 32], KERNEL_LBA
-    mov qword ptr [bootinfo + 40], KERNEL_SECTORS
+    movabs rax, KERNEL_LBA
+    mov qword ptr [bootinfo + 32], rax
+    movabs rax, KERNEL_SECTORS
+    mov qword ptr [bootinfo + 40], rax
 
     mov rsi, offset msg_jump_kernel
     call serial_puts64
@@ -316,6 +432,9 @@ msg_pm: .asciz "Aurora stage2: entering long mode\r\n"
 msg_lm_active: .asciz "Aurora stage2: long mode active\r\n"
 msg_jump_kernel: .asciz "Aurora stage2: jumping kernel\r\n"
 msg_disk_error: .asciz "Aurora stage2: INT13 kernel read failed\r\n"
+msg_a20_error: .asciz "Aurora stage2: A20 enable failed\r\n"
+a20_saved_low: .byte 0
+a20_saved_high: .byte 0
 boot_drive: .byte 0
 sectors_done: .word 0
 .align 4

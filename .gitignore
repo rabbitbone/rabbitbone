@@ -41,6 +41,7 @@ Cargo.lock
 /vmware/*.lck/
 /vmware/nvram
 /vmware/AuroraOS.vmx
+/vmware/aurora-legacy.vmx
 
 # Keep hand-written VMware helpers
 !/vmware/Makefile

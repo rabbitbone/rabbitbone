@@ -36,6 +36,9 @@ static u8 kernel_priv_stack[KERNEL_PRIV_STACK_SIZE] __attribute__((aligned(16)))
 static u8 ist_stacks[3][IST_STACK_SIZE] __attribute__((aligned(16)));
 static void *dynamic_kernel_stack;
 static void *dynamic_ist_stacks[3];
+static usize dynamic_kernel_stack_size;
+static usize dynamic_ist_stack_size;
+static bool dynamic_stacks_installed;
 
 static uptr align_down16(uptr v) { return v & ~(uptr)0xfull; }
 
@@ -51,6 +54,10 @@ static u64 make_tss_low(uptr base, u32 limit) {
 
 void gdt_set_kernel_stack(uptr rsp0) {
     tss.rsp0 = rsp0;
+}
+
+uptr gdt_current_kernel_stack(void) {
+    return tss.rsp0;
 }
 
 uptr gdt_kernel_stack_top(void) {
@@ -73,6 +80,7 @@ void gdt_set_ist(u8 index, uptr rsp) {
 
 
 bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
+    if (dynamic_stacks_installed) return true;
     if (ring0_size < KERNEL_PRIV_STACK_SIZE || ist_size < IST_STACK_SIZE) return false;
     void *ring0 = kmalloc(ring0_size);
     if (!ring0) return false;
@@ -94,6 +102,9 @@ bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
     dynamic_ist_stacks[0] = ist0;
     dynamic_ist_stacks[1] = ist1;
     dynamic_ist_stacks[2] = ist2;
+    dynamic_kernel_stack_size = ring0_size;
+    dynamic_ist_stack_size = ist_size;
+    dynamic_stacks_installed = true;
     gdt_set_kernel_stack(align_down16((uptr)ring0 + ring0_size));
     gdt_set_ist(1, align_down16((uptr)ist0 + ist_size));
     gdt_set_ist(2, align_down16((uptr)ist1 + ist_size));
@@ -105,6 +116,9 @@ bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
 void gdt_init(void) {
     memset(gdt, 0, sizeof(gdt));
     memset(&tss, 0, sizeof(tss));
+    bool have_dynamic_stacks = dynamic_kernel_stack && dynamic_kernel_stack_size && dynamic_ist_stack_size &&
+                               dynamic_ist_stacks[0] && dynamic_ist_stacks[1] && dynamic_ist_stacks[2];
+    dynamic_stacks_installed = have_dynamic_stacks;
 
     gdt[1] = 0x00af9b000000ffffull;
     gdt[2] = 0x00cf93000000ffffull;
@@ -112,10 +126,17 @@ void gdt_init(void) {
     gdt[4] = 0x00affb000000ffffull;
 
     tss.iopb_offset = sizeof(tss64_t);
-    gdt_set_kernel_stack(gdt_kernel_stack_top());
-    gdt_set_ist(1, gdt_ist_top(1));
-    gdt_set_ist(2, gdt_ist_top(2));
-    gdt_set_ist(3, gdt_ist_top(3));
+    if (have_dynamic_stacks) {
+        gdt_set_kernel_stack(align_down16((uptr)dynamic_kernel_stack + dynamic_kernel_stack_size));
+        gdt_set_ist(1, align_down16((uptr)dynamic_ist_stacks[0] + dynamic_ist_stack_size));
+        gdt_set_ist(2, align_down16((uptr)dynamic_ist_stacks[1] + dynamic_ist_stack_size));
+        gdt_set_ist(3, align_down16((uptr)dynamic_ist_stacks[2] + dynamic_ist_stack_size));
+    } else {
+        gdt_set_kernel_stack(gdt_kernel_stack_top());
+        gdt_set_ist(1, gdt_ist_top(1));
+        gdt_set_ist(2, gdt_ist_top(2));
+        gdt_set_ist(3, gdt_ist_top(3));
+    }
     uptr base = (uptr)&tss;
     u32 limit = (u32)(sizeof(tss64_t) - 1u);
     gdt[5] = make_tss_low(base, limit);

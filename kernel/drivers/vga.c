@@ -28,6 +28,26 @@ static void scroll_if_needed(void) {
 }
 
 void vga_set_color(u8 fg, u8 bg) { color = (u8)((bg << 4) | (fg & 0x0f)); }
+u8 vga_get_color(void) { return color; }
+
+void vga_recolor(u8 fg, u8 bg) {
+    u8 attr = (u8)((bg << 4) | (fg & 0x0f));
+    for (usize y = 0; y < VGA_HEIGHT; ++y) {
+        for (usize x = 0; x < VGA_WIDTH; ++x) {
+            u16 cell = VGA_MEMORY[y * VGA_WIDTH + x];
+            VGA_MEMORY[y * VGA_WIDTH + x] = (u16)((cell & 0x00ffu) | ((u16)attr << 8));
+        }
+    }
+}
+
+void vga_fill_color(u8 fg, u8 bg) {
+    u8 old = color;
+    vga_set_color(fg, bg);
+    for (usize y = 0; y < VGA_HEIGHT; ++y) {
+        for (usize x = 0; x < VGA_WIDTH; ++x) VGA_MEMORY[y * VGA_WIDTH + x] = make_cell(' ');
+    }
+    color = old;
+}
 
 void vga_get_size(u32 *rows, u32 *cols) {
     if (rows) *rows = VGA_HEIGHT;

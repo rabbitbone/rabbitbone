@@ -22,16 +22,39 @@ static inline void write_cr4(u64 v) {
     __asm__ volatile("mov %0, %%cr4" :: "r"(v) : "memory");
 }
 
+static inline void cpuid_leaf(u32 leaf, u32 subleaf, u32 *a, u32 *b, u32 *c, u32 *d) {
+    u32 eax = leaf, ebx = 0, ecx = subleaf, edx = 0;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+    if (a) *a = eax;
+    if (b) *b = ebx;
+    if (c) *c = ecx;
+    if (d) *d = edx;
+}
+
+static bool cpu_has_leaf(u32 leaf) {
+    u32 max_basic = 0;
+    cpuid_leaf(0, 0, &max_basic, 0, 0, 0);
+    return max_basic >= leaf;
+}
+
 void cpu_init(void) {
     __asm__ volatile("cld");
 
     u64 cr0 = read_cr0();
     cr0 &= ~(1ull << 2);
-    cr0 |= (1ull << 1) | (1ull << 5);
+    cr0 |= (1ull << 1) | (1ull << 5) | (1ull << 16);
     write_cr0(cr0);
 
     u64 cr4 = read_cr4();
     cr4 |= (1ull << 9) | (1ull << 10);
+    /* Do not enable SMEP in the early CPU bring-up path.  VMware and several
+       BIOS boot configurations can expose CPUID.7.SMEP before the kernel has
+       rebuilt and audited every active mapping after the bootloader handoff;
+       a supervisor fetch from a page that still carries a user bit would fault
+       before the IDT is installed and looks like an immediate virtual CPU
+       shutdown.  NX/SSE are still enabled here; SMEP can be introduced later
+       through a dedicated post-vmm page-table audit. */
+    (void)cpu_has_leaf;
     write_cr4(cr4);
 }
 

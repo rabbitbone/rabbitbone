@@ -1,0 +1,85 @@
+#[no_mangle]
+pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> SyscallResult {
+    let decoded = match SyscallNo::decode(no) {
+        Ok(v) => v,
+        Err(_) => return SyscallResult::err(VFS_ERR_UNSUPPORTED),
+    };
+    if let Err(e) = validate_args(decoded, args) {
+        return SyscallResult::err(e);
+    }
+    unsafe {
+        match decoded {
+            SyscallNo::Version => aurora_sys_version(),
+            SyscallNo::WriteConsole => aurora_sys_write_console(args.a0, args.a1),
+            SyscallNo::Open => aurora_sys_open(args.a0, args.a1),
+            SyscallNo::Close => aurora_sys_close(args.a0),
+            SyscallNo::Read => aurora_sys_read(args.a0, args.a1, args.a2),
+            SyscallNo::Stat => aurora_sys_stat(args.a0, args.a1),
+            SyscallNo::List => aurora_sys_list(args.a0, args.a1, args.a2),
+            SyscallNo::Exit => aurora_sys_exit(args.a0),
+            SyscallNo::Log => aurora_sys_log(args.a0),
+            SyscallNo::Write => aurora_sys_write(args.a0, args.a1, args.a2),
+            SyscallNo::Seek => aurora_sys_seek(args.a0, args.a1, args.a2),
+            SyscallNo::Create => aurora_sys_create(args.a0, args.a1, args.a2),
+            SyscallNo::Mkdir => aurora_sys_mkdir(args.a0),
+            SyscallNo::Unlink => aurora_sys_unlink(args.a0),
+            SyscallNo::Ticks => aurora_sys_ticks(),
+            SyscallNo::GetPid => aurora_sys_getpid(),
+            SyscallNo::ProcInfo => aurora_sys_procinfo(args.a0, args.a1),
+            SyscallNo::Spawn => aurora_sys_spawn(args.a0),
+            SyscallNo::Wait => aurora_sys_wait(args.a0, args.a1),
+            SyscallNo::Yield => aurora_sys_yield(),
+            SyscallNo::Sleep => aurora_sys_sleep(args.a0),
+            SyscallNo::SchedInfo => aurora_sys_schedinfo(args.a0),
+            SyscallNo::Dup => aurora_sys_dup(args.a0),
+            SyscallNo::Tell => aurora_sys_tell(args.a0),
+            SyscallNo::Fstat => aurora_sys_fstat(args.a0, args.a1),
+            SyscallNo::FdInfo => aurora_sys_fdinfo(args.a0, args.a1),
+            SyscallNo::ReadDir => aurora_sys_readdir(args.a0, args.a1, args.a2),
+            SyscallNo::SpawnV => aurora_sys_spawnv(args.a0, args.a1, args.a2),
+            SyscallNo::PreemptInfo => aurora_sys_preemptinfo(args.a0),
+            SyscallNo::Fork => aurora_sys_fork(),
+            SyscallNo::Exec => aurora_sys_exec(args.a0),
+            SyscallNo::ExecV => aurora_sys_execv(args.a0, args.a1, args.a2),
+            SyscallNo::FdCtl => aurora_sys_fdctl(args.a0, args.a1, args.a2),
+            SyscallNo::ExecVe => aurora_sys_execve(args.a0, args.a1, args.a2, args.a3, args.a4),
+            SyscallNo::Pipe => aurora_sys_pipe(args.a0),
+            SyscallNo::PipeInfo => aurora_sys_pipeinfo(args.a0, args.a1),
+            SyscallNo::Dup2 => aurora_sys_dup2(args.a0, args.a1, args.a2),
+            SyscallNo::Poll => aurora_sys_poll(args.a0, args.a1),
+            SyscallNo::TtyGetInfo => aurora_sys_tty_getinfo(args.a0),
+            SyscallNo::TtySetMode => aurora_sys_tty_setmode(args.a0),
+            SyscallNo::TtyReadKey => aurora_sys_tty_readkey(args.a0, args.a1),
+            SyscallNo::Truncate => aurora_sys_truncate(args.a0, args.a1),
+            SyscallNo::Rename => aurora_sys_rename(args.a0, args.a1),
+            SyscallNo::Sync => aurora_sys_sync(),
+            SyscallNo::Fsync => aurora_sys_fsync(args.a0),
+            SyscallNo::StatVfs => aurora_sys_statvfs(args.a0, args.a1),
+            SyscallNo::InstallCommit => aurora_sys_install_commit(args.a0, args.a1),
+            SyscallNo::Preallocate => aurora_sys_preallocate(args.a0, args.a1),
+            SyscallNo::Ftruncate => aurora_sys_ftruncate(args.a0, args.a1),
+            SyscallNo::Fpreallocate => aurora_sys_fpreallocate(args.a0, args.a1),
+            SyscallNo::Chdir => aurora_sys_chdir(args.a0),
+            SyscallNo::Getcwd => aurora_sys_getcwd(args.a0, args.a1),
+            SyscallNo::Fdatasync => aurora_sys_fdatasync(args.a0),
+            SyscallNo::Symlink => aurora_sys_symlink(args.a0, args.a1),
+            SyscallNo::Readlink => aurora_sys_readlink(args.a0, args.a1, args.a2),
+            SyscallNo::Link => aurora_sys_link(args.a0, args.a1),
+            SyscallNo::Lstat => aurora_sys_lstat(args.a0, args.a1),
+            SyscallNo::Theme => aurora_sys_theme(args.a0, args.a1),
+            SyscallNo::Cred => aurora_sys_cred(args.a0, args.a1, args.a2, args.a3),
+            SyscallNo::Sudo => aurora_sys_sudo(args.a0, args.a1, args.a2),
+            SyscallNo::Chmod => aurora_sys_chmod(args.a0, args.a1),
+            SyscallNo::Chown => aurora_sys_chown(args.a0, args.a1, args.a2),
+            SyscallNo::Kctl => aurora_sys_kctl(args.a0, args.a1, args.a2, args.a3),
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn aurora_rust_syscall_name(no: u64) -> *const u8 {
+    match SyscallNo::decode(no) {
+        Ok(v) => v.name().as_ptr(),
+        Err(_) => b"unknown\0".as_ptr(),
+    }
+}

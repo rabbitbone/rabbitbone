@@ -1,0 +1,81 @@
+static void tar_octal(char *dst, usize width, usize value) {
+    memset(dst, '0', width);
+    dst[width - 1u] = 0;
+    if (width < 2u) return;
+    for (usize pos = width - 2u;; --pos) {
+        dst[pos] = (char)('0' + (value & 7u));
+        value >>= 3u;
+        if (pos == 0 || value == 0) break;
+    }
+}
+
+static void tar_header_write(u8 *block, const char *name, const char *data, usize size) {
+    memset(block, 0, 512u);
+    strncpy((char *)block + 0, name, 99u);
+    tar_octal((char *)block + 100, 8u, 0644u);
+    tar_octal((char *)block + 108, 8u, 0u);
+    tar_octal((char *)block + 116, 8u, 0u);
+    tar_octal((char *)block + 124, 12u, size);
+    tar_octal((char *)block + 136, 12u, 1u);
+    memset(block + 148, ' ', 8u);
+    block[156] = '0';
+    memcpy(block + 257, "ustar", 5u);
+    memcpy(block + 263, "00", 2u);
+    usize sum = 0;
+    for (usize i = 0; i < 512u; ++i) sum += block[i];
+    tar_octal((char *)block + 148, 8u, sum);
+    block[155] = ' ';
+    memcpy(block + 512u, data, size);
+}
+
+static void test_tarfs_module(void) {
+    suite_begin("tarfs module");
+    static const char data[] = "tarfs payload\n";
+    u8 *image = (u8 *)kcalloc(1, 2048u);
+    if (!image) {
+        fail("allocate tar image");
+        suite_end();
+        return;
+    }
+    tar_header_write(image, "boot/test.txt", data, sizeof(data) - 1u);
+    tarfs_t *fs = tarfs_open(image, 2048u);
+    check(fs != 0, "tarfs opens ustar image");
+    if (fs) {
+        vfs_status_t ms = vfs_mount("/tar-test", "tarfs", tarfs_ops(), fs, false);
+        check(ms == VFS_OK, "tarfs mounts through VFS");
+        if (ms == VFS_OK) {
+            vfs_stat_t st;
+            check(vfs_stat("/tar-test/boot", &st) == VFS_OK && st.type == VFS_NODE_DIR, "tarfs implicit directory stat");
+            char buf[32];
+            usize got = 0;
+            memset(buf, 0, sizeof(buf));
+            check(vfs_read("/tar-test/boot/test.txt", 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && strcmp(buf, data) == 0, "tarfs file read through VFS");
+            seen_name_ctx_t seen = { "test.txt", false };
+            check(vfs_list("/tar-test/boot", list_seen_name, &seen) == VFS_OK && seen.seen, "tarfs directory list");
+            check(vfs_write("/tar-test/boot/test.txt", 0, "x", 1u, 0) == VFS_ERR_PERM, "tarfs is read-only in VFS");
+            check(vfs_unmount("/tar-test") == VFS_OK, "tarfs unmount");
+        }
+        tarfs_destroy(fs);
+    }
+    u8 *bad = (u8 *)kcalloc(1, 1024u);
+    if (bad) {
+        memcpy(bad, image, 1024u);
+        memset(bad + 148, '0', 8u);
+        check(tarfs_open(bad, 1024u) == 0, "tarfs rejects zero checksum header");
+        memcpy(bad, image, 1024u);
+        tar_octal((char *)bad + 124, 12u, 900u);
+        memset(bad + 148, ' ', 8u);
+        usize sum = 0;
+        for (usize i = 0; i < 512u; ++i) sum += bad[i];
+        tar_octal((char *)bad + 148, 8u, sum);
+        bad[155] = ' ';
+        check(tarfs_open(bad, 1024u) == 0, "tarfs rejects payload beyond image");
+        kfree(bad);
+    } else {
+        skip("tarfs malformed image tests");
+        skip("tarfs malformed image tests");
+    }
+    kfree(image);
+    suite_end();
+}
+

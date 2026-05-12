@@ -11,9 +11,11 @@ typedef struct outbuf {
     usize len;
 } outbuf_t;
 
+#define PRINTF_MAX_WIDTH 4096
+
 static void out_char(outbuf_t *out, char c) {
-    if (out->cap && out->len + 1 < out->cap) out->buf[out->len] = c;
-    ++out->len;
+    if (out->cap && out->len < out->cap - 1u) out->buf[out->len] = c;
+    if (out->len != (usize)-1) ++out->len;
 }
 
 static void out_str(outbuf_t *out, const char *s) {
@@ -60,7 +62,9 @@ int kvsnprintf(char *buf, usize cap, const char *fmt, __builtin_va_list ap) {
         int width = 0;
         if (*p == '0') { pad_zero = true; ++p; }
         while (*p >= '0' && *p <= '9') {
-            width = width * 10 + (*p - '0');
+            int digit = *p - '0';
+            if (width > (PRINTF_MAX_WIDTH - digit) / 10) width = PRINTF_MAX_WIDTH;
+            else width = width * 10 + digit;
             ++p;
         }
         bool long_flag = false;

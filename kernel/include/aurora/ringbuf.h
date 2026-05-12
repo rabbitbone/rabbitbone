@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+/* Single-owner ring buffer. Concurrent producers/consumers must serialize access externally. */
 typedef struct ringbuf {
     u8 *data;
     usize capacity;

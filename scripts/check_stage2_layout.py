@@ -29,6 +29,12 @@ if missing:
 
 errors = []
 
+STAGE2_SECTORS_MAX = 64
+KERNEL_LOAD_BASE = 0x10000
+KERNEL_LOAD_LIMIT = 0x90000
+KERNEL_SECTORS_MAX = (KERNEL_LOAD_LIMIT - KERNEL_LOAD_BASE) // 512
+U64_MAX = (1 << 64) - 1
+
 def check(cond, msg):
     if not cond:
         errors.append(msg)
@@ -51,6 +57,18 @@ check(e820 + e820_len <= stage2_start, f"E820 buffer 0x{e820:x}..0x{e820+e820_le
 check(not (e820 < pml4 + 0x3000 and e820 + e820_len > pml4), "E820 buffer overlaps pml4/pdpt/pd page tables")
 check(bootinfo < stage2_limit, f"bootinfo escaped fixed stage2 window: 0x{bootinfo:x}")
 check(sym["long_mode_entry"] < pml4, "long-mode trampoline must remain before page table page")
+
+if "STAGE2_SECTORS" in sym:
+    check(1 <= sym["STAGE2_SECTORS"] <= STAGE2_SECTORS_MAX,
+          f"STAGE2_SECTORS out of range: {sym['STAGE2_SECTORS']}")
+if "KERNEL_SECTORS" in sym:
+    check(1 <= sym["KERNEL_SECTORS"] <= KERNEL_SECTORS_MAX,
+          f"KERNEL_SECTORS out of range for 0x{KERNEL_LOAD_BASE:x}..0x{KERNEL_LOAD_LIMIT:x}: {sym['KERNEL_SECTORS']}")
+if "KERNEL_LBA" in sym and "KERNEL_SECTORS" in sym:
+    kernel_lba = sym["KERNEL_LBA"]
+    kernel_sectors = sym["KERNEL_SECTORS"]
+    check(kernel_lba >= 1, f"KERNEL_LBA must be non-zero, got {kernel_lba}")
+    check(kernel_lba + kernel_sectors - 1 <= U64_MAX, "KERNEL_LBA + KERNEL_SECTORS overflows 64-bit LBA")
 
 if errors:
     for err in errors:

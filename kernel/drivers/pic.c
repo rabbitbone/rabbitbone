@@ -25,18 +25,21 @@ void pic_remap(u8 offset1, u8 offset2) {
 }
 
 void pic_send_eoi(u8 irq) {
+    if (irq >= 16) return;
     if (irq >= 8) outb(PIC2_COMMAND, PIC_EOI);
     outb(PIC1_COMMAND, PIC_EOI);
 }
 
 void pic_set_mask(u8 irq) {
+    if (irq >= 16) return;
     u16 port = irq < 8 ? PIC1_DATA : PIC2_DATA;
     if (irq >= 8) irq -= 8;
-    outb(port, inb(port) | (1 << irq));
+    outb(port, (u8)(inb(port) | (u8)(1u << irq)));
 }
 
 void pic_clear_mask(u8 irq) {
+    if (irq >= 16) return;
     u16 port = irq < 8 ? PIC1_DATA : PIC2_DATA;
     if (irq >= 8) irq -= 8;
-    outb(port, inb(port) & ~(1 << irq));
+    outb(port, (u8)(inb(port) & (u8)~(1u << irq)));
 }

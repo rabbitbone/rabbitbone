@@ -62,6 +62,7 @@ process_status_t process_spawn_async(const char *path, int argc, const char *con
 
 process_status_t process_spawn_async_snapshot(const char *path, int argc, const char *const *argv, void *snapshot, usize snapshot_size, u32 *pid_out);
 bool process_run_until_idle(u32 root_pid, process_result_t *root_out);
+AURORA_NORETURN void process_scheduler_loop(void);
 bool process_async_scheduler_active(void);
 bool process_after_syscall(cpu_regs_t *regs);
 AURORA_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 code);
@@ -82,10 +83,16 @@ void process_dump_table(void);
 u32 process_current_pid(void);
 bool process_current_info(process_info_t *out);
 bool process_current_cwd(char *out, usize out_size);
+bool process_current_credentials(aurora_credinfo_t *out);
+bool process_set_current_credentials(const aurora_credinfo_t *cred);
+bool process_set_current_user(u32 uid, u32 gid, const char *name, bool admin);
+bool process_set_current_euid(u32 euid);
 bool process_set_current_cwd(const char *path);
 bool process_lookup(u32 pid, process_info_t *out);
 usize process_table_count(void);
 bool process_table_selftest(void);
+bool process_enter_kernel_test_context(void);
+void process_leave_kernel_test_context(void);
 
 bool process_copy_from_user(void *dst, uptr user, usize size);
 bool process_copy_to_user(uptr user, const void *src, usize size);
