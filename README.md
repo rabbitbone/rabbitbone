@@ -175,6 +175,10 @@ KTEST_STATUS: PASS
 - [Current status](docs/STATUS.md)
 - [Release notes](docs/RELEASES.md)
 
+## License
+
+AuroraOS is released under the [MIT License](LICENSE).
+
 ## Source layout
 
 ```text
