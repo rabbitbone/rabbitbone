@@ -372,7 +372,10 @@ bool process_validate_user_range(uptr user, usize size, bool write) {
         u64 flags = 0;
         if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags)) return false;
         if (!(flags & VMM_USER)) return false;
-        if (write && !(flags & VMM_WRITE)) return false;
+        if (write && !(flags & VMM_WRITE)) {
+            if (!(flags & VMM_COW) || !process_resolve_cow_page(&current_proc, addr)) return false;
+            if (!ensure_process_user_page_writable(&current_proc, addr, &phys, &flags)) return false;
+        }
         aurora_rust_user_copy_step_t step_info;
         if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         done += step_info.chunk;
@@ -410,7 +413,7 @@ bool process_copy_to_user(uptr user, const void *src, usize size) {
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return false;
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return false;
+        if (!ensure_process_user_page_writable(&current_proc, addr, &phys, &flags)) return false;
         aurora_rust_user_copy_step_t step_info;
         if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         usize n = step_info.chunk;

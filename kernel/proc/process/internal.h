@@ -131,4 +131,7 @@ static usize process_table_next;
 static bool process_initialized;
 
 static void release_mappings(active_process_t *p);
+static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
+static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr);
+static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out);
 

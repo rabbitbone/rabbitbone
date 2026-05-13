@@ -12,6 +12,9 @@ extern char __kernel_end[];
 #define MAX_TRACKED_FRAMES (1024u * 1024u)
 #define FRAME_BITMAP_PHYS 0x100000ull
 #define FRAME_BITMAP_BYTES (MAX_TRACKED_FRAMES / 8u)
+#define FRAME_REFCOUNT_PHYS 0x400000ull
+#define FRAME_REFCOUNT_BYTES (MAX_TRACKED_FRAMES * sizeof(u16))
+#define FRAME_REFCOUNTS ((u16 *)(uptr)FRAME_REFCOUNT_PHYS)
 static bitmap_t frames;
 static u64 frame_count;
 static u64 total_usable;
@@ -37,6 +40,7 @@ static bool range_intersects_reserved(u64 base, u64 length) {
     if (ranges_overlap_u64(base, length, 0, 0x200000ull)) return true;
     if (ranges_overlap_u64(base, length, (u64)(uptr)__kernel_start, (u64)(uptr)__kernel_end - (u64)(uptr)__kernel_start)) return true;
     if (ranges_overlap_u64(base, length, FRAME_BITMAP_PHYS, FRAME_BITMAP_BYTES)) return true;
+    if (ranges_overlap_u64(base, length, FRAME_REFCOUNT_PHYS, FRAME_REFCOUNT_BYTES)) return true;
     return false;
 }
 
@@ -73,6 +77,7 @@ void memory_init(const aurora_bootinfo_t *bootinfo) {
     if (frame_count > MAX_TRACKED_FRAMES) frame_count = MAX_TRACKED_FRAMES;
     bitmap_init(&frames, (u64 *)(uptr)FRAME_BITMAP_PHYS, (usize)frame_count);
     memset((void *)(uptr)FRAME_BITMAP_PHYS, 0xff, FRAME_BITMAP_BYTES);
+    memset((void *)(uptr)FRAME_REFCOUNT_PHYS, 0, FRAME_REFCOUNT_BYTES);
     for (u64 f = 0; f < frame_count; ++f) bitmap_set(&frames, (usize)f);
 
     if (bootinfo_validate(bootinfo)) {
@@ -87,6 +92,9 @@ void memory_init(const aurora_bootinfo_t *bootinfo) {
     mark_range(0, 0x200000, false);
     mark_range((u64)(uptr)__kernel_start, (u64)(uptr)__kernel_end - (u64)(uptr)__kernel_start, false);
     mark_range(FRAME_BITMAP_PHYS, FRAME_BITMAP_BYTES, false);
+    mark_range(FRAME_REFCOUNT_PHYS, FRAME_REFCOUNT_BYTES, false);
+    u16 *refs = FRAME_REFCOUNTS;
+    for (u64 f = 0; f < frame_count; ++f) refs[f] = bitmap_test(&frames, (usize)f) ? 1u : 0u;
     spin_unlock_irqrestore(&memory_lock, flags);
     KLOG(LOG_INFO, "mem", "frames=%llu usable=%llu KiB", (unsigned long long)frame_count, (unsigned long long)(total_usable / 1024));
 }
@@ -111,7 +119,10 @@ void *memory_alloc_contiguous_pages_below(usize pages, u64 max_exclusive) {
             }
         }
         if (!free_run) continue;
-        for (usize j = 0; j < pages; ++j) bitmap_set(&frames, bit + j);
+        for (usize j = 0; j < pages; ++j) {
+            bitmap_set(&frames, bit + j);
+            FRAME_REFCOUNTS[bit + j] = 1u;
+        }
         spin_unlock_irqrestore(&memory_lock, flags);
         return (void *)(uptr)(bit * PAGE_SIZE);
     }
@@ -141,13 +152,56 @@ void memory_free_contiguous_pages(void *base, usize pages) {
     }
     for (usize i = 0; i < pages; ++i) {
         if (!bitmap_test(&frames, bit + i)) PANIC("physical double free frame=%llu", (unsigned long long)(bit + i));
+        if (FRAME_REFCOUNTS[bit + i] != 1u) PANIC("physical free shared frame=%llu refs=%u", (unsigned long long)(bit + i), (unsigned)FRAME_REFCOUNTS[bit + i]);
     }
-    for (usize i = 0; i < pages; ++i) bitmap_clear(&frames, bit + i);
+    for (usize i = 0; i < pages; ++i) {
+        FRAME_REFCOUNTS[bit + i] = 0u;
+        bitmap_clear(&frames, bit + i);
+    }
     spin_unlock_irqrestore(&memory_lock, flags);
 }
 
 void memory_free_page(void *page) {
     memory_free_contiguous_pages(page, 1u);
+}
+
+bool memory_ref_page(void *page) {
+    if (!page) return false;
+    uptr addr = (uptr)page;
+    if (addr % PAGE_SIZE || range_intersects_reserved((u64)addr, PAGE_SIZE)) return false;
+    u64 flags = spin_lock_irqsave(&memory_lock);
+    usize bit = addr / PAGE_SIZE;
+    bool ok = bit < frame_count && bitmap_test(&frames, bit) && FRAME_REFCOUNTS[bit] > 0u && FRAME_REFCOUNTS[bit] < 0xffffu;
+    if (ok) ++FRAME_REFCOUNTS[bit];
+    spin_unlock_irqrestore(&memory_lock, flags);
+    return ok;
+}
+
+bool memory_unref_page(void *page) {
+    if (!page) return false;
+    uptr addr = (uptr)page;
+    if (addr % PAGE_SIZE || range_intersects_reserved((u64)addr, PAGE_SIZE)) return false;
+    u64 flags = spin_lock_irqsave(&memory_lock);
+    usize bit = addr / PAGE_SIZE;
+    if (bit >= frame_count || !bitmap_test(&frames, bit) || FRAME_REFCOUNTS[bit] == 0u) {
+        spin_unlock_irqrestore(&memory_lock, flags);
+        return false;
+    }
+    --FRAME_REFCOUNTS[bit];
+    if (FRAME_REFCOUNTS[bit] == 0u) bitmap_clear(&frames, bit);
+    spin_unlock_irqrestore(&memory_lock, flags);
+    return true;
+}
+
+u32 memory_page_refcount(void *page) {
+    if (!page) return 0;
+    uptr addr = (uptr)page;
+    if (addr % PAGE_SIZE) return 0;
+    u64 flags = spin_lock_irqsave(&memory_lock);
+    usize bit = addr / PAGE_SIZE;
+    u32 refs = (bit < frame_count && bitmap_test(&frames, bit)) ? (u32)FRAME_REFCOUNTS[bit] : 0u;
+    spin_unlock_irqrestore(&memory_lock, flags);
+    return refs;
 }
 
 void memory_get_stats(memory_stats_t *out) {
@@ -180,6 +234,7 @@ bool memory_selftest(void) {
     void *b = memory_alloc_page();
     void *c = memory_alloc_contiguous_pages_below(3u, 1024ull * 1024ull * 1024ull);
     bool ok = a && b && c && a != b;
+    if (ok) ok = memory_page_refcount(a) == 1u && memory_ref_page(a) && memory_page_refcount(a) == 2u && memory_unref_page(a) && memory_page_refcount(a) == 1u;
     if (ok) ok = (((uptr)a & (PAGE_SIZE - 1u)) == 0 && ((uptr)b & (PAGE_SIZE - 1u)) == 0 && ((uptr)c & (PAGE_SIZE - 1u)) == 0);
     if (a) memory_free_page(a);
     if (b) memory_free_page(b);

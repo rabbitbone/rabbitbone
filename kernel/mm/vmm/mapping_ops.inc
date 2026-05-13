@@ -106,12 +106,33 @@ bool vmm_unmap_4k(uptr virt) {
     return vmm_space_unmap_4k(&kernel_space_obj, virt);
 }
 
+
+bool vmm_space_remap_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
+    if ((virt & (PAGE_SIZE - 1u)) || (phys & (PAGE_SIZE - 1u)) || !vmm_leaf_flags_valid_for_space(space, virt, flags)) return false;
+    u64 irq = spin_lock_irqsave(&vmm_lock);
+    pte_t *pml4 = space_pml4(space);
+    if (!pml4) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    usize a, b, c, d;
+    split_indices(virt, &a, &b, &c, &d);
+    pte_t *pdpt = next_table(space, pml4, a, false, 0);
+    if (!pdpt) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    pte_t *pd = next_table(space, pdpt, b, false, 0);
+    if (!pd || (pd[c] & VMM_HUGE)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    pte_t *pt = next_table(space, pd, c, false, 0);
+    if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    pt[d] = (phys & PTE_ADDR_MASK) | (flags & ~PTE_ADDR_MASK) | VMM_PRESENT;
+    if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
+    spin_unlock_irqrestore(&vmm_lock, irq);
+    return true;
+}
+
 static u64 effective_leaf_flags(pte_t pml4e, pte_t pdpte, pte_t pde, pte_t pte, bool huge) {
     u64 effective = VMM_PRESENT;
     if ((pml4e & VMM_WRITE) && (pdpte & VMM_WRITE) && (pde & VMM_WRITE) && (huge || (pte & VMM_WRITE))) effective |= VMM_WRITE;
     if ((pml4e & VMM_USER) && (pdpte & VMM_USER) && (pde & VMM_USER) && (huge || (pte & VMM_USER))) effective |= VMM_USER;
     if ((pml4e | pdpte | pde | (huge ? 0ull : pte)) & VMM_NX) effective |= VMM_NX;
     if (!huge && (pte & VMM_GLOBAL)) effective |= VMM_GLOBAL;
+    if (!huge && (pte & VMM_COW)) effective |= VMM_COW;
     if (huge && (pde & VMM_GLOBAL)) effective |= VMM_GLOBAL;
     if (!huge && (pte & VMM_DIRTY)) effective |= VMM_DIRTY;
     if (!huge && (pte & VMM_ACCESSED)) effective |= VMM_ACCESSED;

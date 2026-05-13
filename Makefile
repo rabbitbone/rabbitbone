@@ -15,7 +15,7 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno
 USER_ASMFLAGS := --target=x86_64-unknown-none -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 -s -T user/user.ld
 
-USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget shebangcheck shebangexec pipecheck fdremapcheck pollcheck stdcat termcheck aursh init
+USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck aursh init
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)

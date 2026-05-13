@@ -189,9 +189,13 @@ static void test_user_processes(void) {
     check(ps == PROC_ERR_RANGE, "shebang recursion limit rejects interpreter loop");
 
     const char *fork_argv[] = { "/bin/forkcheck" };
+    memory_stats_t fork_mem_before;
+    memory_stats_t fork_mem_after;
+    memory_get_stats(&fork_mem_before);
     ps = process_exec("/bin/forkcheck", 1, fork_argv, &r);
-    bool fork_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
-    check(fork_ok, "ring3 /bin/forkcheck clones address space and waits child fork");
+    memory_get_stats(&fork_mem_after);
+    bool fork_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && fork_mem_after.free_frames >= fork_mem_before.free_frames;
+    check(fork_ok, "ring3 /bin/forkcheck validates COW fork isolation, fork+exec release, and non-COW text faults");
     if (!fork_ok) detail_process_result("/bin/forkcheck", ps, &r);
 
     const char *pipe_argv[] = { "/bin/pipecheck" };

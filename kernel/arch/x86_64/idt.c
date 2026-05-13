@@ -54,8 +54,10 @@ static bool regs_from_user(const cpu_regs_t *regs) { return (regs->cs & 3u) == 3
 
 static void default_exception(cpu_regs_t *regs) {
     if (regs_from_user(regs) && process_user_active()) {
-        if (process_async_scheduler_active()) process_fault_current_from_interrupt(regs, regs->vector, regs->vector == 14 ? read_cr2() : 0);
-        else process_fault_from_interrupt(regs->vector, regs->rip, regs->vector == 14 ? read_cr2() : 0);
+        u64 cr2 = regs->vector == 14 ? read_cr2() : 0;
+        if (regs->vector == 14 && process_try_resolve_cow_fault(regs, cr2)) return;
+        if (process_async_scheduler_active()) process_fault_current_from_interrupt(regs, regs->vector, cr2);
+        else process_fault_from_interrupt(regs->vector, regs->rip, cr2);
         return;
     }
     if (regs->vector == 14) {

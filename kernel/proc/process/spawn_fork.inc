@@ -63,16 +63,25 @@ static bool clone_current_address_space(active_process_t *child) {
     child->result.address_space_generation = alloc_address_space_generation();
     child->mapping_count = 0;
     for (usize i = 0; i < current_proc.mapping_count; ++i) {
-        void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
-        if (!page) return false;
-        memcpy(page, (const void *)current_proc.mappings[i].phys, PAGE_SIZE);
-        if (!vmm_space_map_4k(&child->space, current_proc.mappings[i].virt, (uptr)page, current_proc.mappings[i].final_flags)) {
-            memory_free_page(page);
+        user_mapping_t *parent_mapping = &current_proc.mappings[i];
+        if (!parent_mapping->phys) return false;
+        uptr virt = parent_mapping->virt;
+        uptr phys = parent_mapping->phys;
+        u64 child_flags = parent_mapping->final_flags;
+        if (parent_mapping->final_flags & VMM_WRITE) {
+            u64 cow_flags = (parent_mapping->final_flags & ~VMM_WRITE) | VMM_COW;
+            if (!vmm_space_protect_4k(&current_proc.space, virt, cow_flags)) return false;
+            parent_mapping->final_flags = cow_flags;
+            child_flags = cow_flags;
+        }
+        if (!memory_ref_page((void *)phys)) return false;
+        if (!vmm_space_map_4k(&child->space, virt, phys, child_flags)) {
+            (void)memory_unref_page((void *)phys);
             return false;
         }
-        if (track_mapping(child, current_proc.mappings[i].virt, (uptr)page, current_proc.mappings[i].final_flags) != PROC_OK) {
-            (void)vmm_space_unmap_4k(&child->space, current_proc.mappings[i].virt);
-            memory_free_page(page);
+        if (track_mapping(child, virt, phys, child_flags) != PROC_OK) {
+            (void)vmm_space_unmap_4k(&child->space, virt);
+            (void)memory_unref_page((void *)phys);
             return false;
         }
     }
@@ -127,6 +136,9 @@ static void finish_current(process_lifecycle_t state, process_status_t status, c
      */
     syscall_close_all_user_handles();
     syscall_save_user_handles(current_proc.fd_snapshot, sizeof(current_proc.fd_snapshot));
+
+    release_mappings(&current_proc);
+    if (current_proc.space.pml4_physical) vmm_space_destroy(&current_proc.space);
 
     last_result = current_proc.result;
     record_process_result(&last_result, status, last_result.started_ticks, last_result.finished_ticks);

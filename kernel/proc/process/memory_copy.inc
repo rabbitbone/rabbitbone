@@ -1,3 +1,51 @@
+static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr) {
+    if (!p || !p->active || !user_addr_range_valid(fault_addr, 1u)) return false;
+    uptr page_virt = AURORA_ALIGN_DOWN(fault_addr, PAGE_SIZE);
+    user_mapping_t *m = find_mapping(p, page_virt);
+    if (!m || !(m->final_flags & VMM_COW) || (m->final_flags & VMM_WRITE)) return false;
+    uptr phys = 0;
+    u64 flags = 0;
+    if (!vmm_space_translate(&p->space, page_virt, &phys, &flags)) return false;
+    phys = AURORA_ALIGN_DOWN(phys, PAGE_SIZE);
+    if (phys != m->phys || !(flags & VMM_USER) || !(flags & VMM_COW) || (flags & VMM_WRITE)) return false;
+    u32 refs = memory_page_refcount((void *)phys);
+    if (refs == 0u) return false;
+    u64 writable_flags = (m->final_flags | VMM_WRITE) & ~VMM_COW;
+    if (refs == 1u) {
+        if (!vmm_space_protect_4k(&p->space, page_virt, writable_flags)) return false;
+        m->final_flags = writable_flags;
+        return true;
+    }
+    void *new_page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+    if (!new_page) return false;
+    memcpy(new_page, (const void *)phys, PAGE_SIZE);
+    if (!vmm_space_remap_4k(&p->space, page_virt, (uptr)new_page, writable_flags)) {
+        memory_free_page(new_page);
+        return false;
+    }
+    if (!memory_unref_page((void *)phys)) {
+        (void)vmm_space_remap_4k(&p->space, page_virt, phys, m->final_flags);
+        memory_free_page(new_page);
+        return false;
+    }
+    m->phys = (uptr)new_page;
+    m->final_flags = writable_flags;
+    return true;
+}
+
+static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out) {
+    uptr phys = 0;
+    u64 flags = 0;
+    if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER)) return false;
+    if (!(flags & VMM_WRITE)) {
+        if (!(flags & VMM_COW) || !process_resolve_cow_page(p, addr)) return false;
+        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return false;
+    }
+    if (phys_out) *phys_out = phys;
+    if (flags_out) *flags_out = flags;
+    return true;
+}
+
 static bool copy_to_process_user_space(active_process_t *p, uptr user, const void *src, usize size) {
     if (!p || !p->active || (!src && size) || !user_addr_range_valid(user, size)) return false;
     const u8 *s = (const u8 *)src;
@@ -7,7 +55,7 @@ static bool copy_to_process_user_space(active_process_t *p, uptr user, const voi
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return false;
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return false;
+        if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return false;
         aurora_rust_user_copy_step_t step_info;
         if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         usize n = step_info.chunk;
@@ -37,7 +85,7 @@ static void release_mappings(active_process_t *p) {
     if (!p) return;
     for (usize i = 0; i < p->mapping_count; ++i) {
         (void)vmm_space_unmap_4k(&p->space, p->mappings[i].virt);
-        if (p->mappings[i].phys) memory_free_page((void *)p->mappings[i].phys);
+        if (p->mappings[i].phys) (void)memory_unref_page((void *)p->mappings[i].phys);
     }
     p->mapping_count = 0;
 }
@@ -133,7 +181,7 @@ static process_status_t copy_to_user_space(active_process_t *p, uptr user, const
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return PROC_ERR_RANGE;
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return PROC_ERR_RANGE;
+        if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return PROC_ERR_RANGE;
         aurora_rust_user_copy_step_t step_info;
         if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
         usize n = step_info.chunk;
@@ -162,7 +210,7 @@ static process_status_t read_vfs_to_user(active_process_t *p, const char *path, 
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return PROC_ERR_RANGE;
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return PROC_ERR_RANGE;
+        if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return PROC_ERR_RANGE;
         aurora_rust_user_copy_step_t step_info;
         if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
         usize n = step_info.chunk;

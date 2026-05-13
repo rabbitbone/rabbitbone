@@ -14,6 +14,7 @@ extern "C" {
 #define VMM_DIRTY    (1ull << 6)
 #define VMM_HUGE     (1ull << 7)
 #define VMM_GLOBAL   (1ull << 8)
+#define VMM_COW      (1ull << 9)  /* x86 software-available PTE bit */
 #define VMM_NX       (1ull << 63)
 
 #define VMM_SPACE_MAX_TABLES 128u
@@ -52,6 +53,7 @@ void vmm_space_destroy(vmm_space_t *space);
 bool vmm_space_map_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags);
 bool vmm_space_unmap_4k(vmm_space_t *space, uptr virt);
 bool vmm_space_protect_4k(vmm_space_t *space, uptr virt, u64 flags);
+bool vmm_space_remap_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags);
 bool vmm_space_translate(const vmm_space_t *space, uptr virt, uptr *phys_out, u64 *flags_out);
 void vmm_switch_space(vmm_space_t *space);
 void vmm_switch_kernel(void);

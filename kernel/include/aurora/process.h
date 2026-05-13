@@ -68,6 +68,7 @@ bool process_after_syscall(cpu_regs_t *regs);
 AURORA_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 code);
 void process_preempt_from_interrupt(cpu_regs_t *regs);
 void process_fault_current_from_interrupt(cpu_regs_t *regs, u64 vector, u64 cr2);
+bool process_try_resolve_cow_fault(cpu_regs_t *regs, u64 cr2);
 void process_request_reschedule(void);
 void process_request_exit(i32 code);
 void process_request_sleep(u64 ticks);

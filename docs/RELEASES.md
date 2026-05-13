@@ -3,6 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.5
+
+Copy-on-write fork update over `0.0.2.4`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.5` / `0x00000205`.
+- Added physical page refcounting with `memory_ref_page`, `memory_unref_page`, and `memory_page_refcount`; user address-space teardown now decrements shared backing pages instead of freeing them blindly.
+- Changed `fork()` from eager page copying to COW: read-only and executable pages are shared immediately, writable pages are made read-only plus `VMM_COW` in both parent and child, and the underlying physical page refcount is incremented.
+- Added user page-fault COW handling for present+write+user faults: single-reference COW pages regain `VMM_WRITE`, shared COW pages get a private copied page, and non-COW write faults still terminate the process.
+- Releases mappings on process exit and exec replacement so forked children and fork+exec paths decref/free shared pages promptly.
+- Expanded `/bin/forkcheck` and ktest coverage for parent/child COW isolation, distinct address-space generations, fork+exec release, child-exit page validity, and rejecting writes to read-only text as non-COW faults.
+- Removed the stale unbuilt `user/bin/execfail.c` probe instead of keeping dead source outside `USER_C_PROGS`.
+
 ## 0.0.2.4
 
 Interpreter and shebang execution support update over `0.0.2.3`.
