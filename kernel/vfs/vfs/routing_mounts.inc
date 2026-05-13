@@ -133,6 +133,41 @@ static void fill_ref_from_stat(vfs_node_ref_t *out, const char *path, const vfs_
     if (path) strncpy(out->path, path, sizeof(out->path) - 1u);
 }
 
+typedef struct root_list_ctx {
+    vfs_dir_iter_fn fn;
+    void *user;
+    char seen[VFS_MAX_MOUNTS * 2u][VFS_NAME_MAX];
+    usize seen_count;
+    bool stopped;
+} root_list_ctx_t;
+
+static bool root_name_seen(const root_list_ctx_t *ctx, const char *name) {
+    if (!ctx || !name) return false;
+    for (usize i = 0; i < ctx->seen_count; ++i) {
+        if (strcmp(ctx->seen[i], name) == 0) return true;
+    }
+    return false;
+}
+
+static void root_remember_name(root_list_ctx_t *ctx, const char *name) {
+    if (!ctx || !name || !name[0] || ctx->seen_count >= VFS_MAX_MOUNTS * 2u) return;
+    if (root_name_seen(ctx, name)) return;
+    strncpy(ctx->seen[ctx->seen_count], name, VFS_NAME_MAX - 1u);
+    ctx->seen[ctx->seen_count][VFS_NAME_MAX - 1u] = 0;
+    ++ctx->seen_count;
+}
+
+static bool root_forward_record(const vfs_dirent_t *entry, void *raw) {
+    root_list_ctx_t *ctx = (root_list_ctx_t *)raw;
+    if (!ctx || !entry) return false;
+    root_remember_name(ctx, entry->name);
+    if (!ctx->fn(entry, ctx->user)) {
+        ctx->stopped = true;
+        return false;
+    }
+    return true;
+}
+
 static vfs_status_t root_list(vfs_dir_iter_fn fn, void *ctx) {
     if (!fn) return VFS_ERR_INVAL;
 
@@ -176,17 +211,25 @@ static vfs_status_t root_list(vfs_dir_iter_fn fn, void *ctx) {
     }
     spin_unlock_irqrestore(&mounts_lock, flags);
 
+    root_list_ctx_t forward;
+    memset(&forward, 0, sizeof(forward));
+    forward.fn = fn;
+    forward.user = ctx;
+
     if (root_idx < VFS_MAX_MOUNTS) {
         vfs_mount_t *mnt = mount_acquire_index(root_idx, root_gen);
         if (mnt && mnt->ops->list) {
-            vfs_status_t st = mnt->ops->list(mnt, "/", fn, ctx);
+            vfs_status_t st = mnt->ops->list(mnt, "/", root_forward_record, &forward);
             mount_release(mnt);
             if (st != VFS_OK) return st;
+            if (forward.stopped) return VFS_OK;
         } else if (mnt) {
             mount_release(mnt);
         }
     }
     for (usize i = 0; i < mount_count; ++i) {
+        if (root_name_seen(&forward, mount_entries[i].name)) continue;
+        root_remember_name(&forward, mount_entries[i].name);
         if (!fn(&mount_entries[i], ctx)) break;
     }
     return VFS_OK;

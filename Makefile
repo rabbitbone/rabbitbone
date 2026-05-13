@@ -153,10 +153,13 @@ $(BUILD)/user/crt/start.o: user/crt/start.S
 	"$(CLANG)" $(USER_ASMFLAGS) -c $< -o $@
 
 USER_LIB_SRCS := user/lib/aurora.c $(wildcard user/lib/aurora/*.inc user/lib/aurora/*.h)
+AURSH_SPLIT_SRCS := $(wildcard user/bin/aursh/*.inc)
 
 $(BUILD)/user/lib/aurora.o: $(USER_LIB_SRCS) userlib/include/aurora_sys.h
 	mkdir -p $(dir $@)
 	"$(CLANG)" $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD)/user/aursh.o: $(AURSH_SPLIT_SRCS)
 
 $(BUILD)/user/%.o: user/bin/%.c userlib/include/aurora_sys.h
 	mkdir -p $(dir $@)

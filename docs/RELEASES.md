@@ -3,6 +3,15 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.1
+
+Patch update over `0.0.2.0`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.1` / `0x00000201`.
+- Split `/bin/aursh` into smaller checked-in implementation fragments and taught the build to track those shell fragments as dependencies.
+- Made root directory listing merge the real root filesystem entries with mounted top-level entries without emitting duplicate names.
+- Kept the `0.0.2.x` storage/runtime surface, `/sbin/init`, `/bin/aursh`, EXT4 durability work, and validation checks from `0.0.2.0` intact.
+
 ## 0.0.2.0
 
 First full `0.0.2.x` release line, compared with `0.0.1.40`.

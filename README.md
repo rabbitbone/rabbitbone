@@ -1,6 +1,6 @@
 # AuroraOS
 
-![Version](https://img.shields.io/badge/version-0.0.2.0-2f6fed)
+![Version](https://img.shields.io/badge/version-0.0.2.1-2f6fed)
 ![Target](https://img.shields.io/badge/target-x86_64%20VMware%20BIOS-222222)
 ![Kernel](https://img.shields.io/badge/kernel-independent-6b46c1)
 ![Written with](https://img.shields.io/badge/written%20with-GPT--5.5-0f766e)
@@ -9,7 +9,7 @@
 
 AuroraOS is an experimental amd64 operating system for VMware Legacy BIOS machines. It is not a Linux distribution, not a Unix clone, and not a bootloader demo. The repository contains the boot path, kernel, filesystem layer, syscall surface, small userland programs, host-side tests, and the tooling needed to build a raw disk image.
 
-The current release line is `0.0.2.0`. Compared with `0.0.1.40`, AuroraOS now can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline, depth-1, and depth-2 extent trees, maintain persistent directory htree indexes, journal metadata with async-coalesced ordered single-block recovery, buffer data writes with ordered data-before-metadata sync, preallocate zero-readable unwritten extents through EXT4, VFS, syscalls, and userland, recover orphaned unlinks, verify metadata checksums, repair corrupted htree metadata/free counters/dirent records even after raw-media cache divergence, create new directories as extent-backed inodes, expose sync/fsync/statvfs/install_commit/preallocate for application storage, handle cwd-relative filesystem operations, run the packaged `/sbin/init` and `/bin/aursh` userland shell path, and validate metadata after mutation stress. It can enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
+The current release line is `0.0.2.1`. Compared with `0.0.1.40`, AuroraOS now can boot through a BIOS stage1/stage2 loader, enter long mode, run a protected kernel, mount in-memory and disk filesystems, write EXT4 regular files through inline, depth-1, and depth-2 extent trees, maintain persistent directory htree indexes, journal metadata with async-coalesced ordered single-block recovery, buffer data writes with ordered data-before-metadata sync, preallocate zero-readable unwritten extents through EXT4, VFS, syscalls, and userland, recover orphaned unlinks, verify metadata checksums, repair corrupted htree metadata/free counters/dirent records even after raw-media cache divergence, create new directories as extent-backed inodes, expose sync/fsync/statvfs/install_commit/preallocate for application storage, handle cwd-relative filesystem operations, run the packaged `/sbin/init` and `/bin/aursh` userland shell path, and validate metadata after mutation stress. It can enter ring3, execute small ELF64 user programs, preempt them on a single CPU, and replace a process image through `exec`, `execv`, and `execve`.
 
 ## What is inside
 
