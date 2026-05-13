@@ -218,7 +218,7 @@ static void test_user_processes(void) {
     ps = process_exec("/bin/mmapcheck", 1, mmap_argv, &r);
     memory_get_stats(&mmap_mem_after);
     bool mmap_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmap_mem_after.free_frames >= mmap_mem_before.free_frames;
-    check(mmap_ok, "ring3 /bin/mmapcheck validates anonymous mmap/munmap/mprotect, VMA splitting, and mmap COW fork");
+    check(mmap_ok, "ring3 /bin/mmapcheck validates demand-paged anonymous mmap/munmap/mprotect, VMA splitting, and mmap COW fork");
     if (!mmap_ok) detail_process_result("/bin/mmapcheck", ps, &r);
 
     const char *mmapfile_argv[] = { "/bin/mmapfilecheck" };
@@ -228,7 +228,7 @@ static void test_user_processes(void) {
     ps = process_exec("/bin/mmapfilecheck", 1, mmapfile_argv, &r);
     memory_get_stats(&mmapfile_mem_after);
     bool mmapfile_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmapfile_mem_after.free_frames >= mmapfile_mem_before.free_frames;
-    check(mmapfile_ok, "ring3 /bin/mmapfilecheck validates file-backed private mmap over VFS handles");
+    check(mmapfile_ok, "ring3 /bin/mmapfilecheck validates demand-paged file-backed private mmap over VFS handles");
     if (!mmapfile_ok) detail_process_result("/bin/mmapfilecheck", ps, &r);
 
     const char *pipe_argv[] = { "/bin/pipecheck" };

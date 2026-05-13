@@ -370,7 +370,10 @@ bool process_validate_user_range(uptr user, usize size, bool write) {
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return false;
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags)) return false;
+        if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags)) {
+            if (!process_resolve_vma_fault(&current_proc, addr, write, false)) return false;
+            if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags)) return false;
+        }
         if (!(flags & VMM_USER)) return false;
         if (write && !(flags & VMM_WRITE)) {
             if (!(flags & VMM_COW) || !process_resolve_cow_page(&current_proc, addr)) return false;

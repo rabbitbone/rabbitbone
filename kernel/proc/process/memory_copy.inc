@@ -49,7 +49,11 @@ static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr) {
 static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out) {
     uptr phys = 0;
     u64 flags = 0;
-    if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER)) return false;
+    if (!vmm_space_translate(&p->space, addr, &phys, &flags)) {
+        if (!process_resolve_vma_fault(p, addr, true, false)) return false;
+        if (!vmm_space_translate(&p->space, addr, &phys, &flags)) return false;
+    }
+    if (!(flags & VMM_USER)) return false;
     if (!(flags & VMM_WRITE)) {
         if (!(flags & VMM_COW) || !process_resolve_cow_page(p, addr)) return false;
         if (!vmm_space_translate(&p->space, addr, &phys, &flags) || !(flags & VMM_USER) || !(flags & VMM_WRITE)) return false;
@@ -171,12 +175,14 @@ static bool process_range_free(const active_process_t *p, uptr start, uptr end) 
     return true;
 }
 
-static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id) {
+static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id, const vfs_node_ref_t *file_ref) {
     if (!p || start >= end || !user_page_aligned(start) || !user_page_aligned(end)) return PROC_ERR_INVAL;
     if (!user_addr_range_valid(start, (usize)(end - start))) return PROC_ERR_RANGE;
     if (!process_prot_valid(prot)) return PROC_ERR_INVAL;
     if (p->vma_count >= USER_MAX_VMAS) return PROC_ERR_NOMEM;
     if (!process_range_free(p, start, end)) return PROC_ERR_RANGE;
+    bool file_backed = kind == USER_VMA_MMAP && (flags & AURORA_MAP_ANON) == 0;
+    if (file_backed && !file_ref) return PROC_ERR_INVAL;
     user_vma_t v;
     memset(&v, 0, sizeof(v));
     v.start = start;
@@ -186,7 +192,8 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
     v.kind = kind;
     v.file_offset = file_offset;
     v.file_size = file_size;
-    v.file_id = file_id;
+    v.file_id = file_backed ? file_id : USER_MMAP_FILE_BACKING_NONE;
+    if (file_backed) v.file_ref = *file_ref;
     usize pos = 0;
     while (pos < p->vma_count && p->vmas[pos].start < start) ++pos;
     for (usize i = p->vma_count; i > pos; --i) p->vmas[i] = p->vmas[i - 1u];
@@ -196,7 +203,7 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
 }
 
 static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind) {
-    return process_add_vma_backed(p, start, end, prot, flags, kind, 0, 0, 0);
+    return process_add_vma_backed(p, start, end, prot, flags, kind, 0, 0, USER_MMAP_FILE_BACKING_NONE, 0);
 }
 
 static void process_remove_vma_at(active_process_t *p, usize idx) {
@@ -444,6 +451,23 @@ static process_status_t process_status_from_vfs(vfs_status_t vs) {
     return PROC_ERR_IO;
 }
 
+static const user_vma_t *process_find_vma_for_page_const(const active_process_t *p, uptr page_virt) {
+    if (!p) return 0;
+    uptr page_end = page_virt + PAGE_SIZE;
+    for (usize i = 0; i < p->vma_count; ++i) {
+        const user_vma_t *v = &p->vmas[i];
+        if (v->start <= page_virt && v->end >= page_end) return v;
+    }
+    return 0;
+}
+
+static bool process_vma_access_allowed(const user_vma_t *v, bool write, bool instruction_fetch) {
+    if (!v || v->kind != USER_VMA_MMAP) return false;
+    if (instruction_fetch) return (v->prot & AURORA_PROT_EXEC) != 0;
+    if (write) return (v->prot & AURORA_PROT_WRITE) != 0;
+    return (v->prot & (AURORA_PROT_READ | AURORA_PROT_WRITE)) != 0;
+}
+
 static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 flags, const vfs_node_ref_t *file_ref, u64 file_size, u64 file_offset) {
     if (!file_ref) return PROC_ERR_INVAL;
     if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
@@ -479,6 +503,25 @@ static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 f
         memory_free_page(page);
     }
     return st;
+}
+
+static bool process_resolve_vma_fault(active_process_t *p, uptr fault_addr, bool write, bool instruction_fetch) {
+    if (!p || !p->active || !user_addr_range_valid(fault_addr, 1u)) return false;
+    uptr page_virt = AURORA_ALIGN_DOWN(fault_addr, PAGE_SIZE);
+    if (find_mapping(p, page_virt)) return false;
+    const user_vma_t *v = process_find_vma_for_page_const(p, page_virt);
+    if (!process_vma_access_allowed(v, write, instruction_fetch)) return false;
+    u64 pte_flags = process_flags_from_prot(v->prot) & ~VMM_USER;
+    process_status_t st;
+    if (v->flags & AURORA_MAP_ANON) {
+        st = map_user_page(p, page_virt, pte_flags);
+    } else {
+        u64 delta = (u64)(page_virt - v->start);
+        u64 backing_offset = 0;
+        if (__builtin_add_overflow(v->file_offset, delta, &backing_offset)) return false;
+        st = map_user_file_page(p, page_virt, pte_flags, &v->file_ref, v->file_size, backing_offset);
+    }
+    return st == PROC_OK;
 }
 
 process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u32 flags, u64 fd, u64 file_offset, const vfs_node_ref_t *file_ref, u64 file_size, uptr *addr_out) {
@@ -517,33 +560,8 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
     }
     uptr end = start + (uptr)size;
     u32 stored_flags = flags;
-    process_status_t st = process_add_vma_backed(&current_proc, start, end, prot, stored_flags, USER_VMA_MMAP, is_anon ? 0 : file_offset, file_size, is_anon ? 0 : (u32)fd);
+    process_status_t st = process_add_vma_backed(&current_proc, start, end, prot, stored_flags, USER_VMA_MMAP, is_anon ? 0 : file_offset, file_size, is_anon ? USER_MMAP_FILE_BACKING_NONE : (u32)fd, is_anon ? 0 : file_ref);
     if (st != PROC_OK) return st;
-    u64 pte_flags = process_flags_from_prot(prot);
-    uptr v = start;
-    for (; v < end; v += PAGE_SIZE) {
-        if (is_anon) {
-            st = map_user_page(&current_proc, v, pte_flags & ~VMM_USER);
-        } else {
-            u64 page_file_off = file_offset + (u64)(v - start);
-            st = map_user_file_page(&current_proc, v, pte_flags & ~VMM_USER, file_ref, file_size, page_file_off);
-        }
-        if (st != PROC_OK) {
-            uptr rollback = start;
-            while (rollback < v) {
-                user_mapping_t *m = find_mapping(&current_proc, rollback);
-                if (m) release_mapping_at(&current_proc, (usize)(m - current_proc.mappings));
-                rollback += PAGE_SIZE;
-            }
-            for (usize i = 0; i < current_proc.vma_count; ++i) {
-                if (current_proc.vmas[i].start == start && current_proc.vmas[i].end == end && current_proc.vmas[i].kind == USER_VMA_MMAP) {
-                    process_remove_vma_at(&current_proc, i);
-                    break;
-                }
-            }
-            return st;
-        }
-    }
     current_proc.mmap_cursor = end < arena_end ? end : USER_MMAP_BASE;
     *addr_out = start;
     return PROC_OK;
@@ -558,8 +576,7 @@ process_status_t process_current_munmap(uptr addr, usize length) {
     if (st != PROC_OK) return st;
     for (uptr v = start; v < end; v += PAGE_SIZE) {
         user_mapping_t *m = find_mapping(&current_proc, v);
-        if (!m) return PROC_ERR_RANGE;
-        release_mapping_at(&current_proc, (usize)(m - current_proc.mappings));
+        if (m) release_mapping_at(&current_proc, (usize)(m - current_proc.mappings));
     }
     for (usize i = 0; i < current_proc.vma_count;) {
         if (current_proc.vmas[i].kind == USER_VMA_MMAP && current_proc.vmas[i].start >= start && current_proc.vmas[i].end <= end) {
@@ -583,7 +600,7 @@ process_status_t process_current_mprotect(uptr addr, usize length, u32 prot) {
     u64 new_flags = process_flags_from_prot(prot);
     for (uptr v = start; v < end; v += PAGE_SIZE) {
         user_mapping_t *m = find_mapping(&current_proc, v);
-        if (!m) return PROC_ERR_RANGE;
+        if (!m) continue;
         u64 pte_flags = new_flags;
         if (m->final_flags & VMM_COW) pte_flags = (new_flags & ~VMM_WRITE) | VMM_COW;
         if (!vmm_space_protect_4k(&current_proc.space, v, pte_flags)) return PROC_ERR_RANGE;

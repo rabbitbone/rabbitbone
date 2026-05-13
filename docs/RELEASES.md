@@ -4,6 +4,17 @@ This file keeps the release history short enough to be useful. Older one-off sta
 
 
 
+## 0.0.2.9
+
+VMA-backed demand paging for mmap update over `0.0.2.8`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.9` / `0x00000209`.
+- Changed anonymous and file-backed private `mmap` to install VMA metadata only; no user pages or physical frames are allocated by `mmap` itself.
+- Added recoverable user page-fault handling for non-present mmap VMA pages, materializing zero-filled anonymous pages or private VFS-backed pages from the stored file reference.
+- Made `munmap` and `mprotect` operate on partially materialized ranges, including VMA splitting, unmapped-page skips, PTE updates for present pages, and future-protection changes for not-yet-faulted pages.
+- Preserved fork/COW, exec, exit, refcount teardown, fd-close lifetime, and file-backed private behavior under demand paging.
+- Extended `/bin/mmapcheck` and `/bin/mmapfilecheck` to verify that mappings do not consume physical pages until first touch.
+
 ## 0.0.2.8
 
 File-backed private mmap over VFS handles update over `0.0.2.7`.

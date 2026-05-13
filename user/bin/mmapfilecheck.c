@@ -6,6 +6,15 @@
 #define FILE_SIZE 6000ul
 #define MAP_FILE_FLAGS (AURORA_MAP_PRIVATE)
 
+static int current_mapped_pages(unsigned long long *out) {
+    au_procinfo_t info;
+    au_memset(&info, 0, sizeof(info));
+    if (!out) return 1;
+    if (au_procinfo((unsigned int)au_getpid(), &info) != 0) return 2;
+    *out = info.mapped_pages;
+    return 0;
+}
+
 static unsigned char pattern_at(unsigned long i) {
     return (unsigned char)(((i * 37ul) + 11ul) & 0xffu);
 }
@@ -165,6 +174,31 @@ static int check_rejects(void) {
     return 0;
 }
 
+static int check_file_demand_faults_after_close(void) {
+    if (prepare_file() != 0) return 160;
+    unsigned long long before = 0, after_map = 0, after_first = 0, after_second = 0, after_unmap = 0;
+    if (current_mapped_pages(&before) != 0) return 161;
+    au_i64 fd = au_open2(PATH, AURORA_O_RDONLY);
+    if (fd < 0) return 162;
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FILE_FLAGS, fd, 0);
+    if (p == (void *)-1 || !p) return 163;
+    if (au_close(fd) != 0) return 164;
+    if (current_mapped_pages(&after_map) != 0) return 165;
+    if (after_map != before) return 166;
+    if (p[0] != pattern_at(0)) return 167;
+    if (current_mapped_pages(&after_first) != 0) return 168;
+    if (after_first != before + 1ull) return 169;
+    if (p[PAGE] != pattern_at(PAGE)) return 170;
+    if (current_mapped_pages(&after_second) != 0) return 171;
+    if (after_second != before + 2ull) return 172;
+    p[0] = 0xabu;
+    if (p[0] != 0xabu) return 173;
+    if (munmap(p, PAGE * 2u) != 0) return 174;
+    if (current_mapped_pages(&after_unmap) != 0) return 175;
+    if (after_unmap != before) return 176;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -177,6 +211,8 @@ int main(int argc, char **argv) {
     r = check_file_exec_release();
     if (r) return r;
     r = check_rejects();
+    if (r) return r;
+    r = check_file_demand_faults_after_close();
     if (r) return r;
     return 0;
 }

@@ -3,6 +3,15 @@
 #define PAGE 4096ul
 #define MAP_FLAGS (AURORA_MAP_ANON | AURORA_MAP_PRIVATE)
 
+static int current_mapped_pages(unsigned long long *out) {
+    au_procinfo_t info;
+    au_memset(&info, 0, sizeof(info));
+    if (!out) return 1;
+    if (au_procinfo((unsigned int)au_getpid(), &info) != 0) return 2;
+    *out = info.mapped_pages;
+    return 0;
+}
+
 static int wait_exit(unsigned int pid, unsigned int state, int exit_code, int faulted, unsigned long long vector) {
     au_procinfo_t info;
     au_memset(&info, 0, sizeof(info));
@@ -119,10 +128,31 @@ static int check_fixed_and_arg_rejects(void) {
     return 0;
 }
 
+static int check_demand_anon(void) {
+    unsigned long long before = 0, after_map = 0, after_first = 0, after_second = 0, after_unmap = 0;
+    if (current_mapped_pages(&before) != 0) return 150;
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    if (p == (void *)-1 || !p) return 151;
+    if (current_mapped_pages(&after_map) != 0) return 152;
+    if (after_map != before) return 153;
+    if (p[0] != 0) return 154;
+    if (current_mapped_pages(&after_first) != 0) return 155;
+    if (after_first != before + 1ull) return 156;
+    p[PAGE] = 0x88u;
+    if (current_mapped_pages(&after_second) != 0) return 157;
+    if (after_second != before + 2ull) return 158;
+    if (munmap(p, PAGE * 2u) != 0) return 159;
+    if (current_mapped_pages(&after_unmap) != 0) return 160;
+    if (after_unmap != before) return 161;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    int r = check_basic_map_unmap();
+    int r = check_demand_anon();
+    if (r) return r;
+    r = check_basic_map_unmap();
     if (r) return r;
     r = check_mprotect_fault_and_restore();
     if (r) return r;

@@ -37,6 +37,7 @@
 #define PROCESS_INT80_LEN 2u
 #define PROCESS_SHEBANG_LINE_MAX 127u
 #define PROCESS_SHEBANG_MAX_DEPTH 2u
+#define USER_MMAP_FILE_BACKING_NONE 0xffffffffu
 
 
 typedef enum user_vma_kind {
@@ -57,6 +58,7 @@ typedef struct user_vma {
     u64 file_size;
     u32 file_id;
     u32 file_reserved;
+    vfs_node_ref_t file_ref;
 } user_vma_t;
 
 typedef struct user_mapping {
@@ -167,10 +169,11 @@ static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
 static process_status_t track_mapping(active_process_t *p, uptr virt, uptr phys, u64 final_flags);
 static void release_mapping_at(active_process_t *p, usize idx);
 static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr);
+static bool process_resolve_vma_fault(active_process_t *p, uptr fault_addr, bool write, bool instruction_fetch);
 static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out);
 static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out);
 static bool process_range_has_vma(const active_process_t *p, uptr start, uptr end, u32 kind);
 static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind);
-static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id);
+static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id, const vfs_node_ref_t *file_ref);
 static process_status_t process_split_vmas_for_range(active_process_t *p, uptr start, uptr end);
 

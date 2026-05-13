@@ -25,12 +25,23 @@ void process_preempt_from_interrupt(cpu_regs_t *regs) {
 
 bool process_try_resolve_cow_fault(cpu_regs_t *regs, u64 cr2) {
     if (!regs || regs->vector != 14u || !current_proc.active) return false;
-    const u64 required = 0x1u | 0x2u | 0x4u; /* present + write + user */
-    if ((regs->error & required) != required) return false;
     if (!resolve_current_async_slot()) return false;
-    if (!process_resolve_cow_page(&current_proc, (uptr)cr2)) return false;
-    (void)sync_current_to_slot();
-    return true;
+    const bool present = (regs->error & 0x1u) != 0;
+    const bool write = (regs->error & 0x2u) != 0;
+    const bool user = (regs->error & 0x4u) != 0;
+    const bool instruction_fetch = (regs->error & 0x10u) != 0;
+    if (!user) return false;
+    if (present && write) {
+        if (!process_resolve_cow_page(&current_proc, (uptr)cr2)) return false;
+        (void)sync_current_to_slot();
+        return true;
+    }
+    if (!present) {
+        if (!process_resolve_vma_fault(&current_proc, (uptr)cr2, write, instruction_fetch)) return false;
+        (void)sync_current_to_slot();
+        return true;
+    }
+    return false;
 }
 
 void process_fault_current_from_interrupt(cpu_regs_t *regs, u64 vector, u64 cr2) {
