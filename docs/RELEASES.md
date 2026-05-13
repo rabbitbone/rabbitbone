@@ -3,6 +3,19 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.6
+
+User heap, brk/sbrk, and userlib malloc update over `0.0.2.5`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.6` / `0x00000206`.
+- Added per-process heap bounds (`heap_base`, `heap_break`, `heap_limit`) derived from the loaded user ELF image and kept below the user stack window.
+- Added `brk` and `sbrk` syscalls through the C ABI, Rust dispatcher/name table/validator, and userland wrappers.
+- Implemented lazy 4 KiB user heap mapping on heap growth and clean unmap/decref on shrink, exit, and exec replacement.
+- Preserved heap mappings through COW `fork`: writable heap pages become COW like other writable user pages, and child/parent writes are isolated through the recoverable user page-fault path.
+- Added userlib `malloc`, `free`, `calloc`, and `realloc` on top of `sbrk`, with block splitting, coalescing, overflow checks, and 16-byte alignment.
+- Added `/bin/heapcheck` and ktest coverage for direct `brk`/`sbrk`, allocator reuse, calloc zeroing, realloc preservation, heap COW fork isolation, and fork+exec heap-page release.
+- Enabled userland function/data section GC so the allocator does not bloat every embedded test ELF that does not use it.
+
 ## 0.0.2.5
 
 Copy-on-write fork update over `0.0.2.4`.

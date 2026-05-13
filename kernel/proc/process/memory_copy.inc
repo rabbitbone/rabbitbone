@@ -119,6 +119,38 @@ static process_status_t track_mapping(active_process_t *p, uptr virt, uptr phys,
     return PROC_OK;
 }
 
+
+static void release_mapping_at(active_process_t *p, usize idx) {
+    if (!p || idx >= p->mapping_count) return;
+    (void)vmm_space_unmap_4k(&p->space, p->mappings[idx].virt);
+    if (p->mappings[idx].phys) (void)memory_unref_page((void *)p->mappings[idx].phys);
+    for (usize i = idx + 1u; i < p->mapping_count; ++i) p->mappings[i - 1u] = p->mappings[i];
+    --p->mapping_count;
+    p->result.mapped_pages = p->mapping_count;
+}
+
+static process_status_t process_init_heap_for(active_process_t *p, usize first_mapping) {
+    if (!p || first_mapping > p->mapping_count) return PROC_ERR_INVAL;
+    uptr image_end = USER_IMAGE_BASE;
+    for (usize i = first_mapping; i < p->mapping_count; ++i) {
+        uptr end = 0;
+        if (__builtin_add_overflow(p->mappings[i].virt, (uptr)PAGE_SIZE, &end)) return PROC_ERR_RANGE;
+        if (end > image_end) image_end = end;
+    }
+    uptr heap_base = 0;
+    uptr heap_limit = 0;
+    if (__builtin_add_overflow(image_end, (uptr)(USER_HEAP_GAP_PAGES * PAGE_SIZE), &heap_base)) return PROC_ERR_RANGE;
+    heap_base = AURORA_ALIGN_UP(heap_base, PAGE_SIZE);
+    if (__builtin_add_overflow(heap_base, (uptr)(USER_HEAP_MAX_PAGES * PAGE_SIZE), &heap_limit)) return PROC_ERR_RANGE;
+    if (!user_addr_range_valid(heap_base, 0) || !user_addr_range_valid(heap_limit - 1u, 1u)) return PROC_ERR_RANGE;
+    uptr lowest_stack_base = USER_STACK_TOP - ((uptr)USER_STACK_ASLR_PAGES + USER_STACK_PAGES + USER_STACK_GUARD_PAGES) * PAGE_SIZE;
+    if (heap_limit >= lowest_stack_base) return PROC_ERR_RANGE;
+    p->heap_base = heap_base;
+    p->heap_break = heap_base;
+    p->heap_limit = heap_limit;
+    return PROC_OK;
+}
+
 static process_status_t map_user_page(active_process_t *p, uptr virt, u64 flags) {
     if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
     if (find_mapping(p, virt)) return PROC_ERR_RANGE;
@@ -137,6 +169,65 @@ static process_status_t map_user_page(active_process_t *p, uptr virt, u64 flags)
         memory_free_page(page);
     }
     return st;
+}
+
+
+static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out) {
+    if (!p || !p->active || !p->heap_base || p->heap_base > p->heap_limit) return PROC_ERR_INVAL;
+    if (new_break == 0) {
+        if (current_out) *current_out = p->heap_break;
+        return PROC_OK;
+    }
+    if (new_break < p->heap_base || new_break > p->heap_limit) return PROC_ERR_RANGE;
+    uptr old_end = AURORA_ALIGN_UP(p->heap_break, PAGE_SIZE);
+    uptr new_end = AURORA_ALIGN_UP(new_break, PAGE_SIZE);
+    if (new_end > old_end) {
+        uptr v = old_end;
+        for (; v < new_end; v += PAGE_SIZE) {
+            process_status_t st = map_user_page(p, v, VMM_WRITE | VMM_NX);
+            if (st != PROC_OK) {
+                for (uptr rollback = old_end; rollback < v; rollback += PAGE_SIZE) {
+                    user_mapping_t *m = find_mapping(p, rollback);
+                    if (m) release_mapping_at(p, (usize)(m - p->mappings));
+                }
+                return st;
+            }
+        }
+    } else if (new_end < old_end) {
+        uptr v = new_end;
+        while (v < old_end) {
+            user_mapping_t *m = find_mapping(p, v);
+            if (!m) return PROC_ERR_RANGE;
+            release_mapping_at(p, (usize)(m - p->mappings));
+            v += PAGE_SIZE;
+        }
+    }
+    p->heap_break = new_break;
+    if (current_out) *current_out = p->heap_break;
+    return PROC_OK;
+}
+
+process_status_t process_current_brk(uptr requested, uptr *current_out) {
+    if (!current_proc.active) return PROC_ERR_INVAL;
+    return process_set_brk_for(&current_proc, requested, current_out);
+}
+
+process_status_t process_current_sbrk(i64 increment, uptr *old_break_out) {
+    if (!current_proc.active) return PROC_ERR_INVAL;
+    uptr old_break = current_proc.heap_break;
+    uptr new_break = old_break;
+    if (increment >= 0) {
+        if (__builtin_add_overflow(old_break, (uptr)(u64)increment, &new_break)) return PROC_ERR_RANGE;
+    } else {
+        u64 delta = (u64)(-(increment + 1)) + 1u;
+        if (delta > old_break) return PROC_ERR_RANGE;
+        new_break = old_break - (uptr)delta;
+    }
+    uptr ignored = 0;
+    process_status_t st = process_set_brk_for(&current_proc, new_break, &ignored);
+    if (st != PROC_OK) return st;
+    if (old_break_out) *old_break_out = old_break;
+    return PROC_OK;
 }
 
 static process_status_t ensure_image_page(active_process_t *p, uptr virt, u64 segment_final_flags) {

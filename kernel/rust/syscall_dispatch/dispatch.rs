@@ -77,6 +77,8 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::TtyClearLine => aurora_sys_tty_clearline(),
             SyscallNo::TtyClear => aurora_sys_tty_clear(),
             SyscallNo::TtyCursorVisible => aurora_sys_tty_cursor_visible(args.a0),
+            SyscallNo::Brk => aurora_sys_brk(args.a0),
+            SyscallNo::Sbrk => aurora_sys_sbrk(args.a0),
         }
     }
 }

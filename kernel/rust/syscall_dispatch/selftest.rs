@@ -50,6 +50,8 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(60) != Ok(SyscallNo::Chmod) { return false; }
     if SyscallNo::decode(61) != Ok(SyscallNo::Chown) { return false; }
     if SyscallNo::decode(62) != Ok(SyscallNo::Kctl) { return false; }
+    if SyscallNo::decode(68) != Ok(SyscallNo::Brk) { return false; }
+    if SyscallNo::decode(69) != Ok(SyscallNo::Sbrk) { return false; }
     if SyscallNo::decode(crate::abi::AURORA_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
@@ -159,6 +161,8 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::Kctl, SysArgs { a0: KCTL_OP_MAX, a1: 0x10000, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Kctl, SysArgs { a0: 0, a1: 0, a2: 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Kctl, SysArgs { a0: 0, a1: 0x10000, a2: KCTL_OUT_MAX + 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Brk, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Sbrk, SysArgs { a0: 0xffff_ffff_ffff_ffff, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
 
     true
 }

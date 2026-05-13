@@ -74,6 +74,8 @@ void process_request_exit(i32 code);
 void process_request_sleep(u64 ticks);
 bool process_request_wait(u32 pid, uptr out_ptr);
 bool process_request_fork(void);
+process_status_t process_current_brk(uptr requested, uptr *current_out);
+process_status_t process_current_sbrk(i64 increment, uptr *old_break_out);
 process_status_t process_request_exec(const char *path, int argc, const char *const *argv);
 process_status_t process_request_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp);
 const char *process_status_name(process_status_t st);

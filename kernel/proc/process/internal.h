@@ -25,6 +25,8 @@
 #define USER_STACK_PAGES     8u
 #define USER_STACK_GUARD_PAGES 1u
 #define USER_STACK_ASLR_PAGES 16u
+#define USER_HEAP_MAX_PAGES  128u
+#define USER_HEAP_GAP_PAGES  1u
 #define USER_MAX_MAPPINGS    256u
 #define USER_ARG_STRING_MAX  128u
 #define USER_BACKING_PHYS_LIMIT MEMORY_KERNEL_DIRECT_LIMIT
@@ -60,6 +62,9 @@ typedef struct active_process {
     vmm_space_t space;
     user_mapping_t mappings[USER_MAX_MAPPINGS];
     usize mapping_count;
+    uptr heap_base;
+    uptr heap_break;
+    uptr heap_limit;
     u8 fd_snapshot[SYSCALL_USER_HANDLE_SNAPSHOT_BYTES];
     char cwd[VFS_PATH_MAX];
     aurora_credinfo_t cred;
@@ -134,4 +139,5 @@ static void release_mappings(active_process_t *p);
 static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
 static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr);
 static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out);
+static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out);
 

@@ -92,6 +92,8 @@ pub enum SyscallNo {
     TtyClearLine = 65,
     TtyClear = 66,
     TtyCursorVisible = 67,
+    Brk = 68,
+    Sbrk = 69,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

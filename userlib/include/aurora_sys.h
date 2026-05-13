@@ -81,6 +81,8 @@ enum au_syscall_id {
     AU_SYS_TTY_CLEAR_LINE = AURORA_SYS_TTY_CLEAR_LINE,
     AU_SYS_TTY_CLEAR = AURORA_SYS_TTY_CLEAR,
     AU_SYS_TTY_CURSOR_VISIBLE = AURORA_SYS_TTY_CURSOR_VISIBLE,
+    AU_SYS_BRK = AURORA_SYS_BRK,
+    AU_SYS_SBRK = AURORA_SYS_SBRK,
 };
 
 typedef struct au_result {
@@ -219,6 +221,13 @@ au_i64 au_tty_setcursor(unsigned int row, unsigned int col);
 au_i64 au_tty_clearline(void);
 au_i64 au_tty_clear(void);
 au_i64 au_tty_cursor_visible(unsigned int visible);
+au_i64 au_brk(void *addr);
+au_i64 au_sbrk(au_i64 increment);
+void *sbrk(long increment);
+void *malloc(au_usize size);
+void free(void *ptr);
+void *calloc(au_usize count, au_usize size);
+void *realloc(void *ptr, au_usize size);
 au_i64 au_dup(au_i64 h);
 au_i64 au_tell(au_i64 h);
 au_i64 au_fstat(au_i64 h, au_stat_t *out);

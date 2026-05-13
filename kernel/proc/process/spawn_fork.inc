@@ -62,6 +62,9 @@ static bool clone_current_address_space(active_process_t *child) {
     child->result.address_space = child->space.pml4_physical;
     child->result.address_space_generation = alloc_address_space_generation();
     child->mapping_count = 0;
+    child->heap_base = current_proc.heap_base;
+    child->heap_break = current_proc.heap_break;
+    child->heap_limit = current_proc.heap_limit;
     for (usize i = 0; i < current_proc.mapping_count; ++i) {
         user_mapping_t *parent_mapping = &current_proc.mappings[i];
         if (!parent_mapping->phys) return false;

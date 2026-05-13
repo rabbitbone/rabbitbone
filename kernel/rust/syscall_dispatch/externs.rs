@@ -67,5 +67,7 @@ extern "C" {
     fn aurora_sys_tty_clearline() -> SyscallResult;
     fn aurora_sys_tty_clear() -> SyscallResult;
     fn aurora_sys_tty_cursor_visible(visible: u64) -> SyscallResult;
+    fn aurora_sys_brk(requested: u64) -> SyscallResult;
+    fn aurora_sys_sbrk(increment: u64) -> SyscallResult;
 }
 

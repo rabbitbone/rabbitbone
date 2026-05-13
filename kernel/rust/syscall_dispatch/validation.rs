@@ -2,7 +2,7 @@ fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
-        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync => Ok(()),
+        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync | SyscallNo::Brk | SyscallNo::Sbrk => Ok(()),
         SyscallNo::WriteConsole => {
             if a.a1 > MAX_CONSOLE_WRITE || (a.a0 == 0 && a.a1 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }

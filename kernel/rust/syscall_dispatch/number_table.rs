@@ -69,6 +69,8 @@ impl SyscallNo {
             65 => Ok(Self::TtyClearLine),
             66 => Ok(Self::TtyClear),
             67 => Ok(Self::TtyCursorVisible),
+            68 => Ok(Self::Brk),
+            69 => Ok(Self::Sbrk),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -143,6 +145,8 @@ impl SyscallNo {
             Self::TtyClearLine => b"tty_clearline\0",
             Self::TtyClear => b"tty_clear\0",
             Self::TtyCursorVisible => b"tty_cursor_visible\0",
+            Self::Brk => b"brk\0",
+            Self::Sbrk => b"sbrk\0",
         }
     }
 }

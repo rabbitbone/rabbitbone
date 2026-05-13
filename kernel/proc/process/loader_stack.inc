@@ -60,6 +60,8 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
     if (!entry_in_exec_segment) return PROC_ERR_FORMAT;
     process_status_t ps = protect_loaded_image(p, image_first_mapping, p->mapping_count);
     if (ps != PROC_OK) return ps;
+    ps = process_init_heap_for(p, image_first_mapping);
+    if (ps != PROC_OK) return ps;
     *entry_out = eh.e_entry;
     return PROC_OK;
 }
