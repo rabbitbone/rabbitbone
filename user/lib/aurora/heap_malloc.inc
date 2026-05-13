@@ -41,6 +41,33 @@ void *sbrk(long increment) {
     return r < 0 ? (void *)-1 : (void *)(unsigned long)r;
 }
 
+void *au_mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags) {
+    au_result_t r = au_syscall6(AU_SYS_MMAP, (au_u64)(unsigned long)addr, (au_u64)length, (au_u64)prot, (au_u64)flags, 0, 0);
+    return r.error ? (void *)-1 : (void *)(unsigned long)r.value;
+}
+
+au_i64 au_munmap(void *addr, au_usize length) {
+    au_result_t r = au_syscall3(AU_SYS_MUNMAP, (au_u64)(unsigned long)addr, (au_u64)length, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_mprotect(void *addr, au_usize length, unsigned int prot) {
+    au_result_t r = au_syscall3(AU_SYS_MPROTECT, (au_u64)(unsigned long)addr, (au_u64)length, (au_u64)prot);
+    return r.error ? r.error : r.value;
+}
+
+void *mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags) {
+    return au_mmap(addr, length, prot, flags);
+}
+
+au_i64 munmap(void *addr, au_usize length) {
+    return au_munmap(addr, length);
+}
+
+au_i64 mprotect(void *addr, au_usize length, unsigned int prot) {
+    return au_mprotect(addr, length, prot);
+}
+
 static au_heap_block_t *au_heap_find_free(au_usize size) {
     for (au_heap_block_t *b = au_heap_head; b; b = b->next) {
         if (b->free && b->size >= size) return b;

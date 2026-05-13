@@ -60,6 +60,18 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
     if (!entry_in_exec_segment) return PROC_ERR_FORMAT;
     process_status_t ps = protect_loaded_image(p, image_first_mapping, p->mapping_count);
     if (ps != PROC_OK) return ps;
+    for (usize mi = image_first_mapping; mi < p->mapping_count;) {
+        uptr run_start = p->mappings[mi].virt;
+        uptr run_end = run_start + PAGE_SIZE;
+        u32 run_prot = process_prot_from_flags(p->mappings[mi].final_flags);
+        ++mi;
+        while (mi < p->mapping_count && p->mappings[mi].virt == run_end && process_prot_from_flags(p->mappings[mi].final_flags) == run_prot) {
+            run_end += PAGE_SIZE;
+            ++mi;
+        }
+        ps = process_add_vma(p, run_start, run_end, run_prot, 0, USER_VMA_IMAGE);
+        if (ps != PROC_OK) return ps;
+    }
     ps = process_init_heap_for(p, image_first_mapping);
     if (ps != PROC_OK) return ps;
     *entry_out = eh.e_entry;
@@ -89,6 +101,8 @@ static process_status_t build_user_stack(active_process_t *p, int argc, const ch
         process_status_t st = map_user_page(p, stack_base + i * PAGE_SIZE, VMM_WRITE | VMM_NX);
         if (st != PROC_OK) return st;
     }
+    process_status_t stack_vma_status = process_add_vma(p, stack_base, stack_top, AURORA_PROT_READ | AURORA_PROT_WRITE, AURORA_MAP_ANON | AURORA_MAP_PRIVATE, USER_VMA_STACK);
+    if (stack_vma_status != PROC_OK) return stack_vma_status;
     uptr sp = stack_top;
     u64 arg_ptrs[PROCESS_ARG_MAX + 1u];
     u64 env_ptrs[PROCESS_ENV_MAX + 1u];

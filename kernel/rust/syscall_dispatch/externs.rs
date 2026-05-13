@@ -69,5 +69,8 @@ extern "C" {
     fn aurora_sys_tty_cursor_visible(visible: u64) -> SyscallResult;
     fn aurora_sys_brk(requested: u64) -> SyscallResult;
     fn aurora_sys_sbrk(increment: u64) -> SyscallResult;
+    fn aurora_sys_mmap(requested: u64, length: u64, prot: u64, flags: u64) -> SyscallResult;
+    fn aurora_sys_munmap(addr: u64, length: u64) -> SyscallResult;
+    fn aurora_sys_mprotect(addr: u64, length: u64, prot: u64) -> SyscallResult;
 }
 

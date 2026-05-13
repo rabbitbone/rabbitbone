@@ -38,6 +38,7 @@ static void test_user_processes(void) {
     check(vfs_stat("/bin/fdleak", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/fdleak fd-table ELF");
     check(vfs_stat("/bin/forkcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/forkcheck fork/wait ELF");
     check(vfs_stat("/bin/heapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/heapcheck brk/sbrk malloc ELF");
+    check(vfs_stat("/bin/mmapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapcheck anonymous mmap/mprotect ELF");
     check(vfs_stat("/bin/procctl", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/procctl async spawn/wait ELF");
     check(vfs_stat("/bin/execcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execcheck execv ELF");
     check(vfs_stat("/bin/execfdcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execfdcheck fd inheritance/CLOEXEC ELF");
@@ -208,6 +209,16 @@ static void test_user_processes(void) {
     bool heap_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && heap_mem_after.free_frames >= heap_mem_before.free_frames;
     check(heap_ok, "ring3 /bin/heapcheck validates brk/sbrk, malloc/calloc/realloc/free, and heap COW fork");
     if (!heap_ok) detail_process_result("/bin/heapcheck", ps, &r);
+
+    const char *mmap_argv[] = { "/bin/mmapcheck" };
+    memory_stats_t mmap_mem_before;
+    memory_stats_t mmap_mem_after;
+    memory_get_stats(&mmap_mem_before);
+    ps = process_exec("/bin/mmapcheck", 1, mmap_argv, &r);
+    memory_get_stats(&mmap_mem_after);
+    bool mmap_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmap_mem_after.free_frames >= mmap_mem_before.free_frames;
+    check(mmap_ok, "ring3 /bin/mmapcheck validates anonymous mmap/munmap/mprotect, VMA splitting, and mmap COW fork");
+    if (!mmap_ok) detail_process_result("/bin/mmapcheck", ps, &r);
 
     const char *pipe_argv[] = { "/bin/pipecheck" };
     ps = process_exec("/bin/pipecheck", 1, pipe_argv, &r);

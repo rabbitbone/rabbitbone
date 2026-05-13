@@ -83,6 +83,9 @@ enum au_syscall_id {
     AU_SYS_TTY_CURSOR_VISIBLE = AURORA_SYS_TTY_CURSOR_VISIBLE,
     AU_SYS_BRK = AURORA_SYS_BRK,
     AU_SYS_SBRK = AURORA_SYS_SBRK,
+    AU_SYS_MMAP = AURORA_SYS_MMAP,
+    AU_SYS_MUNMAP = AURORA_SYS_MUNMAP,
+    AU_SYS_MPROTECT = AURORA_SYS_MPROTECT,
 };
 
 typedef struct au_result {
@@ -224,6 +227,12 @@ au_i64 au_tty_cursor_visible(unsigned int visible);
 au_i64 au_brk(void *addr);
 au_i64 au_sbrk(au_i64 increment);
 void *sbrk(long increment);
+void *mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags);
+au_i64 munmap(void *addr, au_usize length);
+au_i64 mprotect(void *addr, au_usize length, unsigned int prot);
+void *au_mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags);
+au_i64 au_munmap(void *addr, au_usize length);
+au_i64 au_mprotect(void *addr, au_usize length, unsigned int prot);
 void *malloc(au_usize size);
 void free(void *ptr);
 void *calloc(au_usize count, au_usize size);

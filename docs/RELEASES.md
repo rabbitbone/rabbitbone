@@ -3,6 +3,20 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+
+## 0.0.2.7
+
+Anonymous mmap/munmap/mprotect and VMA/range tracking update over `0.0.2.6`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.7` / `0x00000207`.
+- Added anonymous private `mmap`, `munmap`, and `mprotect` syscalls through the C ABI, Rust dispatcher/name table/validator, and userland wrappers.
+- Added per-process VMA/range tracking for image, stack, heap, and anonymous mmap ranges.
+- Added a bounded anonymous mmap arena with page-aligned allocation, fixed mappings, overlap rejection, W^X enforcement, and writable NX private pages.
+- Implemented subrange `munmap` with VMA splitting and mapping release through the shared page refcount path.
+- Implemented `mprotect` with VMA splitting and PTE flag updates; read-only write faults stay non-COW faults, while forked writable pages keep correct COW behavior.
+- Made anonymous mmap pages participate in COW `fork` and release correctly across child exit, exec replacement, and process teardown.
+- Added `/bin/mmapcheck` and ktest coverage for anonymous mapping, fixed mapping rejection/placement, partial unmap faults, mprotect faults and restoration, W^X rejection, mmap COW fork isolation, and fork+exec release.
+
 ## 0.0.2.6
 
 User heap, brk/sbrk, and userlib malloc update over `0.0.2.5`.

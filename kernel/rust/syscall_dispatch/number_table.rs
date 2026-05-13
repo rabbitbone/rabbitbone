@@ -71,6 +71,9 @@ impl SyscallNo {
             67 => Ok(Self::TtyCursorVisible),
             68 => Ok(Self::Brk),
             69 => Ok(Self::Sbrk),
+            70 => Ok(Self::Mmap),
+            71 => Ok(Self::Munmap),
+            72 => Ok(Self::Mprotect),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -147,6 +150,9 @@ impl SyscallNo {
             Self::TtyCursorVisible => b"tty_cursor_visible\0",
             Self::Brk => b"brk\0",
             Self::Sbrk => b"sbrk\0",
+            Self::Mmap => b"mmap\0",
+            Self::Munmap => b"munmap\0",
+            Self::Mprotect => b"mprotect\0",
         }
     }
 }

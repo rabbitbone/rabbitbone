@@ -1,8 +1,25 @@
 fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
+fn valid_mmap_prot(prot: u64) -> bool {
+    prot != 0 && (prot & !PROT_SUPPORTED) == 0 && !((prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0)
+}
+fn valid_mmap_flags(flags: u64) -> bool {
+    (flags & !MAP_SUPPORTED) == 0 && (flags & MAP_ANON) != 0 && (flags & MAP_PRIVATE) != 0
+}
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
         SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync | SyscallNo::Brk | SyscallNo::Sbrk => Ok(()),
+        SyscallNo::Mmap => {
+            if a.a1 == 0 || a.a1 > MMAP_MAX_BYTES || !valid_mmap_prot(a.a2) || !valid_mmap_flags(a.a3) { Err(VFS_ERR_INVAL) }
+            else if (a.a3 & MAP_FIXED) != 0 && (a.a0 == 0 || (a.a0 & 4095) != 0) { Err(VFS_ERR_INVAL) }
+            else { Ok(()) }
+        }
+        SyscallNo::Munmap => {
+            if a.a0 == 0 || (a.a0 & 4095) != 0 || a.a1 == 0 || a.a1 > MMAP_MAX_BYTES { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Mprotect => {
+            if a.a0 == 0 || (a.a0 & 4095) != 0 || a.a1 == 0 || a.a1 > MMAP_MAX_BYTES || !valid_mmap_prot(a.a2) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
         SyscallNo::WriteConsole => {
             if a.a1 > MAX_CONSOLE_WRITE || (a.a0 == 0 && a.a1 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }

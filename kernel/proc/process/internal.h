@@ -28,12 +28,32 @@
 #define USER_HEAP_MAX_PAGES  128u
 #define USER_HEAP_GAP_PAGES  1u
 #define USER_MAX_MAPPINGS    256u
+#define USER_MAX_VMAS        32u
+#define USER_MMAP_BASE       0x0000010080000000ull
+#define USER_MMAP_MAX_PAGES  64u
 #define USER_ARG_STRING_MAX  128u
 #define USER_BACKING_PHYS_LIMIT MEMORY_KERNEL_DIRECT_LIMIT
 #define PROCESS_ASYNC_CAP 32u
 #define PROCESS_INT80_LEN 2u
 #define PROCESS_SHEBANG_LINE_MAX 127u
 #define PROCESS_SHEBANG_MAX_DEPTH 2u
+
+
+typedef enum user_vma_kind {
+    USER_VMA_IMAGE = 1,
+    USER_VMA_STACK = 2,
+    USER_VMA_HEAP = 3,
+    USER_VMA_MMAP = 4,
+} user_vma_kind_t;
+
+typedef struct user_vma {
+    uptr start;
+    uptr end;
+    u32 prot;
+    u32 flags;
+    u32 kind;
+    u32 reserved;
+} user_vma_t;
 
 typedef struct user_mapping {
     uptr virt;
@@ -62,6 +82,9 @@ typedef struct active_process {
     vmm_space_t space;
     user_mapping_t mappings[USER_MAX_MAPPINGS];
     usize mapping_count;
+    user_vma_t vmas[USER_MAX_VMAS];
+    usize vma_count;
+    uptr mmap_cursor;
     uptr heap_base;
     uptr heap_break;
     uptr heap_limit;
@@ -137,7 +160,12 @@ static bool process_initialized;
 
 static void release_mappings(active_process_t *p);
 static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
+static process_status_t track_mapping(active_process_t *p, uptr virt, uptr phys, u64 final_flags);
+static void release_mapping_at(active_process_t *p, usize idx);
 static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr);
 static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out);
 static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out);
+static bool process_range_has_vma(const active_process_t *p, uptr start, uptr end, u32 kind);
+static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind);
+static process_status_t process_split_vmas_for_range(active_process_t *p, uptr start, uptr end);
 

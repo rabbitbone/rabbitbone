@@ -94,6 +94,9 @@ pub enum SyscallNo {
     TtyCursorVisible = 67,
     Brk = 68,
     Sbrk = 69,
+    Mmap = 70,
+    Munmap = 71,
+    Mprotect = 72,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -111,6 +114,7 @@ const MAX_SLEEP_TICKS: u64 = 10_000;
 const MAX_PID: u64 = 0xffff_ffff;
 const MAX_FILE_SIZE: u64 = 1u64 << 40;
 const MAX_PATH_BYTES: u64 = 256;
+const MMAP_MAX_BYTES: u64 = 256 * 4096;
 const MAX_PROCESS_ARGS: u64 = 8;
 const MAX_PROCESS_ENVS: u64 = crate::abi::AURORA_ENV_MAX;
 const FD_CLOEXEC: u64 = crate::abi::AURORA_FD_CLOEXEC;
@@ -135,6 +139,13 @@ const SEEK_END: u64 = crate::abi::AURORA_SEEK_END;
 const THEME_OP_GET: u64 = crate::abi::AURORA_THEME_OP_GET;
 const THEME_OP_SET: u64 = crate::abi::AURORA_THEME_OP_SET;
 const THEME_MAX: u64 = crate::abi::AURORA_THEME_MAX;
+const PROT_WRITE: u64 = crate::abi::AURORA_PROT_WRITE;
+const PROT_EXEC: u64 = crate::abi::AURORA_PROT_EXEC;
+const PROT_SUPPORTED: u64 = crate::abi::AURORA_PROT_READ | PROT_WRITE | PROT_EXEC;
+const MAP_ANON: u64 = crate::abi::AURORA_MAP_ANON;
+const MAP_PRIVATE: u64 = crate::abi::AURORA_MAP_PRIVATE;
+const MAP_FIXED: u64 = crate::abi::AURORA_MAP_FIXED;
+const MAP_SUPPORTED: u64 = MAP_ANON | MAP_PRIVATE | MAP_FIXED;
 
 
 const KCTL_OP_MAX: u64 = crate::abi::AURORA_KCTL_OP_MAX;
