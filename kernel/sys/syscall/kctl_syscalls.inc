@@ -225,6 +225,32 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             out.len = strnlen(out.buf, out.cap);
             break;
         }
+
+        case AURORA_KCTL_OP_ACPI: {
+            acpi_format_status(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
+            break;
+        }
+        case AURORA_KCTL_OP_APIC: {
+            apic_format_status(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
+            break;
+        }
+        case AURORA_KCTL_OP_HPET: {
+            hpet_format_status(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
+            break;
+        }
+        case AURORA_KCTL_OP_TIMER: {
+            timer_format_status(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
+            break;
+        }
+        case AURORA_KCTL_OP_SMP: {
+            smp_format_status(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
+            break;
+        }
         case AURORA_KCTL_OP_EXT4: {
             vfs_statvfs_t sv;
             memset(&sv, 0, sizeof(sv));

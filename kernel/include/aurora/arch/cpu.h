@@ -17,5 +17,10 @@ const char *cpu_exception_name(u64 vector);
 u64 cpu_read_efer(void);
 bool cpu_nxe_enabled(void);
 bool cpu_sse_enabled(void);
+void cpu_cpuid(u32 leaf, u32 subleaf, u32 *a, u32 *b, u32 *c, u32 *d);
+u64 cpu_read_msr(u32 msr);
+void cpu_write_msr(u32 msr, u64 value);
+u64 cpu_read_tsc(void);
+bool cpu_invariant_tsc_supported(void);
 
 #endif

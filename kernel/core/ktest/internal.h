@@ -14,6 +14,10 @@
 #include <aurora/log.h>
 #include <aurora/mbr.h>
 #include <aurora/pci.h>
+#include <aurora/acpi.h>
+#include <aurora/apic.h>
+#include <aurora/hpet.h>
+#include <aurora/smp.h>
 #include <aurora/memory.h>
 #include <aurora/path.h>
 #include <aurora/ringbuf.h>

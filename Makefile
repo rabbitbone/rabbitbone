@@ -49,6 +49,7 @@ K_C_SRCS := \
   kernel/core/tty.c \
   kernel/lib/bitmap.c \
   kernel/lib/string.c \
+  kernel/lib/format.c \
   kernel/lib/ringbuf.c \
   kernel/lib/crc32.c \
   kernel/mm/kmem.c \
@@ -69,6 +70,10 @@ K_C_SRCS := \
   kernel/arch/x86_64/idt.c \
   kernel/arch/x86_64/irq.c \
   kernel/arch/x86_64/memory.c \
+  kernel/drivers/acpi.c \
+  kernel/drivers/apic.c \
+  kernel/drivers/hpet.c \
+  kernel/drivers/smp.c \
   kernel/drivers/pci.c \
   kernel/drivers/ahci.c \
   kernel/drivers/ata_pio.c \

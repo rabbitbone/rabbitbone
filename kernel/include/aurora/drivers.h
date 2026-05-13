@@ -39,6 +39,10 @@ void pit_init(u32 hz);
 u64 pit_ticks(void);
 void pit_irq(void);
 
+void acpi_init(void);
+void apic_init(void);
+void hpet_init(void);
+void smp_init_groundwork(void);
 void pci_init(void);
 void ahci_init(void);
 void ata_pio_init(void);

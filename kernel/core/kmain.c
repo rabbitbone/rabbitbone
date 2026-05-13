@@ -25,6 +25,11 @@
 #include <aurora/version.h>
 #include <aurora/tty.h>
 #include <aurora/libc.h>
+#include <aurora/timer.h>
+#include <aurora/acpi.h>
+#include <aurora/apic.h>
+#include <aurora/hpet.h>
+#include <aurora/smp.h>
 
 #ifdef AURORA_DEBUG_SHELL
 extern void shell_run(void);
@@ -60,6 +65,11 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
         PANIC("failed to install heap-backed TSS stacks");
     }
 
+    acpi_init();
+    apic_init();
+    hpet_init();
+    smp_init_groundwork();
+
     pic_remap(32, 40);
     idt_init();
     pit_init(100);
@@ -71,6 +81,7 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     pic_clear_mask(0);
     pic_clear_mask(1);
     cpu_sti();
+    timer_init_sources();
 
     pci_init();
     ahci_init();

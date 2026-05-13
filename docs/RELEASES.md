@@ -3,6 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.12
+
+ACPI + APIC + HPET/TSC timer + SMP bootstrap groundwork over `0.0.2.11`.
+
+- Added ACPI discovery through legacy BIOS memory scanning for RSDP plus RSDT/XSDT SDT validation.
+- Parsed MADT for local APIC CPUs, IOAPICs, interrupt-source overrides, and LAPIC address overrides.
+- Parsed HPET and initialized a free-running HPET clocksource when advertised.
+- Added timer diagnostics with PIT fallback, HPET monotonic time, and invariant-TSC calibration when HPET is present.
+- Added APIC diagnostics and SMP bootstrap groundwork without enabling AP startup or multi-core scheduling yet.
+- Added `acpi`, `apic`, `hpet`, `timer`, and `smp` shell/kctl commands and ktest coverage.
+- Bumped the kernel version and syscall ABI to `0.0.2.12` / `0x0000020c`.
+
 ## 0.0.2.11
 
 PCI + AHCI + modern block-device layer update over `0.0.2.10`.

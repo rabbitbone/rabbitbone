@@ -21,6 +21,10 @@
 #include <aurora/ktest.h>
 #include <aurora/block.h>
 #include <aurora/pci.h>
+#include <aurora/acpi.h>
+#include <aurora/apic.h>
+#include <aurora/hpet.h>
+#include <aurora/smp.h>
 #include <aurora/vmm.h>
 #include <aurora/memory.h>
 

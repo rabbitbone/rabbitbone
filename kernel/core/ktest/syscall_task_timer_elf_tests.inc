@@ -47,7 +47,11 @@ static void test_syscall_task_timer_elf(void) {
     task_get_stats(&ts);
     check(ts.used_slots == 0 && ts.next_pid == 1u, "task table reset after selftest");
 
-    check(timer_selftest(), "PIT timer advances while interrupts are enabled");
+    check(timer_selftest(), "PIT/timer clocksource advances while interrupts are enabled");
+    check(acpi_selftest(), "ACPI discovery tables are internally consistent when present");
+    check(apic_selftest(), "APIC discovery keeps legacy PIC fallback valid");
+    check(hpet_selftest(), "HPET timer source is valid when advertised");
+    check(smp_selftest(), "SMP bootstrap topology records one BSP and bounded CPU list");
     check(strcmp(log_level_name(LOG_INFO), "INFO") == 0 && strcmp(log_level_name(LOG_FATAL), "FATAL") == 0, "log level names");
     KLOG(LOG_INFO, "ktest", "log write path exercised");
 

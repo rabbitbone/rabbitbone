@@ -22,7 +22,7 @@ static inline void write_cr4(u64 v) {
     __asm__ volatile("mov %0, %%cr4" :: "r"(v) : "memory");
 }
 
-static inline void cpuid_leaf(u32 leaf, u32 subleaf, u32 *a, u32 *b, u32 *c, u32 *d) {
+void cpu_cpuid(u32 leaf, u32 subleaf, u32 *a, u32 *b, u32 *c, u32 *d) {
     u32 eax = leaf, ebx = 0, ecx = subleaf, edx = 0;
     __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
     if (a) *a = eax;
@@ -33,7 +33,7 @@ static inline void cpuid_leaf(u32 leaf, u32 subleaf, u32 *a, u32 *b, u32 *c, u32
 
 static bool cpu_has_leaf(u32 leaf) {
     u32 max_basic = 0;
-    cpuid_leaf(0, 0, &max_basic, 0, 0, 0);
+    cpu_cpuid(0, 0, &max_basic, 0, 0, 0);
     return max_basic >= leaf;
 }
 
@@ -58,6 +58,32 @@ void cpu_init(void) {
     write_cr4(cr4);
 }
 
+u64 cpu_read_msr(u32 msr) {
+    u32 lo = 0, hi = 0;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((u64)hi << 32) | lo;
+}
+
+void cpu_write_msr(u32 msr, u64 value) {
+    u32 lo = (u32)value;
+    u32 hi = (u32)(value >> 32);
+    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
+}
+
+u64 cpu_read_tsc(void) {
+    u32 lo = 0, hi = 0;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((u64)hi << 32) | lo;
+}
+
+bool cpu_invariant_tsc_supported(void) {
+    u32 max_ext = 0, a = 0, b = 0, c = 0, d = 0;
+    cpu_cpuid(0x80000000u, 0, &max_ext, 0, 0, 0);
+    if (max_ext < 0x80000007u) return false;
+    cpu_cpuid(0x80000007u, 0, &a, &b, &c, &d);
+    return (d & (1u << 8)) != 0;
+}
+
 bool cpu_sse_enabled(void) {
     const u64 cr0 = read_cr0();
     const u64 cr4 = read_cr4();
@@ -69,9 +95,7 @@ bool cpu_sse_enabled(void) {
 }
 
 u64 cpu_read_efer(void) {
-    u32 lo = 0, hi = 0;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xc0000080u));
-    return ((u64)hi << 32) | lo;
+    return cpu_read_msr(0xc0000080u);
 }
 
 bool cpu_nxe_enabled(void) {

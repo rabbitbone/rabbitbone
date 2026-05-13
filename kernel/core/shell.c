@@ -8,6 +8,11 @@
 #include <aurora/block.h>
 #include <aurora/pci.h>
 #include <aurora/vfs.h>
+#include <aurora/acpi.h>
+#include <aurora/apic.h>
+#include <aurora/hpet.h>
+#include <aurora/smp.h>
+#include <aurora/timer.h>
 
 #ifdef AURORA_DEBUG_SHELL
 #define DEBUG_SHELL_LINE_MAX 96u
@@ -17,9 +22,29 @@ static void debug_log_writer(const char *line) { kprintf("%s", line); }
 static void debug_execute(char *line) {
     while (*line == ' ' || *line == '\t') ++line;
     if (strcmp(line, "help") == 0) {
-        kprintf("debug shell commands: help logs pci lspci disks blk mounts panic reboot halt\n");
+        kprintf("debug shell commands: help logs acpi apic hpet timer smp pci lspci disks blk mounts panic reboot halt\n");
     } else if (strcmp(line, "logs") == 0) {
         log_dump_ring(debug_log_writer);
+    } else if (strcmp(line, "acpi") == 0) {
+        char out[4096];
+        acpi_format_status(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "apic") == 0) {
+        char out[2048];
+        apic_format_status(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "hpet") == 0) {
+        char out[1024];
+        hpet_format_status(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "timer") == 0) {
+        char out[1024];
+        timer_format_status(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "smp") == 0) {
+        char out[2048];
+        smp_format_status(out, sizeof(out));
+        kprintf("%s", out);
     } else if (strcmp(line, "pci") == 0 || strcmp(line, "lspci") == 0) {
         char out[4096];
         pci_format_devices(out, sizeof(out));
