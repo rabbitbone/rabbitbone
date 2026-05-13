@@ -34,6 +34,9 @@ typedef struct vmm_stats {
     uptr current_pml4_physical;
     u64 spaces_created;
     u64 spaces_destroyed;
+    bool kernel_text_ro;
+    bool kernel_rodata_nx;
+    bool kernel_data_nx;
 } vmm_stats_t;
 
 void vmm_init(u64 identity_bytes);
@@ -57,6 +60,7 @@ uptr vmm_read_cr3(void);
 void vmm_get_stats(vmm_stats_t *out);
 void vmm_dump(void);
 bool vmm_selftest(void);
+bool vmm_kernel_protection_selftest(void);
 
 #if defined(__cplusplus)
 }

@@ -3,6 +3,17 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.3
+
+Kernel W^X and full image page-protection hardening update over `0.0.2.2`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.3` / `0x00000203`.
+- Removed the first-2 MiB limit from fine-grained kernel identity mapping: every 2 MiB identity-map window intersecting `__kernel_start..__kernel_end` is now split into 4 KiB mappings.
+- Enforced page-level kernel image permissions: `.text` is global read/execute, `.rodata` is global read-only NX, and `.data`/`.bss` are global writable NX; non-kernel identity mappings remain writable NX.
+- Added `vmm_kernel_protection_selftest()` to validate kernel section flags and reject `VMM_USER` mappings/protections over the kernel virtual image range.
+- Extended the `vmm` shell diagnostics with `kernel_text_ro`, `kernel_rodata_nx`, and `kernel_data_nx` status fields.
+
+
 ## 0.0.2.2
 
 Terminal and shell polish update over `0.0.2.1`.

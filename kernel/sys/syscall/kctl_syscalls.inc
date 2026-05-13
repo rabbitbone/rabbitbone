@@ -169,6 +169,9 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_appendf(&out, "  current_pml4_physical=%p\n", (void *)st.current_pml4_physical);
             kctl_appendf(&out, "  spaces_created=%llu\n", (unsigned long long)st.spaces_created);
             kctl_appendf(&out, "  spaces_destroyed=%llu\n", (unsigned long long)st.spaces_destroyed);
+            kctl_appendf(&out, "  kernel_text_ro=%u\n", st.kernel_text_ro ? 1u : 0u);
+            kctl_appendf(&out, "  kernel_rodata_nx=%u\n", st.kernel_rodata_nx ? 1u : 0u);
+            kctl_appendf(&out, "  kernel_data_nx=%u\n", st.kernel_data_nx ? 1u : 0u);
             break;
         }
         case AURORA_KCTL_OP_KTEST: {

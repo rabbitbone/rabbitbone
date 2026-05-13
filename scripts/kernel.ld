@@ -2,21 +2,30 @@ ENTRY(kernel_start)
 SECTIONS
 {
   . = 0x10000;
+  . = ALIGN(0x1000);
   __kernel_start = .;
+
   __text_start = .;
-  .text ALIGN(0x1000) : { *(.text.boot*) *(.text*) *(.ltext*) }
+  .text : { *(.text.boot*) *(.text*) *(.ltext*) }
+  . = ALIGN(0x1000);
   __text_end = .;
+
   __rodata_start = .;
-  .rodata ALIGN(0x1000) : { *(.rodata*) *(.lrodata*) }
+  .rodata : { *(.rodata*) *(.lrodata*) }
+  . = ALIGN(0x1000);
   __rodata_end = .;
+
   __data_start = .;
-  .data ALIGN(0x1000) : { *(.data*) *(.ldata*) }
+  .data : { *(.data*) *(.ldata*) }
+  . = ALIGN(0x1000);
   __data_end = .;
-  .bss ALIGN(0x1000) : {
-    __bss_start = .;
+
+  __bss_start = .;
+  .bss : {
     *(.bss*) *(.lbss*) *(COMMON)
-    __bss_end = .;
   }
-  . = ALIGN(0x200);
+  . = ALIGN(0x1000);
+  __bss_end = .;
+
   __kernel_end = .;
 }

@@ -53,6 +53,7 @@ static void test_boot_memory_vmm_heap(void) {
     check(aurora_rust_usercopy_selftest(), "Rust usercopy range/step arithmetic selftest");
     check(tty_selftest(), "TTY mode/info/readkey selftest");
     check(vmm_selftest(), "vmm map/translate/unmap 4K page");
+    check(vmm_kernel_protection_selftest(), "vmm kernel image W^X/NX protection");
     suite_end();
 }
 
