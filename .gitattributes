@@ -12,3 +12,8 @@
 *.obj binary
 *.a binary
 *.lib binary
+
+*.inc linguist-language=C
+*.h linguist-language=C
+kernel/rust/** linguist-language=Rust
+Makefile linguist-language=Makefile

@@ -24,7 +24,7 @@ static int sh_builtin_theme(int argc, char **argv) {
         if (!sh_theme_id(argv[1], &id)) { sh_err("usage: theme [show|legacy|black]\n"); return 1; }
         au_i64 r = au_theme(AURORA_THEME_OP_SET, id);
         if (r < 0) { sh_err("theme: set failed\n"); return 1; }
-        sh_puts("\x1b[2J\x1b[H");
+        (void)au_tty_clear();
         sh_puts("theme="); sh_puts(sh_theme_name(id)); sh_puts("\n");
         return 0;
     }

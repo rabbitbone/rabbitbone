@@ -62,5 +62,10 @@ extern "C" {
     fn aurora_sys_chmod(path: u64, mode: u64) -> SyscallResult;
     fn aurora_sys_chown(path: u64, uid: u64, gid: u64) -> SyscallResult;
     fn aurora_sys_kctl(op: u64, out: u64, out_len: u64, arg: u64) -> SyscallResult;
+    fn aurora_sys_tty_scroll(lines: u64) -> SyscallResult;
+    fn aurora_sys_tty_setcursor(row: u64, col: u64) -> SyscallResult;
+    fn aurora_sys_tty_clearline() -> SyscallResult;
+    fn aurora_sys_tty_clear() -> SyscallResult;
+    fn aurora_sys_tty_cursor_visible(visible: u64) -> SyscallResult;
 }
 

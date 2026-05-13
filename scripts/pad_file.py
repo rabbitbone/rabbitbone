@@ -1,35 +1,50 @@
 #!/usr/bin/env python3
+import argparse
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 MAX_PAD_BYTES = 64 * 1024 * 1024
 
-if len(sys.argv) != 3:
-    raise SystemExit(f'usage: {sys.argv[0]} path size')
+p = argparse.ArgumentParser()
+p.add_argument('--multiple', type=int, default=None, help='pad to the next multiple of this size')
+p.add_argument('path', type=Path)
+p.add_argument('size', nargs='?', help='fixed output size in bytes')
+a = p.parse_args()
 
-p = Path(sys.argv[1])
+if a.multiple is not None and a.size is not None:
+    raise SystemExit('use either --multiple or fixed size, not both')
+if a.multiple is None and a.size is None:
+    raise SystemExit(f'usage: {p.prog} [--multiple N] path [size]')
+if a.multiple is not None and a.multiple <= 0:
+    raise SystemExit('--multiple must be positive')
+
 try:
-    size = int(sys.argv[2], 0)
-except ValueError as exc:
-    raise SystemExit(f'invalid size: {sys.argv[2]}') from exc
+    data = a.path.read_bytes()
+except OSError as exc:
+    raise SystemExit(f'{a.path}: cannot read: {exc}') from exc
+
+if a.multiple is not None:
+    size = ((len(data) + a.multiple - 1) // a.multiple) * a.multiple
+else:
+    try:
+        size = int(a.size, 0)
+    except ValueError as exc:
+        raise SystemExit(f'invalid size: {a.size}') from exc
 
 if size < 0 or size > MAX_PAD_BYTES:
-    raise SystemExit(f'{p}: requested padded size {size} is outside 0..{MAX_PAD_BYTES}')
-
-data = p.read_bytes()
+    raise SystemExit(f'{a.path}: requested padded size {size} is outside 0..{MAX_PAD_BYTES}')
 if len(data) > size:
-    raise SystemExit(f'{p}: {len(data)} bytes exceeds fixed boot allocation {size}')
+    raise SystemExit(f'{a.path}: {len(data)} bytes exceeds fixed boot allocation {size}')
 
-fd, tmp_name = tempfile.mkstemp(prefix=p.name + '.', suffix='.tmp', dir=str(p.parent or Path('.')))
+fd, tmp_name = tempfile.mkstemp(prefix=a.path.name + '.', suffix='.tmp', dir=str(a.path.parent or Path('.')))
 try:
     with os.fdopen(fd, 'wb') as tmp:
         tmp.write(data)
         tmp.write(b'\x00' * (size - len(data)))
         tmp.flush()
         os.fsync(tmp.fileno())
-    os.replace(tmp_name, p)
+    os.replace(tmp_name, a.path)
 finally:
     try:
         os.unlink(tmp_name)

@@ -13,4 +13,5 @@
 #include "aursh/builtins_kctl.inc"
 #include "aursh/dispatch.inc"
 #include "aursh/exec.inc"
+#include "aursh/line_editor.inc"
 #include "aursh/repl.inc"

@@ -24,8 +24,11 @@ void vga_fill_color(u8 fg, u8 bg);
 void vga_recolor(u8 fg, u8 bg);
 void vga_move_cursor(u32 row, u32 col);
 void vga_get_cursor(u32 *row, u32 *col);
+void vga_set_cursor_visible(bool visible);
 void vga_clear_line(void);
 void vga_get_size(u32 *rows, u32 *cols);
+bool vga_scroll_view(i32 delta);
+bool vga_enable_scrollback(void);
 
 void pic_remap(u8 offset1, u8 offset2);
 void pic_send_eoi(u8 irq);

@@ -202,6 +202,34 @@ void console_clear(void) {
     spin_unlock_irqrestore(&console_lock, flags);
 }
 
+bool console_scroll(i32 lines) {
+    u64 flags = spin_lock_irqsave(&console_lock);
+    bool ok = vga_scroll_view(lines);
+    spin_unlock_irqrestore(&console_lock, flags);
+    return ok;
+}
+
+bool console_move_cursor(u32 row, u32 col) {
+    u64 flags = spin_lock_irqsave(&console_lock);
+    vga_move_cursor(row, col);
+    spin_unlock_irqrestore(&console_lock, flags);
+    return true;
+}
+
+bool console_set_cursor_visible(bool visible) {
+    u64 flags = spin_lock_irqsave(&console_lock);
+    vga_set_cursor_visible(visible);
+    spin_unlock_irqrestore(&console_lock, flags);
+    return true;
+}
+
+bool console_clear_line(void) {
+    u64 flags = spin_lock_irqsave(&console_lock);
+    vga_clear_line();
+    spin_unlock_irqrestore(&console_lock, flags);
+    return true;
+}
+
 void console_set_color(u8 fg, u8 bg) {
     u64 flags = spin_lock_irqsave(&console_lock);
     vga_set_color(fg, bg);

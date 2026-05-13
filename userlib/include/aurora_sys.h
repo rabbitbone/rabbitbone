@@ -76,6 +76,11 @@ enum au_syscall_id {
     AU_SYS_CHMOD = AURORA_SYS_CHMOD,
     AU_SYS_CHOWN = AURORA_SYS_CHOWN,
     AU_SYS_KCTL = AURORA_SYS_KCTL,
+    AU_SYS_TTY_SCROLL = AURORA_SYS_TTY_SCROLL,
+    AU_SYS_TTY_SETCURSOR = AURORA_SYS_TTY_SETCURSOR,
+    AU_SYS_TTY_CLEAR_LINE = AURORA_SYS_TTY_CLEAR_LINE,
+    AU_SYS_TTY_CLEAR = AURORA_SYS_TTY_CLEAR,
+    AU_SYS_TTY_CURSOR_VISIBLE = AURORA_SYS_TTY_CURSOR_VISIBLE,
 };
 
 typedef struct au_result {
@@ -209,6 +214,11 @@ au_i64 au_poll(au_i64 h, unsigned int events);
 au_i64 au_tty_getinfo(au_ttyinfo_t *out);
 au_i64 au_tty_setmode(unsigned int mode);
 au_i64 au_tty_readkey(au_key_event_t *out, unsigned int flags);
+au_i64 au_tty_scroll(int lines);
+au_i64 au_tty_setcursor(unsigned int row, unsigned int col);
+au_i64 au_tty_clearline(void);
+au_i64 au_tty_clear(void);
+au_i64 au_tty_cursor_visible(unsigned int visible);
 au_i64 au_dup(au_i64 h);
 au_i64 au_tell(au_i64 h);
 au_i64 au_fstat(au_i64 h, au_stat_t *out);

@@ -81,6 +81,17 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
         SyscallNo::TtyReadKey => {
             if a.a0 == 0 || (a.a1 & !TTY_READ_NONBLOCK) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
+        SyscallNo::TtyScroll => {
+            let signed = a.a0 as i64;
+            if signed >= -1000 && signed <= 1000 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+        }
+        SyscallNo::TtySetCursor => {
+            if a.a0 < 25 && a.a1 < 80 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+        }
+        SyscallNo::TtyClearLine | SyscallNo::TtyClear => Ok(()),
+        SyscallNo::TtyCursorVisible => {
+            if a.a0 <= 1 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+        },
         SyscallNo::Theme => {
             if a.a0 == THEME_OP_GET || (a.a0 == THEME_OP_SET && a.a1 < THEME_MAX) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }

@@ -64,6 +64,11 @@ impl SyscallNo {
             60 => Ok(Self::Chmod),
             61 => Ok(Self::Chown),
             62 => Ok(Self::Kctl),
+            63 => Ok(Self::TtyScroll),
+            64 => Ok(Self::TtySetCursor),
+            65 => Ok(Self::TtyClearLine),
+            66 => Ok(Self::TtyClear),
+            67 => Ok(Self::TtyCursorVisible),
             _ => Err(DecodeError::Unsupported),
         }
     }
@@ -133,6 +138,11 @@ impl SyscallNo {
             Self::Chmod => b"chmod\0",
             Self::Chown => b"chown\0",
             Self::Kctl => b"kctl\0",
+            Self::TtyScroll => b"tty_scroll\0",
+            Self::TtySetCursor => b"tty_setcursor\0",
+            Self::TtyClearLine => b"tty_clearline\0",
+            Self::TtyClear => b"tty_clear\0",
+            Self::TtyCursorVisible => b"tty_cursor_visible\0",
         }
     }
 }

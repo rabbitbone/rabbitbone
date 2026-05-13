@@ -72,6 +72,11 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::Chmod => aurora_sys_chmod(args.a0, args.a1),
             SyscallNo::Chown => aurora_sys_chown(args.a0, args.a1, args.a2),
             SyscallNo::Kctl => aurora_sys_kctl(args.a0, args.a1, args.a2, args.a3),
+            SyscallNo::TtyScroll => aurora_sys_tty_scroll(args.a0),
+            SyscallNo::TtySetCursor => aurora_sys_tty_setcursor(args.a0, args.a1),
+            SyscallNo::TtyClearLine => aurora_sys_tty_clearline(),
+            SyscallNo::TtyClear => aurora_sys_tty_clear(),
+            SyscallNo::TtyCursorVisible => aurora_sys_tty_cursor_visible(args.a0),
         }
     }
 }

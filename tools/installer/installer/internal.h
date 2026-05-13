@@ -33,9 +33,12 @@ constexpr std::uint32_t kSectorSize = 512;
 constexpr std::uint32_t kStage2Lba = 1;
 constexpr std::uint32_t kStage2ReservedSectors = 64;
 constexpr std::uint32_t kKernelLba = kStage2Lba + kStage2ReservedSectors;
-constexpr std::uint32_t kKernelReservedSectors = 1024;
+constexpr std::uint32_t kKernelLoadBase = 0x10000;
+constexpr std::uint32_t kKernelLoadLimit = 0x9f000;
+constexpr std::uint32_t kKernelLoadMaxSectors = (kKernelLoadLimit - kKernelLoadBase) / kSectorSize;
+constexpr std::uint32_t kKernelBootAreaSectors = kPartitionLba - kKernelLba;
 static_assert(kKernelLba == 65, "boot config expects kernel at LBA 65");
-static_assert(kKernelLba + kKernelReservedSectors <= kPartitionLba, "kernel boot area overlaps partition");
+static_assert(kKernelLoadMaxSectors <= kKernelBootAreaSectors, "kernel load window exceeds boot area before partition");
 constexpr std::uint32_t kFsBlockSize = 1024;
 constexpr std::uint32_t kFsBlocks = 8192;
 constexpr std::uint32_t kFsInodes = 1024;
@@ -89,6 +92,11 @@ std::uint64_t parse_u64_strict(const std::string &s, const char *name) {
     }
     if (pos != s.size()) throw std::runtime_error(std::string(name) + " must be a decimal integer");
     return v;
+}
+
+std::uint64_t ceil_div_u64(std::uint64_t value, std::uint64_t divisor) {
+    if (divisor == 0) throw std::runtime_error("division by zero");
+    return value / divisor + ((value % divisor) ? 1u : 0u);
 }
 
 std::filesystem::path unique_temp_path_for(const std::filesystem::path &out_path, unsigned int attempt) {

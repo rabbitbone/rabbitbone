@@ -6,6 +6,10 @@
 #define GDT_ENTRIES 7u
 #define KERNEL_PRIV_STACK_SIZE 12288u
 #define IST_STACK_SIZE 1024u
+#define EARLY_KERNEL_RSP0 0x1e0000ull
+#define EARLY_IST1_TOP 0x1df000ull
+#define EARLY_IST2_TOP 0x1de000ull
+#define EARLY_IST3_TOP 0x1dd000ull
 
 typedef struct AURORA_PACKED gdtr {
     u16 limit;
@@ -32,8 +36,6 @@ typedef struct AURORA_PACKED tss64 {
 
 static u64 gdt[GDT_ENTRIES];
 static tss64_t tss;
-static u8 kernel_priv_stack[KERNEL_PRIV_STACK_SIZE] __attribute__((aligned(16)));
-static u8 ist_stacks[3][IST_STACK_SIZE] __attribute__((aligned(16)));
 static void *dynamic_kernel_stack;
 static void *dynamic_ist_stacks[3];
 static usize dynamic_kernel_stack_size;
@@ -61,12 +63,16 @@ uptr gdt_current_kernel_stack(void) {
 }
 
 uptr gdt_kernel_stack_top(void) {
-    return align_down16((uptr)(kernel_priv_stack + sizeof(kernel_priv_stack)));
+    return align_down16((uptr)EARLY_KERNEL_RSP0);
 }
 
 uptr gdt_ist_top(u8 index) {
-    if (index == 0 || index > 3) return 0;
-    return align_down16((uptr)(ist_stacks[index - 1u] + IST_STACK_SIZE));
+    switch (index) {
+        case 1: return align_down16((uptr)EARLY_IST1_TOP);
+        case 2: return align_down16((uptr)EARLY_IST2_TOP);
+        case 3: return align_down16((uptr)EARLY_IST3_TOP);
+        default: return 0;
+    }
 }
 
 void gdt_set_ist(u8 index, uptr rsp) {

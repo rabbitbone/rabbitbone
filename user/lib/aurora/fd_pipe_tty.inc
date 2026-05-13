@@ -84,3 +84,28 @@ au_i64 au_tty_readkey(au_key_event_t *out, unsigned int flags) {
     return r.error ? r.error : r.value;
 }
 
+au_i64 au_tty_scroll(int lines) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_SCROLL, (au_u64)(au_i64)lines, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_setcursor(unsigned int row, unsigned int col) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_SETCURSOR, (au_u64)row, (au_u64)col, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_clearline(void) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_CLEAR_LINE, 0, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_clear(void) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_CLEAR, 0, 0, 0);
+    return r.error ? r.error : r.value;
+}
+
+au_i64 au_tty_cursor_visible(unsigned int visible) {
+    au_result_t r = au_syscall3(AU_SYS_TTY_CURSOR_VISIBLE, visible ? 1u : 0u, 0, 0);
+    return r.error ? r.error : r.value;
+}
+

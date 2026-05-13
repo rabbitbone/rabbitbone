@@ -8,8 +8,6 @@ HOSTCC := cc
 RUSTC ?= rustc
 RUST_TARGET ?= x86_64-unknown-linux-gnu
 RUST_SYSROOT ?=
-KERNEL_SECTORS := 1024
-KERNEL_BYTES := 524288
 ifneq ($(strip $(RUST_SYSROOT)),)
 RUST_SYSROOT_FLAG := --sysroot $(RUST_SYSROOT)
 endif
@@ -122,8 +120,8 @@ all: image
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/boot_config.inc: scripts/gen_boot_config.py $(BUILD)
-	python3 scripts/gen_boot_config.py --stage2-sectors 64 --kernel-lba 65 --kernel-sectors $(KERNEL_SECTORS) > $@
+$(BUILD)/boot_config.inc: Makefile scripts/gen_boot_config.py $(BUILD)/kernel.elf $(BUILD)/kernel.bin | $(BUILD)
+	python3 scripts/gen_boot_config.py --stage2-sectors 64 --kernel-lba 65 --kernel-bin $(BUILD)/kernel.bin --kernel-elf $(BUILD)/kernel.elf > $@
 
 $(BUILD)/boot/stage1.o: boot/stage1.S $(BUILD)/boot_config.inc
 	mkdir -p $(dir $@)
@@ -228,9 +226,9 @@ $(K_RUST_OBJ): $(K_RUST_SRCS) $(K_RUST_ABI) | rusttoolcheck
 $(BUILD)/kernel.elf: $(K_OBJS) scripts/kernel.ld
 	"$(LD)" $(LDFLAGS) -o $@ $(K_OBJS)
 
-$(BUILD)/kernel.bin: $(BUILD)/kernel.elf
+$(BUILD)/kernel.bin: $(BUILD)/kernel.elf scripts/pad_file.py Makefile
 	"$(OBJCOPY)" -O binary $< $@
-	python3 scripts/pad_file.py $@ $(KERNEL_BYTES)
+	python3 scripts/pad_file.py --multiple 512 $@
 
 INSTALLER_SRCS := tools/installer/main.cpp $(wildcard tools/installer/installer/*.inc tools/installer/installer/*.h)
 
@@ -238,7 +236,7 @@ $(BUILD)/tools/installer/aurora-install: $(INSTALLER_SRCS)
 	mkdir -p $(dir $@)
 	"$(HOSTCXX)" -std=c++17 -O2 -Wall -Wextra -Werror $< -o $@
 
-image: $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(BUILD)/tools/installer/aurora-install
+image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(BUILD)/tools/installer/aurora-install
 	"$(BUILD)/tools/installer/aurora-install" --out "$(BUILD)/aurora.img" --stage1 "$(BUILD)/stage1.bin" --stage2 "$(BUILD)/stage2.bin" --kernel "$(BUILD)/kernel.bin" --size-mib 64 --force
 
 bootcheck:

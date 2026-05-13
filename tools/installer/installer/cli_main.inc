@@ -31,7 +31,14 @@ int main(int argc, char **argv) {
         if (stage1.size() != 512) throw std::runtime_error("stage1 must be 512 bytes");
         if (stage1[510] != 0x55 || stage1[511] != 0xaa) throw std::runtime_error("stage1 missing boot signature");
         if (stage2.size() > static_cast<std::uint64_t>(kStage2ReservedSectors) * kSectorSize) throw std::runtime_error("stage2 exceeds reserved sectors");
-        if (kernel.size() > static_cast<std::uint64_t>(kKernelReservedSectors) * kSectorSize) throw std::runtime_error("kernel exceeds reserved sectors");
+        const std::uint64_t kernel_sectors = ceil_div_u64(kernel.size(), kSectorSize);
+        if (kernel_sectors == 0) throw std::runtime_error("kernel image is empty");
+        if (kernel_sectors > kKernelLoadMaxSectors) {
+            throw std::runtime_error("kernel exceeds stage2 low-memory load window: " + std::to_string(kernel.size()) +
+                                     " bytes need " + std::to_string(kernel_sectors) + " sectors, max " +
+                                     std::to_string(kKernelLoadMaxSectors));
+        }
+        if (kernel_sectors > kKernelBootAreaSectors) throw std::runtime_error("kernel boot area overlaps partition");
 
         const std::uint64_t image_size = args.size_mib * 1024ull * 1024ull;
         const std::uint64_t total_sectors = image_size / 512ull;
@@ -75,6 +82,7 @@ int main(int argc, char **argv) {
         std::filesystem::rename(tmp.path(), out_path);
         tmp.disown();
         std::cout << "created " << args.out << " size=" << args.size_mib << "MiB partition_lba=" << kPartitionLba
+                  << " kernel_sectors=" << kernel_sectors
                   << " ext4_seed_blocks=" << kFsBlocks << "\n";
         return 0;
     } catch (const std::exception &e) {

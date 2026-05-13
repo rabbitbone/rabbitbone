@@ -1,5 +1,7 @@
 #include <aurora/tty.h>
 #include <aurora/drivers.h>
+#include <aurora/console.h>
+#include <aurora/log.h>
 #include <aurora/process.h>
 #include <aurora/libc.h>
 #include <aurora/spinlock.h>
@@ -46,6 +48,7 @@ void tty_init(void) {
     spinlock_init(&tty_lock);
     kernel_tty_mode = TTY_DEFAULT_MODE;
     memset(tty_modes, 0, sizeof(tty_modes));
+    if (!vga_enable_scrollback()) KLOG(LOG_WARN, "tty", "scrollback initialization failed; using live screen only");
 }
 
 u32 tty_get_mode(void) {
@@ -106,6 +109,31 @@ static void tty_key_none(aurora_key_event_t *out) {
     out->mods = 0;
     out->ch = 0;
     out->scancode = 0;
+}
+
+bool tty_scroll(i32 lines) {
+    return console_scroll(lines);
+}
+
+bool tty_set_cursor(u32 row, u32 col) {
+    u32 rows = 0, cols = 0;
+    vga_get_size(&rows, &cols);
+    if (rows == 0 || cols == 0) return false;
+    if (row >= rows || col >= cols) return false;
+    return console_move_cursor(row, col);
+}
+
+bool tty_set_cursor_visible(bool visible) {
+    return console_set_cursor_visible(visible);
+}
+
+bool tty_clear_line(void) {
+    return console_clear_line();
+}
+
+bool tty_clear(void) {
+    console_clear();
+    return true;
 }
 
 bool tty_read_key(aurora_key_event_t *out, u32 flags) {

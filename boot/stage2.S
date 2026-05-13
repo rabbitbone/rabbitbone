@@ -5,8 +5,9 @@
 .equ E820_MAX_ENTRIES, 64
 .equ BOOTINFO_VERSION, 1
 .equ KERNEL_LOAD_BASE, 0x10000
-.equ KERNEL_LOAD_LIMIT, 0x90000
+.equ KERNEL_LOAD_LIMIT, 0x9f000
 .equ KERNEL_LOAD_MAX_SECTORS, ((KERNEL_LOAD_LIMIT - KERNEL_LOAD_BASE) / 512)
+.equ STAGE2_STACK_TOP, 0x7800
 .if (STAGE2_SECTORS < 1) || (STAGE2_SECTORS > 64)
 .error "STAGE2_SECTORS must fit the stage2 load window"
 .endif
@@ -308,7 +309,7 @@ protected_entry:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov esp, 0x9c000
+    mov esp, STAGE2_STACK_TOP
 
     mov eax, offset pml4
     mov cr3, eax
@@ -339,7 +340,7 @@ long_mode_entry:
     mov ss, ax
     mov fs, ax
     mov gs, ax
-    mov rsp, 0x9c000
+    mov rsp, STAGE2_STACK_TOP
 
     mov rsi, offset msg_lm_active
     call serial_puts64

@@ -87,6 +87,11 @@ pub enum SyscallNo {
     Chmod = 60,
     Chown = 61,
     Kctl = 62,
+    TtyScroll = 63,
+    TtySetCursor = 64,
+    TtyClearLine = 65,
+    TtyClear = 66,
+    TtyCursorVisible = 67,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

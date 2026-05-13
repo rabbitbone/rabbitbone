@@ -3,6 +3,17 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.2
+
+Terminal and shell polish update over `0.0.2.1`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.2` / `0x00000202`.
+- Added terminal-control syscalls for scrolling, cursor movement, line clearing, full-screen clearing, and cursor visibility.
+- Extended the Rust syscall decoder/name table and userland wrappers for the new terminal ABI.
+- Split `/bin/aursh` line editing into its own checked-in fragment and routed shell input through the new terminal controls.
+- Improved VGA/console/TTY cursor and screen handling and expanded `termcheck` coverage for the new calls.
+- Added Linguist hints so checked-in C `.inc` fragments are counted as C instead of inflating GitHub's C++ language share.
+
 ## 0.0.2.1
 
 Patch update over `0.0.2.0`.

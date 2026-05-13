@@ -90,6 +90,30 @@ syscall_result_t aurora_sys_tty_readkey(u64 out_ptr, u64 flags64) {
     return copy_out_buf(out_ptr, &ev, sizeof(ev)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
+syscall_result_t aurora_sys_tty_scroll(u64 lines64) {
+    i64 signed_lines = (i64)lines64;
+    if (signed_lines > 1000 || signed_lines < -1000) return err(VFS_ERR_INVAL);
+    return tty_scroll((i32)signed_lines) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_tty_setcursor(u64 row64, u64 col64) {
+    if (row64 > 0xffffffffull || col64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    return tty_set_cursor((u32)row64, (u32)col64) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_tty_clearline(void) {
+    return tty_clear_line() ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_tty_clear(void) {
+    return tty_clear() ? ok(0) : err(VFS_ERR_INVAL);
+}
+
+syscall_result_t aurora_sys_tty_cursor_visible(u64 visible64) {
+    if (visible64 > 1u) return err(VFS_ERR_INVAL);
+    return tty_set_cursor_visible(visible64 != 0u) ? ok(0) : err(VFS_ERR_INVAL);
+}
+
 syscall_result_t syscall_dispatch(u64 no, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5) {
     if (!initialized) syscall_init();
     aurora_rust_sysargs_t args = { a0, a1, a2, a3, a4, a5 };

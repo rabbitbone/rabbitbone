@@ -14,6 +14,11 @@ bool tty_read_char(char *out);
 /* Kernel callers may block when AURORA_TTY_READ_NONBLOCK is not set.
  * User-process callers are scheduler-facing and receive AURORA_KEY_NONE when no key is ready. */
 bool tty_read_key(aurora_key_event_t *out, u32 flags);
+bool tty_scroll(i32 lines);
+bool tty_set_cursor(u32 row, u32 col);
+bool tty_set_cursor_visible(bool visible);
+bool tty_clear_line(void);
+bool tty_clear(void);
 bool tty_selftest(void);
 
 #if defined(__cplusplus)
