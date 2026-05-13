@@ -207,16 +207,22 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_log_target = 0;
             break;
         }
-        case AURORA_KCTL_OP_DISKS: {
+        case AURORA_KCTL_OP_DISKS:
+        case AURORA_KCTL_OP_BLK: {
             usize n = block_count();
-            kctl_appendf(&out, "disks: count=%llu\n", (unsigned long long)n);
+            kctl_appendf(&out, "%s: count=%llu\n", op == AURORA_KCTL_OP_BLK ? "blk" : "disks", (unsigned long long)n);
             for (usize i = 0; i < n; ++i) {
                 block_device_t *dev = block_get(i);
                 if (!dev) continue;
-                kctl_appendf(&out, "  %llu: name=%s sectors=%llu sector_size=%u max_transfer=%u flags=%u\n",
-                             (unsigned long long)i, dev->name, (unsigned long long)dev->sector_count,
+                kctl_appendf(&out, "  block%llu: name=%s driver=%s sectors=%llu sector_size=%u max_transfer=%u flags=0x%x\n",
+                             (unsigned long long)i, dev->name, block_driver_name(dev), (unsigned long long)dev->sector_count,
                              dev->sector_size, dev->max_transfer_sectors, dev->flags);
             }
+            break;
+        }
+        case AURORA_KCTL_OP_PCI: {
+            pci_format_devices(out.buf, out.cap);
+            out.len = strnlen(out.buf, out.cap);
             break;
         }
         case AURORA_KCTL_OP_EXT4: {

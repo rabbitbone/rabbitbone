@@ -11,6 +11,8 @@
 #include <aurora/vmm.h>
 #include <aurora/kmem.h>
 #include <aurora/block.h>
+#include <aurora/pci.h>
+#include <aurora/ahci.h>
 #include <aurora/vfs.h>
 #include <aurora/ramfs.h>
 #include <aurora/devfs.h>
@@ -70,7 +72,10 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     pic_clear_mask(1);
     cpu_sti();
 
+    pci_init();
+    ahci_init();
     ata_pio_init();
+    block_log_devices();
     kernel_mount_filesystems();
     syscall_init();
     aurora_cpp_api_selftest();

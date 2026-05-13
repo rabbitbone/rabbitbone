@@ -3,6 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.11
+
+PCI + AHCI + modern block-device layer update over `0.0.2.10`.
+
+- Added a legacy CF8/CFC PCI config-space enumerator with bus/device/function scanning, vendor/device IDs, class/subclass/prog_if, header type, IRQ line/pin, BAR base/size decoding, and bounded capability-list discovery.
+- Added `pci`/`lspci` diagnostics through kctl, the user shell, and the emergency kernel shell.
+- Added an AHCI SATA block driver path that locates PCI class `01:06:01` controllers, maps ABAR MMIO, enumerates implemented SATA ports, identifies ATA disks, and exposes sector read/write through the block layer.
+- Extended the block registry with driver identity, write/flush/DMA flags, optional flush op, `blockN` diagnostics, and AHCI-first / ATA-PIO-fallback discovery.
+- Changed EXT4 mount policy to probe all registered block devices for a valid MBR Linux partition and mount the first valid EXT4 at `/disk0`, instead of stopping on the first IDE-shaped candidate.
+- Added boot diagnostics for selected block driver/device/partition and ktest coverage for PCI enumeration, driver-tagged block devices, and selected Linux-partition probing.
+- Bumped the kernel version and syscall ABI to `0.0.2.11` / `0x0000020b`.
+
 
 ## 0.0.2.10
 

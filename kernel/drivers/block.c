@@ -1,5 +1,6 @@
 #include <aurora/block.h>
 #include <aurora/libc.h>
+#include <aurora/log.h>
 
 #define MAX_BLOCK_DEVS 8u
 static block_device_t *devices[MAX_BLOCK_DEVS];
@@ -8,6 +9,9 @@ static usize device_count;
 bool block_register(block_device_t *dev) {
     if (!dev || !dev->read || device_count >= MAX_BLOCK_DEVS) return false;
     if (dev->sector_count == 0 || dev->sector_size != BLOCKDEV_SECTOR_SIZE) return false;
+    if (!dev->driver) dev->driver = "unknown";
+    if (dev->write) dev->flags |= BLOCKDEV_FLAG_WRITE;
+    if (dev->flush) dev->flags |= BLOCKDEV_FLAG_FLUSH;
     if (dev->buffer_alignment == 0) dev->buffer_alignment = 1;
     if (dev->max_transfer_sectors == 0) dev->max_transfer_sectors = 256;
     devices[device_count++] = dev;
@@ -41,6 +45,16 @@ block_status_t block_write(block_device_t *dev, u64 lba, u32 count, const void *
     return dev->write(dev, lba, count, buffer);
 }
 
+block_status_t block_flush(block_device_t *dev) {
+    if (!dev) return BLOCK_ERR_INVALID;
+    if (!dev->flush) return BLOCK_OK;
+    return dev->flush(dev);
+}
+
+const char *block_driver_name(const block_device_t *dev) {
+    return (dev && dev->driver) ? dev->driver : "unknown";
+}
+
 const char *block_status_name(block_status_t status) {
     switch (status) {
         case BLOCK_OK: return "ok";
@@ -50,5 +64,15 @@ const char *block_status_name(block_status_t status) {
         case BLOCK_ERR_NO_DEVICE: return "no-device";
         case BLOCK_ERR_INVALID: return "invalid";
         default: return "unknown";
+    }
+}
+
+void block_log_devices(void) {
+    KLOG(LOG_INFO, "block", "registered devices=%llu", (unsigned long long)device_count);
+    for (usize i = 0; i < device_count; ++i) {
+        block_device_t *dev = devices[i];
+        if (!dev) continue;
+        KLOG(LOG_INFO, "block", "block%llu name=%s driver=%s sectors=%llu sector_size=%u flags=0x%x",
+             (unsigned long long)i, dev->name, block_driver_name(dev), (unsigned long long)dev->sector_count, dev->sector_size, dev->flags);
     }
 }

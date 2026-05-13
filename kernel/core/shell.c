@@ -5,6 +5,9 @@
 #include <aurora/panic.h>
 #include <aurora/libc.h>
 #include <aurora/version.h>
+#include <aurora/block.h>
+#include <aurora/pci.h>
+#include <aurora/vfs.h>
 
 #ifdef AURORA_DEBUG_SHELL
 #define DEBUG_SHELL_LINE_MAX 96u
@@ -14,9 +17,17 @@ static void debug_log_writer(const char *line) { kprintf("%s", line); }
 static void debug_execute(char *line) {
     while (*line == ' ' || *line == '\t') ++line;
     if (strcmp(line, "help") == 0) {
-        kprintf("debug shell commands: help logs panic reboot halt\n");
+        kprintf("debug shell commands: help logs pci lspci disks blk mounts panic reboot halt\n");
     } else if (strcmp(line, "logs") == 0) {
         log_dump_ring(debug_log_writer);
+    } else if (strcmp(line, "pci") == 0 || strcmp(line, "lspci") == 0) {
+        char out[4096];
+        pci_format_devices(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "disks") == 0 || strcmp(line, "blk") == 0) {
+        block_log_devices();
+    } else if (strcmp(line, "mounts") == 0) {
+        vfs_dump_mounts();
     } else if (strcmp(line, "panic") == 0) {
         PANIC("manual panic requested from debug shell");
     } else if (strcmp(line, "reboot") == 0) {

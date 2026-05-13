@@ -13,6 +13,7 @@
 #include <aurora/libc.h>
 #include <aurora/log.h>
 #include <aurora/mbr.h>
+#include <aurora/pci.h>
 #include <aurora/memory.h>
 #include <aurora/path.h>
 #include <aurora/ringbuf.h>
@@ -203,6 +204,27 @@ static bool ext4_seen_name(const ext4_dirent_t *e, void *ctx) {
     seen_name_ctx_t *s = (seen_name_ctx_t *)ctx;
     if (strcmp(e->name, s->name) == 0) { s->seen = true; return false; }
     return true;
+}
+
+
+static block_device_t *ktest_find_linux_block_device(mbr_table_t *mbr_out, const mbr_partition_t **part_out) {
+    for (usize i = 0; i < block_count(); ++i) {
+        block_device_t *dev = block_get(i);
+        if (!dev) continue;
+        mbr_table_t mbr;
+        if (!mbr_read(dev, &mbr)) continue;
+        const mbr_partition_t *part = mbr_find_linux_on_device(dev, &mbr);
+        if (!part) continue;
+        usize idx = (usize)(part - mbr.part);
+        if (mbr_out) {
+            *mbr_out = mbr;
+            if (part_out) *part_out = &mbr_out->part[idx];
+        } else if (part_out) {
+            *part_out = 0;
+        }
+        return dev;
+    }
+    return 0;
 }
 
 static block_status_t ktest_block_read_should_not_run(block_device_t *dev, u64 lba, u32 count, void *buffer) {

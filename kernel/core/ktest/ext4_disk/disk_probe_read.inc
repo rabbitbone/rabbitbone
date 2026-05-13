@@ -15,8 +15,17 @@
     bad_part.sector_count = 2u;
     check(!mbr_partition_valid(&fake, &bad_part), "MBR partition range validator rejects overflow partition");
     usize n = block_count();
-    check(n > 0u, "ATA block device discovered");
-    block_device_t *dev = block_get(0);
+    check(n > 0u, "block registry discovers at least one storage device");
+    check(pci_device_count() > 0u, "PCI enumerator captured platform devices");
+    bool have_storage = false;
+    for (usize bi = 0; bi < n; ++bi) {
+        block_device_t *bd = block_get(bi);
+        if (bd && bd->driver && (strcmp(bd->driver, "ata_pio") == 0 || strcmp(bd->driver, "ahci") == 0)) have_storage = true;
+    }
+    check(have_storage, "block registry exposes storage driver identity");
+    mbr_table_t mbr;
+    const mbr_partition_t *part = 0;
+    block_device_t *dev = ktest_find_linux_block_device(&mbr, &part);
     if (!dev) {
         skip("MBR read");
         skip("EXT4 raw mount");
@@ -26,18 +35,17 @@
         suite_end();
         return;
     }
-    check(dev->sector_size == BLOCKDEV_SECTOR_SIZE && dev->sector_count > 0u, "block device geometry sane");
+    check(dev->sector_size == BLOCKDEV_SECTOR_SIZE && dev->sector_count > 0u && dev->read != 0, "selected block device geometry sane");
     u8 sector[512];
     block_status_t br = block_read(dev, 0, 1, sector);
     if (br != BLOCK_OK) kprintf("[ detail] block_read(%s,lba=0,count=1)=%s\n", dev->name, block_status_name(br));
     else if (sector[510] != 0x55 || sector[511] != 0xaa) kprintf("[ detail] MBR signature bytes=%02x %02x\n", sector[510], sector[511]);
     check(br == BLOCK_OK && sector[510] == 0x55 && sector[511] == 0xaa, "block read MBR sector");
-    mbr_table_t mbr;
     bool mbr_ok = mbr_read(dev, &mbr);
     if (!mbr_ok) kprintf("[ detail] mbr_read(%s) failed after direct read status=%s\n", dev->name, block_status_name(br));
     check(mbr_ok, "MBR parser accepts boot disk");
-    const mbr_partition_t *part = mbr_ok ? mbr_find_linux_on_device(dev, &mbr) : 0;
-    check(part && part->lba_first >= 2048u && part->sector_count > 4096u, "MBR has Linux EXT partition");
+    part = mbr_ok ? mbr_find_linux_on_device(dev, &mbr) : 0;
+    check(part && part->lba_first >= 2048u && part->sector_count > 4096u, "MBR has Linux EXT partition on selected block device");
     if (part) {
         ext4_mount_t mnt;
         ext4_status_t est = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &mnt);

@@ -65,17 +65,23 @@ vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {
         if (!part) continue;
         ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)kcalloc(1, sizeof(*ctx));
         if (!ctx) return VFS_ERR_NOMEM;
+        KLOG(LOG_INFO, "ext4vfs", "probing %s driver=%s partition_lba=%u sectors=%u", dev->name, block_driver_name(dev), part->lba_first, part->sector_count);
         ext4_status_t st = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &ctx->mount);
         if (st != EXT4_OK) {
-            KLOG(LOG_WARN, "ext4vfs", "mount %s failed: %s", dev->name, ext4_status_name(st));
+            KLOG(LOG_WARN, "ext4vfs", "mount %s partition_lba=%u failed: %s", dev->name, part->lba_first, ext4_status_name(st));
             kfree(ctx);
-            return map_status(st);
+            continue;
         }
         strncpy(ctx->source, dev->name, sizeof(ctx->source) - 1u);
         ext4_vfs_repair_at_mount(ctx);
         vfs_status_t vs = vfs_mount(path, "ext4", &ops, ctx, true);
-        if (vs != VFS_OK) kfree(ctx);
-        return vs;
+        if (vs != VFS_OK) {
+            KLOG(LOG_WARN, "ext4vfs", "vfs mount %s at %s failed: %s", dev->name, path, vfs_status_name(vs));
+            kfree(ctx);
+            return vs;
+        }
+        KLOG(LOG_INFO, "ext4vfs", "mounted %s driver=%s partition_lba=%u sectors=%u at %s", dev->name, block_driver_name(dev), part->lba_first, part->sector_count, path);
+        return VFS_OK;
     }
     return VFS_ERR_NOENT;
 }

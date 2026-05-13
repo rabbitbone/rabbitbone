@@ -39,6 +39,10 @@ void pit_init(u32 hz);
 u64 pit_ticks(void);
 void pit_irq(void);
 
+void pci_init(void);
+void ahci_init(void);
+void ata_pio_init(void);
+
 void keyboard_init(void);
 void keyboard_irq(void);
 bool keyboard_getc(char *out);

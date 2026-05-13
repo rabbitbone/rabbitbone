@@ -28,10 +28,12 @@ void ata_pio_init(void) {
     if (sectors == 0) sectors = ((u32)identify_data[61] << 16) | identify_data[60];
     memset(&primary_master, 0, sizeof(primary_master));
     strncpy(primary_master.name, "ata0", sizeof(primary_master.name) - 1);
+    primary_master.driver = "ata_pio";
     primary_master.sector_count = sectors;
     primary_master.sector_size = 512;
     primary_master.read = ata_read;
     primary_master.write = ata_write;
+    primary_master.flush = ata_block_flush;
     primary_master.buffer_alignment = 2;
     primary_master.max_transfer_sectors = 256;
     if (!block_register(&primary_master)) {

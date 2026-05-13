@@ -10,6 +10,11 @@ static block_status_t ata_flush(bool ext) {
     return BLOCK_OK;
 }
 
+static block_status_t ata_block_flush(block_device_t *dev) {
+    (void)dev;
+    return ata_flush(primary_supports_lba48);
+}
+
 static block_status_t ata_write28(block_device_t *dev, u64 lba, u32 count, const void *buffer) {
     (void)dev;
     if (count == 0 || !buffer) return BLOCK_ERR_INVALID;

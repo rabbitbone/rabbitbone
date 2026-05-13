@@ -69,6 +69,8 @@ K_C_SRCS := \
   kernel/arch/x86_64/idt.c \
   kernel/arch/x86_64/irq.c \
   kernel/arch/x86_64/memory.c \
+  kernel/drivers/pci.c \
+  kernel/drivers/ahci.c \
   kernel/drivers/ata_pio.c \
   kernel/drivers/block.c \
   kernel/drivers/keyboard.c \
