@@ -38,6 +38,30 @@ int main(int argc, char **argv, char **envp) {
         if (!has_env(envp, "EXECVE=ok")) return 14;
         return 0;
     }
+    if (au_strcmp(argv[1], "/tmp/ktest-sb0") == 0) {
+        if (argc != 3) return 50;
+        return au_strcmp(argv[0], "/bin/exectarget") == 0 && au_strcmp(argv[2], "solo") == 0 ? 0 : 51;
+    }
+    if (au_strcmp(argv[1], "--sb-opt") == 0) {
+        if (argc != 5) return 52;
+        return au_strcmp(argv[0], "/bin/exectarget") == 0 &&
+               au_strcmp(argv[2], "/tmp/ktest-sb1") == 0 &&
+               au_strcmp(argv[3], "alpha") == 0 &&
+               au_strcmp(argv[4], "beta") == 0 ? 0 : 53;
+    }
+    if (au_strcmp(argv[1], "--sb-env") == 0) {
+        if (argc != 3) return 54;
+        return au_strcmp(argv[0], "/bin/exectarget") == 0 &&
+               au_strcmp(argv[2], "/tmp/ktest-sb2") == 0 &&
+               has_env(envp, "SHEBANG_ENV=ok") &&
+               has_env(envp, "UNCHANGED=yes") ? 0 : 55;
+    }
+    if (au_strcmp(argv[1], "--sb-exec") == 0) {
+        if (argc != 4) return 56;
+        return au_strcmp(argv[0], "/bin/exectarget") == 0 &&
+               au_strcmp(argv[2], "/tmp/ktest-sb3") == 0 &&
+               au_strcmp(argv[3], "from-exec") == 0 ? 0 : 57;
+    }
     if (argc < 3 || !argv[2]) return 20;
     au_i64 fd = parse_i64(argv[2]);
     if (fd <= 0) return 21;

@@ -3,6 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.4
+
+Interpreter and shebang execution support update over `0.0.2.3`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.4` / `0x00000204`.
+- Added kernel-level `#!` resolution in the process loader, shared by `spawn`, `spawnv`, `exec`, `execv`, and `execve`, before user image mapping.
+- Rewrites script execution to the interpreter argv contract: interpreter path, optional shebang argument, script path, then original caller arguments after `argv[0]`.
+- Enforces a bounded 127-byte shebang line, absolute interpreter paths, path-policy normalization, read access for the script, normal ELF validation and execute permission for the final interpreter, inherited envp handling, existing argv/env limits, and a two-hop recursion limit.
+- Added ktest coverage using existing `/bin/exectarget` and `/bin/execcheck` probes for no-argument shebangs, optional interpreter args, envp preservation, syscall `spawnv`, ring3 `execv`, relative/empty interpreters, and recursive loops.
+- Kept the low-memory kernel image within the BIOS-safe load window by reusing existing userland probes and moving syscall handle/pipe tables from static `.bss` to heap-backed initialization.
+- Relaxed `/bin/aursh` preflight checks so shell command execution and `spawn` can hand shebang files to the kernel instead of rejecting non-ELF script heads.
+
 ## 0.0.2.3
 
 Kernel W^X and full image page-protection hardening update over `0.0.2.2`.

@@ -8,12 +8,12 @@ static void release_pipe(sys_pipe_t *p);
 static bool copy_path_arg(u64 user_or_kernel_ptr, char *out);
 
 void syscall_reset_user_handles(void) {
-    memset(user_handles, 0, sizeof(user_handles));
+    memset(user_handles, 0, SYSCALL_HANDLE_TABLE_BYTES);
     init_stdio_handles(user_handles);
 }
 
 void syscall_prepare_user_handle_snapshot(void *dst, usize dst_size) {
-    if (!dst || dst_size < sizeof(user_handles)) return;
+    if (!dst || dst_size < SYSCALL_HANDLE_TABLE_BYTES) return;
     sys_handle_t tmp[SYSCALL_MAX_HANDLES];
     memset(tmp, 0, sizeof(tmp));
     init_stdio_handles(tmp);
@@ -21,16 +21,16 @@ void syscall_prepare_user_handle_snapshot(void *dst, usize dst_size) {
 }
 
 usize syscall_user_handle_snapshot_size(void) {
-    return sizeof(user_handles);
+    return SYSCALL_HANDLE_TABLE_BYTES;
 }
 
 void syscall_save_user_handles(void *dst, usize dst_size) {
-    if (!dst || dst_size < sizeof(user_handles)) return;
-    memcpy(dst, user_handles, sizeof(user_handles));
+    if (!dst || dst_size < SYSCALL_HANDLE_TABLE_BYTES) return;
+    memcpy(dst, user_handles, SYSCALL_HANDLE_TABLE_BYTES);
 }
 
 bool syscall_retain_user_handle_snapshot(const void *src, usize src_size) {
-    if (!src || src_size < sizeof(user_handles)) return false;
+    if (!src || src_size < SYSCALL_HANDLE_TABLE_BYTES) return false;
     const sys_handle_t *handles = (const sys_handle_t *)src;
     for (usize i = 0; i < SYSCALL_MAX_HANDLES; ++i) {
         if (handles[i].used && !handle_retain_resource(&handles[i])) {
@@ -47,7 +47,7 @@ bool syscall_retain_user_handle_snapshot(const void *src, usize src_size) {
 }
 
 void syscall_release_user_handle_snapshot(void *src, usize src_size) {
-    if (!src || src_size < sizeof(user_handles)) return;
+    if (!src || src_size < SYSCALL_HANDLE_TABLE_BYTES) return;
     sys_handle_t *handles = (sys_handle_t *)src;
     for (usize i = 0; i < SYSCALL_MAX_HANDLES; ++i) {
         if (handles[i].used) close_handle(handles, i);
@@ -68,22 +68,34 @@ void syscall_close_all_user_handles(void) {
 }
 
 bool syscall_load_user_handles(const void *src, usize src_size) {
-    if (!src || src_size < sizeof(user_handles)) return false;
-    memcpy(user_handles, src, sizeof(user_handles));
+    if (!src || src_size < SYSCALL_HANDLE_TABLE_BYTES) return false;
+    memcpy(user_handles, src, SYSCALL_HANDLE_TABLE_BYTES);
     return true;
 }
 
 void syscall_init(void) {
-    memset(kernel_handles, 0, sizeof(kernel_handles));
-    memset(user_handles, 0, sizeof(user_handles));
-    init_stdio_handles(kernel_handles);
-    init_stdio_handles(user_handles);
+    if (!kernel_handles) {
+        kernel_handles = (sys_handle_t *)kmalloc(SYSCALL_HANDLE_TABLE_BYTES);
+        if (!kernel_handles) PANIC("syscall kernel handle table allocation failed");
+    }
+    if (!user_handles) {
+        user_handles = (sys_handle_t *)kmalloc(SYSCALL_HANDLE_TABLE_BYTES);
+        if (!user_handles) PANIC("syscall user handle table allocation failed");
+    }
     if (!files) {
         files = (sys_file_t *)kmalloc(sizeof(sys_file_t) * SYSCALL_FILE_CAP);
         if (!files) PANIC("syscall open-file table allocation failed");
     }
+    if (!pipes) {
+        pipes = (sys_pipe_t *)kmalloc(SYSCALL_PIPE_TABLE_BYTES);
+        if (!pipes) PANIC("syscall pipe table allocation failed");
+    }
+    memset(kernel_handles, 0, SYSCALL_HANDLE_TABLE_BYTES);
+    memset(user_handles, 0, SYSCALL_HANDLE_TABLE_BYTES);
+    init_stdio_handles(kernel_handles);
+    init_stdio_handles(user_handles);
     memset(files, 0, sizeof(sys_file_t) * SYSCALL_FILE_CAP);
-    memset(pipes, 0, sizeof(pipes));
+    memset(pipes, 0, SYSCALL_PIPE_TABLE_BYTES);
     memset(user_log_states, 0, sizeof(user_log_states));
     spinlock_init(&file_table_lock);
     spinlock_init(&pipe_table_lock);

@@ -89,10 +89,10 @@ typedef struct sys_pipe {
     spinlock_t lock;
 } sys_pipe_t;
 
-static sys_handle_t kernel_handles[SYSCALL_MAX_HANDLES];
-static sys_handle_t user_handles[SYSCALL_MAX_HANDLES];
+static sys_handle_t *kernel_handles;
+static sys_handle_t *user_handles;
 static sys_file_t *files;
-static sys_pipe_t pipes[SYSCALL_PIPE_CAP];
+static sys_pipe_t *pipes;
 
 #define SYSCALL_USER_LOG_SLOTS 32u
 #define SYSCALL_USER_LOG_WINDOW_TICKS 64ull
@@ -114,7 +114,9 @@ static spinlock_t pipe_table_lock;
 static spinlock_t user_log_lock;
 static bool initialized;
 static char kernel_cwd[SYSCALL_PATH_MAX] = "/";
-AURORA_STATIC_ASSERT(user_handle_snapshot_fits, sizeof(user_handles) <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+#define SYSCALL_HANDLE_TABLE_BYTES (sizeof(sys_handle_t) * SYSCALL_MAX_HANDLES)
+#define SYSCALL_PIPE_TABLE_BYTES (sizeof(sys_pipe_t) * SYSCALL_PIPE_CAP)
+AURORA_STATIC_ASSERT(user_handle_snapshot_fits, SYSCALL_HANDLE_TABLE_BYTES <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
 
 static syscall_result_t ok(i64 v) { syscall_result_t r = { v, 0 }; return r; }
 static syscall_result_t err(i64 e) { syscall_result_t r = { -1, e }; return r; }

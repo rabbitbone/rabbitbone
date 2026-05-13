@@ -7,13 +7,13 @@ static int sh_command_from_argv(int argc, char **argv) {
     for (int i = 0; i < argc; ++i) stage.argv[i] = argv[i];
     stage.argc = (unsigned int)argc;
     if (!sh_resolve_program(stage.path, sizeof(stage.path), argv[0])) { sh_err("sh: command not found: "); sh_write_fd((au_i64)AURORA_STDERR, argv[0]); sh_err("\n"); return 127; }
-    if (!sh_path_is_elf(stage.path)) { sh_err("sh: not an executable ELF: "); sh_write_fd((au_i64)AURORA_STDERR, stage.path); sh_err("\n"); return 126; }
+    if (!sh_path_is_elf(stage.path)) { sh_err("sh: not executable: "); sh_write_fd((au_i64)AURORA_STDERR, stage.path); sh_err("\n"); return 126; }
     return sh_spawn_external_wait(&stage);
 }
 
 static int sh_spawn_external_wait(sh_stage_t *stage) {
     if (!stage) return 1;
-    if (!sh_path_is_elf(stage->path)) { sh_err("sh: not an executable ELF: "); sh_write_fd((au_i64)AURORA_STDERR, stage->path); sh_err("\n"); return 126; }
+    if (!sh_path_is_elf(stage->path)) { sh_err("sh: not executable: "); sh_write_fd((au_i64)AURORA_STDERR, stage->path); sh_err("\n"); return 126; }
     stage->argv[0] = stage->path;
     au_procinfo_t info;
     au_memset(&info, 0, sizeof(info));

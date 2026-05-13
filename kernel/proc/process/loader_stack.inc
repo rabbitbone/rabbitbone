@@ -152,21 +152,28 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     p->result.started_ticks = pit_ticks();
     p->result.address_space = p->space.pml4_physical;
     p->result.address_space_generation = alloc_address_space_generation();
-    strncpy(p->result.name, path, sizeof(p->result.name) - 1u);
     syscall_prepare_user_handle_snapshot(p->fd_snapshot, sizeof(p->fd_snapshot));
 
+    process_exec_plan_t plan;
+    process_status_t st = resolve_exec_plan(p, path, argc, argv, &plan);
+    if (st == PROC_OK) {
+        strncpy(p->result.name, plan.image_path, sizeof(p->result.name) - 1u);
+    } else {
+        strncpy(p->result.name, path, sizeof(p->result.name) - 1u);
+    }
+
     u64 entry = 0;
-    process_status_t st = load_elf_image(p, path, &entry);
+    if (st == PROC_OK) st = load_elf_image(p, plan.image_path, &entry);
     if (st == PROC_OK) {
         u64 user_rsp = 0;
         u64 user_argv = 0;
         u64 user_envp = 0;
-        st = build_user_stack(p, argc, argv, envc, envp, &user_rsp, &user_argv, &user_envp);
+        st = build_user_stack(p, plan.argc, plan.argv, envc, envp, &user_rsp, &user_argv, &user_envp);
         if (st == PROC_OK) {
             p->result.entry = entry;
-            init_user_regs(&p->regs, entry, user_rsp, (u64)argc, user_argv, user_envp);
+            init_user_regs(&p->regs, entry, user_rsp, (u64)plan.argc, user_argv, user_envp);
             KLOG(LOG_INFO, "process", "prepared pid=%u path=%s pml4=%p entry=%p rsp=%p argc=%d pages=%llu",
-                 p->result.pid, path, (void *)p->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, argc,
+                 p->result.pid, plan.image_path, (void *)p->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, plan.argc,
                  (unsigned long long)p->result.mapped_pages);
             return PROC_OK;
         }
@@ -209,21 +216,25 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->result.address_space_generation = alloc_address_space_generation();
     dst->result.mapped_pages = 0;
     memset(dst->result.name, 0, sizeof(dst->result.name));
-    strncpy(dst->result.name, path, sizeof(dst->result.name) - 1u);
+
+    process_exec_plan_t plan;
+    process_status_t st = resolve_exec_plan(dst, path, argc, argv, &plan);
+    if (st == PROC_OK) strncpy(dst->result.name, plan.image_path, sizeof(dst->result.name) - 1u);
+    else strncpy(dst->result.name, path, sizeof(dst->result.name) - 1u);
 
     u64 entry = 0;
-    process_status_t st = load_elf_image(dst, path, &entry);
+    if (st == PROC_OK) st = load_elf_image(dst, plan.image_path, &entry);
     if (st == PROC_OK) {
         u64 user_rsp = 0;
         u64 user_argv = 0;
         u64 user_envp = 0;
-        st = build_user_stack(dst, argc, argv, envc, envp, &user_rsp, &user_argv, &user_envp);
+        st = build_user_stack(dst, plan.argc, plan.argv, envc, envp, &user_rsp, &user_argv, &user_envp);
         if (st == PROC_OK) {
             dst->result.entry = entry;
-            init_user_regs(&dst->regs, entry, user_rsp, (u64)argc, user_argv, user_envp);
+            init_user_regs(&dst->regs, entry, user_rsp, (u64)plan.argc, user_argv, user_envp);
             syscall_save_user_handles(dst->fd_snapshot, sizeof(dst->fd_snapshot));
             KLOG(LOG_INFO, "process", "exec prepared pid=%u path=%s pml4=%p entry=%p rsp=%p argc=%d pages=%llu",
-                 dst->result.pid, path, (void *)dst->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, argc,
+                 dst->result.pid, plan.image_path, (void *)dst->space.pml4_physical, (void *)(uptr)entry, (void *)(uptr)user_rsp, plan.argc,
                  (unsigned long long)dst->result.mapped_pages);
             return PROC_OK;
         }

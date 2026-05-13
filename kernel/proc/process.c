@@ -2,6 +2,7 @@
 
 #include "process/lifecycle_state.inc"
 #include "process/memory_copy.inc"
+#include "process/shebang.inc"
 #include "process/loader_stack.inc"
 #include "process/spawn_fork.inc"
 #include "process/scheduler_loop.inc"

@@ -1,3 +1,9 @@
+static bool ktest_create_text_file(const char *path, const char *body, u32 mode) {
+    if (!path || !body) return false;
+    (void)vfs_unlink(path);
+    return vfs_create(path, body, strlen(body)) == VFS_OK && vfs_chmod(path, mode) == VFS_OK;
+}
+
 static void detail_process_result(const char *label, process_status_t st, const process_result_t *r) {
     if (!r) return;
     kprintf("[ detail] %s status=%s exit=%d faulted=%u pml4=%p asid=%llu entry=%p stack_top=%p pages=%llu",
@@ -119,6 +125,68 @@ static void test_user_processes(void) {
     bool execfdclo_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
     check(execfdclo_ok, "ring3 /bin/execfdcheck closes FD_CLOEXEC handles across execv");
     if (!execfdclo_ok) detail_process_result("/bin/execfdcheck", ps, &r);
+
+    const char *sb_basic_path = "/tmp/ktest-sb0";
+    const char *sb_opt_path = "/tmp/ktest-sb1";
+    const char *sb_env_path = "/tmp/ktest-sb2";
+    const char *sb_exec_path = "/tmp/ktest-sb3";
+    const char *sb_relative_path = "/tmp/ktest-sbr";
+    const char *sb_empty_path = "/tmp/ktest-sbe";
+    const char *sb_loop_path = "/tmp/ktest-sbl";
+    bool sb_scripts_ok =
+        ktest_create_text_file(sb_basic_path, "#!/bin/exectarget\n", 0644u) &&
+        ktest_create_text_file(sb_opt_path, "#!/bin/exectarget --sb-opt\n", 0644u) &&
+        ktest_create_text_file(sb_env_path, "#!/bin/exectarget --sb-env\n", 0644u) &&
+        ktest_create_text_file(sb_exec_path, "#!/bin/exectarget --sb-exec\n", 0644u) &&
+        ktest_create_text_file(sb_relative_path, "#!bin/exectarget\n", 0644u) &&
+        ktest_create_text_file(sb_empty_path, "#!\n", 0644u) &&
+        ktest_create_text_file(sb_loop_path, "#!/tmp/ktest-sbl\n", 0644u);
+    check(sb_scripts_ok, "VFS creates shebang test scripts as readable non-ELF files");
+
+    const char *sb_basic_argv[] = { sb_basic_path, "solo" };
+    ps = process_exec(sb_basic_path, 2, sb_basic_argv, &r);
+    bool sb_basic_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(sb_basic_ok, "ring3 shebang script runs via interpreter without optional arg");
+    if (!sb_basic_ok) detail_process_result(sb_basic_path, ps, &r);
+
+    const char *sb_opt_argv[] = { sb_opt_path, "alpha", "beta" };
+    ps = process_exec(sb_opt_path, 3, sb_opt_argv, &r);
+    bool sb_opt_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(sb_opt_ok, "ring3 shebang script inserts optional interpreter argument before script path");
+    if (!sb_opt_ok) detail_process_result(sb_opt_path, ps, &r);
+
+    const char *sb_env_argv[] = { sb_env_path };
+    const char *sb_envp[] = { "SHEBANG_ENV=ok", "UNCHANGED=yes" };
+    ps = process_execve(sb_env_path, 1, sb_env_argv, 2, sb_envp, &r);
+    bool sb_env_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(sb_env_ok, "ring3 shebang execve preserves caller envp limits and values");
+    if (!sb_env_ok) detail_process_result(sb_env_path, ps, &r);
+
+    syscall_result_t sb_sv = syscall_dispatch(AURORA_SYS_SPAWNV, (u64)(uptr)sb_basic_path, 2u, (u64)(uptr)sb_basic_argv, 0, 0, 0);
+    bool sb_spawnv_ok = sb_sv.error == 0 && sb_sv.value > 0;
+    if (sb_spawnv_ok) {
+        process_info_t info;
+        sb_spawnv_ok = process_wait((u32)sb_sv.value, &info) && info.exit_code == 0 && info.state == PROCESS_STATE_EXITED && strcmp(info.name, "/bin/exectarget") == 0;
+    }
+    check(sb_spawnv_ok, "syscall spawnv executes readable shebang script through ELF interpreter");
+
+    const char *sb_exec_argv[] = { "/bin/execcheck", "shebang", sb_exec_path };
+    ps = process_exec("/bin/execcheck", 3, sb_exec_argv, &r);
+    bool sb_exec_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && strcmp(r.name, "/bin/exectarget") == 0;
+    check(sb_exec_ok, "ring3 execv can replace current image with shebang interpreter image");
+    if (!sb_exec_ok) detail_process_result("/bin/execcheck shebang", ps, &r);
+
+    const char *sb_bad_argv[] = { sb_relative_path };
+    ps = process_exec(sb_relative_path, 1, sb_bad_argv, &r);
+    check(ps == PROC_ERR_FORMAT, "shebang rejects relative interpreter path");
+
+    const char *sb_empty_argv[] = { sb_empty_path };
+    ps = process_exec(sb_empty_path, 1, sb_empty_argv, &r);
+    check(ps == PROC_ERR_FORMAT, "shebang rejects empty interpreter path");
+
+    const char *sb_loop_argv[] = { sb_loop_path };
+    ps = process_exec(sb_loop_path, 1, sb_loop_argv, &r);
+    check(ps == PROC_ERR_RANGE, "shebang recursion limit rejects interpreter loop");
 
     const char *fork_argv[] = { "/bin/forkcheck" };
     ps = process_exec("/bin/forkcheck", 1, fork_argv, &r);

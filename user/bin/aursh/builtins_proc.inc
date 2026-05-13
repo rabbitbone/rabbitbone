@@ -21,7 +21,7 @@ static int sh_builtin_spawn(int argc, char **argv) {
     char path[SH_PATH_MAX];
     char *run_argv[SH_ARG_MAX];
     if (!sh_resolve_program(path, sizeof(path), argv[1])) return 1;
-    if (!sh_path_is_elf(path)) { sh_err("spawn: not an executable ELF: "); sh_write_fd((au_i64)AURORA_STDERR, path); sh_err("\n"); return 126; }
+    if (!sh_path_is_elf(path)) { sh_err("spawn: not executable: "); sh_write_fd((au_i64)AURORA_STDERR, path); sh_err("\n"); return 126; }
     run_argv[0] = path;
     for (unsigned int i = 1; i < run_argc; ++i) run_argv[i] = argv[i + 1u];
     au_i64 pid = au_spawnv(path, run_argc, (const char *const *)run_argv);

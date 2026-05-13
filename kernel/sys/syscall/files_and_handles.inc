@@ -223,7 +223,7 @@ static void close_handle(sys_handle_t *handles, usize h) {
 }
 
 static bool snapshot_valid(void *snapshot, usize snapshot_size) {
-    return snapshot && snapshot_size >= sizeof(user_handles);
+    return snapshot && snapshot_size >= SYSCALL_HANDLE_TABLE_BYTES;
 }
 
 static bool install_owned_handle(sys_handle_t *handles, u32 target_fd, sys_handle_t *owned) {

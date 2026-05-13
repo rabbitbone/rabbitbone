@@ -4,7 +4,8 @@ static int sh_path_is_elf(const char *path) {
     if (fd < 0) return 0;
     au_i64 got = au_read(fd, head, sizeof(head));
     (void)au_close(fd);
-    return got == 4 && head[0] == 0x7fu && head[1] == 'E' && head[2] == 'L' && head[3] == 'F';
+    if (got >= 4 && head[0] == 0x7fu && head[1] == 'E' && head[2] == 'L' && head[3] == 'F') return 1;
+    return got >= 2 && head[0] == '#' && head[1] == '!';
 }
 
 static int sh_kctl_op_for(const char *cmd, unsigned int *op) {

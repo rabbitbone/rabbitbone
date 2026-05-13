@@ -17,6 +17,7 @@
 #include <aurora/drivers.h>
 #include <aurora/rust.h>
 #include <aurora/panic.h>
+#include <aurora/path.h>
 
 #define USER_IMAGE_BASE      ELF64_AURORA_USER_IMAGE_BASE
 #define USER_SPACE_LIMIT     ELF64_AURORA_USER_SPACE_LIMIT
@@ -29,12 +30,22 @@
 #define USER_BACKING_PHYS_LIMIT MEMORY_KERNEL_DIRECT_LIMIT
 #define PROCESS_ASYNC_CAP 32u
 #define PROCESS_INT80_LEN 2u
+#define PROCESS_SHEBANG_LINE_MAX 127u
+#define PROCESS_SHEBANG_MAX_DEPTH 2u
 
 typedef struct user_mapping {
     uptr virt;
     uptr phys;
     u64 final_flags;
 } user_mapping_t;
+
+typedef struct process_exec_plan {
+    char image_path[VFS_PATH_MAX];
+    char argv_storage[PROCESS_ARG_MAX][USER_ARG_STRING_MAX];
+    const char *argv[PROCESS_ARG_MAX];
+    int argc;
+    bool shebang;
+} process_exec_plan_t;
 
 typedef struct active_process {
     bool active;
