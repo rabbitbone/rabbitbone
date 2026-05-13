@@ -41,8 +41,8 @@ void *sbrk(long increment) {
     return r < 0 ? (void *)-1 : (void *)(unsigned long)r;
 }
 
-void *au_mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags) {
-    au_result_t r = au_syscall6(AU_SYS_MMAP, (au_u64)(unsigned long)addr, (au_u64)length, (au_u64)prot, (au_u64)flags, 0, 0);
+void *au_mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags, au_i64 fd, au_u64 offset) {
+    au_result_t r = au_syscall6(AU_SYS_MMAP, (au_u64)(unsigned long)addr, (au_u64)length, (au_u64)prot, (au_u64)flags, (au_u64)fd, offset);
     return r.error ? (void *)-1 : (void *)(unsigned long)r.value;
 }
 
@@ -56,8 +56,8 @@ au_i64 au_mprotect(void *addr, au_usize length, unsigned int prot) {
     return r.error ? r.error : r.value;
 }
 
-void *mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags) {
-    return au_mmap(addr, length, prot, flags);
+void *mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags, au_i64 fd, au_u64 offset) {
+    return au_mmap(addr, length, prot, flags, fd, offset);
 }
 
 au_i64 munmap(void *addr, au_usize length) {

@@ -16,14 +16,14 @@ static int wait_exit(unsigned int pid, unsigned int state, int exit_code, int fa
 }
 
 static int check_basic_map_unmap(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p || ((unsigned long)p & (PAGE - 1u)) != 0) return 10;
     p[0] = 0x11u;
     p[PAGE - 1u] = 0x22u;
     p[PAGE] = 0x33u;
     p[PAGE * 2u - 1u] = 0x44u;
     if (p[0] != 0x11u || p[PAGE - 1u] != 0x22u || p[PAGE] != 0x33u || p[PAGE * 2u - 1u] != 0x44u) return 11;
-    if (mmap(p, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED) != (void *)-1) return 12;
+    if (mmap(p, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED, -1, 0) != (void *)-1) return 12;
     if (munmap(p, PAGE) != 0) return 13;
     au_i64 child = au_fork();
     if (child < 0) return 14;
@@ -40,7 +40,7 @@ static int check_basic_map_unmap(void) {
 }
 
 static int check_mprotect_fault_and_restore(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 40;
     p[0] = 0x61u;
     if (mprotect(p, PAGE, AURORA_PROT_READ) != 0) return 41;
@@ -62,7 +62,7 @@ static int check_mprotect_fault_and_restore(void) {
 }
 
 static int check_mmap_fork_cow(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 70;
     p[0] = 7u;
     p[PAGE - 1u] = 9u;
@@ -85,7 +85,7 @@ static int check_mmap_fork_cow(void) {
 }
 
 static int check_exec_release(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 100;
     p[0] = 0xacu;
     au_i64 child = au_fork();
@@ -106,15 +106,15 @@ static int check_exec_release(void) {
 
 static int check_fixed_and_arg_rejects(void) {
     unsigned char *fixed = (unsigned char *)0x0000010080020000ull;
-    unsigned char *p = (unsigned char *)mmap(fixed, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED);
+    unsigned char *p = (unsigned char *)mmap(fixed, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED, -1, 0);
     if (p != fixed) return 130;
     p[0] = 0x5au;
     if (p[0] != 0x5au) return 131;
     if (mprotect(p + 1, PAGE, AURORA_PROT_READ) >= 0) return 132;
     if (munmap(p + 1, PAGE) >= 0) return 133;
-    if (mmap(0, 0, AURORA_PROT_READ, MAP_FLAGS) != (void *)-1) return 134;
-    if (mmap(0, PAGE, 0, MAP_FLAGS) != (void *)-1) return 135;
-    if (mmap(0, PAGE, AURORA_PROT_READ, AURORA_MAP_ANON) != (void *)-1) return 136;
+    if (mmap(0, 0, AURORA_PROT_READ, MAP_FLAGS, -1, 0) != (void *)-1) return 134;
+    if (mmap(0, PAGE, 0, MAP_FLAGS, -1, 0) != (void *)-1) return 135;
+    if (mmap(0, PAGE, AURORA_PROT_READ, AURORA_MAP_ANON, -1, 0) != (void *)-1) return 136;
     if (munmap(p, PAGE) != 0) return 137;
     return 0;
 }

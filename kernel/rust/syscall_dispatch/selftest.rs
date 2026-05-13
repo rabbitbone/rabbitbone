@@ -166,9 +166,12 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::Kctl, SysArgs { a0: 0, a1: 0x10000, a2: KCTL_OUT_MAX + 1, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Brk, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Sbrk, SysArgs { a0: 0xffff_ffff_ffff_ffff, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
-    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE, a4: 0, a5: 0 }).is_err() { return false; }
-    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0x12345, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE | MAP_FIXED, a4: 0, a5: 0 }).is_ok() { return false; }
-    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_WRITE | PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE, a4: u64::MAX, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0x12345, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE | MAP_FIXED, a4: u64::MAX, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_WRITE | PROT_EXEC, a3: MAP_ANON | MAP_PRIVATE, a4: u64::MAX, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_PRIVATE, a4: 3, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_PRIVATE, a4: MAX_HANDLES, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Mmap, SysArgs { a0: 0, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: MAP_PRIVATE, a4: 3, a5: 1 }).is_ok() { return false; }
     if validate_args(SyscallNo::Munmap, SysArgs { a0: 0x10000, a1: 4096, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Mprotect, SysArgs { a0: 0x10000, a1: 4096, a2: PROT_SUPPORTED & !PROT_EXEC, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
 

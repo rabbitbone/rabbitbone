@@ -39,6 +39,7 @@ static void test_user_processes(void) {
     check(vfs_stat("/bin/forkcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/forkcheck fork/wait ELF");
     check(vfs_stat("/bin/heapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/heapcheck brk/sbrk malloc ELF");
     check(vfs_stat("/bin/mmapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapcheck anonymous mmap/mprotect ELF");
+    check(vfs_stat("/bin/mmapfilecheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapfilecheck file-backed private mmap ELF");
     check(vfs_stat("/bin/procctl", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/procctl async spawn/wait ELF");
     check(vfs_stat("/bin/execcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execcheck execv ELF");
     check(vfs_stat("/bin/execfdcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execfdcheck fd inheritance/CLOEXEC ELF");
@@ -219,6 +220,16 @@ static void test_user_processes(void) {
     bool mmap_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmap_mem_after.free_frames >= mmap_mem_before.free_frames;
     check(mmap_ok, "ring3 /bin/mmapcheck validates anonymous mmap/munmap/mprotect, VMA splitting, and mmap COW fork");
     if (!mmap_ok) detail_process_result("/bin/mmapcheck", ps, &r);
+
+    const char *mmapfile_argv[] = { "/bin/mmapfilecheck" };
+    memory_stats_t mmapfile_mem_before;
+    memory_stats_t mmapfile_mem_after;
+    memory_get_stats(&mmapfile_mem_before);
+    ps = process_exec("/bin/mmapfilecheck", 1, mmapfile_argv, &r);
+    memory_get_stats(&mmapfile_mem_after);
+    bool mmapfile_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmapfile_mem_after.free_frames >= mmapfile_mem_before.free_frames;
+    check(mmapfile_ok, "ring3 /bin/mmapfilecheck validates file-backed private mmap over VFS handles");
+    if (!mmapfile_ok) detail_process_result("/bin/mmapfilecheck", ps, &r);
 
     const char *pipe_argv[] = { "/bin/pipecheck" };
     ps = process_exec("/bin/pipecheck", 1, pipe_argv, &r);

@@ -142,7 +142,11 @@ static bool process_prot_valid(u32 prot) {
 
 static bool process_mmap_flags_valid(u32 flags) {
     if ((flags & ~AURORA_MAP_SUPPORTED) != 0) return false;
-    return (flags & AURORA_MAP_ANON) && (flags & AURORA_MAP_PRIVATE);
+    return (flags & AURORA_MAP_PRIVATE) != 0;
+}
+
+static bool process_mmap_is_anon(u32 flags) {
+    return (flags & AURORA_MAP_ANON) != 0;
 }
 
 static u64 process_flags_from_prot(u32 prot) {
@@ -167,19 +171,32 @@ static bool process_range_free(const active_process_t *p, uptr start, uptr end) 
     return true;
 }
 
-static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind) {
+static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id) {
     if (!p || start >= end || !user_page_aligned(start) || !user_page_aligned(end)) return PROC_ERR_INVAL;
     if (!user_addr_range_valid(start, (usize)(end - start))) return PROC_ERR_RANGE;
     if (!process_prot_valid(prot)) return PROC_ERR_INVAL;
     if (p->vma_count >= USER_MAX_VMAS) return PROC_ERR_NOMEM;
     if (!process_range_free(p, start, end)) return PROC_ERR_RANGE;
-    user_vma_t v = { .start = start, .end = end, .prot = prot, .flags = flags, .kind = kind, .reserved = 0 };
+    user_vma_t v;
+    memset(&v, 0, sizeof(v));
+    v.start = start;
+    v.end = end;
+    v.prot = prot;
+    v.flags = flags;
+    v.kind = kind;
+    v.file_offset = file_offset;
+    v.file_size = file_size;
+    v.file_id = file_id;
     usize pos = 0;
     while (pos < p->vma_count && p->vmas[pos].start < start) ++pos;
     for (usize i = p->vma_count; i > pos; --i) p->vmas[i] = p->vmas[i - 1u];
     p->vmas[pos] = v;
     ++p->vma_count;
     return PROC_OK;
+}
+
+static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind) {
+    return process_add_vma_backed(p, start, end, prot, flags, kind, 0, 0, 0);
 }
 
 static void process_remove_vma_at(active_process_t *p, usize idx) {
@@ -207,7 +224,12 @@ static process_status_t process_split_vma_at(active_process_t *p, usize idx, upt
     if (cut <= v->start || cut >= v->end) return PROC_OK;
     if (p->vma_count >= USER_MAX_VMAS) return PROC_ERR_NOMEM;
     user_vma_t right = *v;
+    uptr old_start = v->start;
     right.start = cut;
+    if (right.kind == USER_VMA_MMAP && (right.flags & AURORA_MAP_ANON) == 0) {
+        u64 delta = (u64)(cut - old_start);
+        if (__builtin_add_overflow(right.file_offset, delta, &right.file_offset)) return PROC_ERR_RANGE;
+    }
     v->end = cut;
     for (usize i = p->vma_count; i > idx + 1u; --i) p->vmas[i] = p->vmas[i - 1u];
     p->vmas[idx + 1u] = right;
@@ -413,11 +435,67 @@ static uptr process_find_free_mmap_range(active_process_t *p, usize size) {
     return 0;
 }
 
-process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u32 flags, uptr *addr_out) {
+static process_status_t process_status_from_vfs(vfs_status_t vs) {
+    if (vs == VFS_OK) return PROC_OK;
+    if (vs == VFS_ERR_NOMEM || vs == VFS_ERR_NOSPC) return PROC_ERR_NOMEM;
+    if (vs == VFS_ERR_PERM) return PROC_ERR_FAULT;
+    if (vs == VFS_ERR_INVAL) return PROC_ERR_INVAL;
+    if (vs == VFS_ERR_NOENT || vs == VFS_ERR_ISDIR || vs == VFS_ERR_NOTDIR) return PROC_ERR_RANGE;
+    return PROC_ERR_IO;
+}
+
+static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 flags, const vfs_node_ref_t *file_ref, u64 file_size, u64 file_offset) {
+    if (!file_ref) return PROC_ERR_INVAL;
+    if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
+    if (find_mapping(p, virt)) return PROC_ERR_RANGE;
+    void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+    if (!page) return PROC_ERR_NOMEM;
+    memset(page, 0, PAGE_SIZE);
+    usize wanted = PAGE_SIZE;
+    if (file_offset >= file_size) {
+        wanted = 0;
+    } else {
+        u64 remain = file_size - file_offset;
+        if (remain < (u64)wanted) wanted = (usize)remain;
+    }
+    if (wanted) {
+        usize got = 0;
+        vfs_status_t vs = vfs_read_ref(file_ref, file_offset, page, wanted, &got);
+        if (vs != VFS_OK) {
+            memory_free_page(page);
+            return process_status_from_vfs(vs);
+        }
+        if (got < wanted) memset((u8 *)page + got, 0, wanted - got);
+    }
+    (void)vmm_space_unmap_4k(&p->space, virt);
+    u64 final_flags = VMM_USER | flags;
+    if (!vmm_space_map_4k(&p->space, virt, (uptr)page, final_flags)) {
+        memory_free_page(page);
+        return PROC_ERR_NOMEM;
+    }
+    process_status_t st = track_mapping(p, virt, (uptr)page, final_flags);
+    if (st != PROC_OK) {
+        (void)vmm_space_unmap_4k(&p->space, virt);
+        memory_free_page(page);
+    }
+    return st;
+}
+
+process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u32 flags, u64 fd, u64 file_offset, const vfs_node_ref_t *file_ref, u64 file_size, uptr *addr_out) {
     if (!current_proc.active || !addr_out) return PROC_ERR_INVAL;
     if (!process_prot_valid(prot) || !process_mmap_flags_valid(flags)) return PROC_ERR_INVAL;
+    bool is_anon = process_mmap_is_anon(flags);
+    if (is_anon) {
+        if (fd != 0xffffffffffffffffull || file_offset != 0 || file_ref) return PROC_ERR_INVAL;
+    } else {
+        if (!file_ref || fd > 0xffffffffull || (file_offset & (PAGE_SIZE - 1u)) != 0) return PROC_ERR_INVAL;
+    }
     usize size = 0;
     if (!aurora_align_up_usize_checked(length, PAGE_SIZE, &size) || size == 0) return PROC_ERR_RANGE;
+    if (!is_anon) {
+        u64 file_end = 0;
+        if (__builtin_add_overflow(file_offset, (u64)size, &file_end)) return PROC_ERR_RANGE;
+    }
     uptr arena_end = process_mmap_arena_end();
     uptr start = 0;
     if (flags & AURORA_MAP_FIXED) {
@@ -438,12 +516,18 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
         if (!start) return PROC_ERR_NOMEM;
     }
     uptr end = start + (uptr)size;
-    process_status_t st = process_add_vma(&current_proc, start, end, prot, flags, USER_VMA_MMAP);
+    u32 stored_flags = flags;
+    process_status_t st = process_add_vma_backed(&current_proc, start, end, prot, stored_flags, USER_VMA_MMAP, is_anon ? 0 : file_offset, file_size, is_anon ? 0 : (u32)fd);
     if (st != PROC_OK) return st;
     u64 pte_flags = process_flags_from_prot(prot);
     uptr v = start;
     for (; v < end; v += PAGE_SIZE) {
-        st = map_user_page(&current_proc, v, pte_flags & ~VMM_USER);
+        if (is_anon) {
+            st = map_user_page(&current_proc, v, pte_flags & ~VMM_USER);
+        } else {
+            u64 page_file_off = file_offset + (u64)(v - start);
+            st = map_user_file_page(&current_proc, v, pte_flags & ~VMM_USER, file_ref, file_size, page_file_off);
+        }
         if (st != PROC_OK) {
             uptr rollback = start;
             while (rollback < v) {

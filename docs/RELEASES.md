@@ -4,6 +4,19 @@ This file keeps the release history short enough to be useful. Older one-off sta
 
 
 
+## 0.0.2.8
+
+File-backed private mmap over VFS handles update over `0.0.2.7`.
+
+- Bumped the kernel version and syscall ABI to `0.0.2.8` / `0x00000208`.
+- Extended `mmap` to the standard six-argument user ABI: address, length, protection, flags, VFS handle, and file offset.
+- Kept anonymous mappings strict: `MAP_ANON | MAP_PRIVATE` requires `fd=-1` and `offset=0`.
+- Added file-backed `MAP_PRIVATE` mappings over readable VFS file handles, with page-aligned offsets, VFS type/permission checks, zero-fill past EOF, and W^X protection enforcement.
+- File-backed mappings are private eager copies: closing the fd or later writing the backing file does not modify already mapped pages, and writes through the mapping never write back to VFS.
+- Preserved VMA/range tracking for file-backed mappings, including file offset metadata across VMA splitting for `munmap` and `mprotect`.
+- Kept file-backed mmap pages on the same refcount/COW path as anonymous mappings across `fork`, child exit, exec replacement, and process teardown.
+- Added `/bin/mmapfilecheck` and ktest coverage for VFS-handle backed mappings, offset mapping, zero-fill past EOF, fd-close lifetime, private write isolation, partial unmap faults, mprotect faults, fork COW, fork+exec release, and invalid fd/offset/flag/directory/write-only-handle rejection.
+
 ## 0.0.2.7
 
 Anonymous mmap/munmap/mprotect and VMA/range tracking update over `0.0.2.6`.

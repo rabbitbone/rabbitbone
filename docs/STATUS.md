@@ -1,8 +1,8 @@
 # AuroraOS status
 
-AuroraOS is currently at `0.0.2.7`.
+AuroraOS is currently at `0.0.2.8`.
 
-The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a bounded writable EXT4 path with inline/depth-1/depth-2 extents, split extent leaf writes, truncate-time extent-tree compaction/demotion, persistent htree directory indexes, async-coalesced ordered metadata journaling/recovery with data-before-metadata sync, direct-data writeback caching with cache coherency, unwritten extent preallocation/conversion, orphan cleanup, metadata checksums, fsck repair-lite for htree/free-counter/dirent corruption with cache-coherent raw-media repair, VFS/userland sync-fsync-statvfs-install_commit-preallocate app-storage calls, cwd-relative filesystem operations, a syscall layer with heap-backed descriptor tables, kernel shebang interpreter resolution, copy-on-write fork, per-process user heaps with brk/sbrk, anonymous mmap/munmap/mprotect with VMA range tracking, and a small ring3 userland with `/sbin/init` and `/bin/aursh`.
+The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a bounded writable EXT4 path with inline/depth-1/depth-2 extents, split extent leaf writes, truncate-time extent-tree compaction/demotion, persistent htree directory indexes, async-coalesced ordered metadata journaling/recovery with data-before-metadata sync, direct-data writeback caching with cache coherency, unwritten extent preallocation/conversion, orphan cleanup, metadata checksums, fsck repair-lite for htree/free-counter/dirent corruption with cache-coherent raw-media repair, VFS/userland sync-fsync-statvfs-install_commit-preallocate app-storage calls, cwd-relative filesystem operations, a syscall layer with heap-backed descriptor tables, kernel shebang interpreter resolution, copy-on-write fork, per-process user heaps with brk/sbrk, anonymous and file-backed private mmap/munmap/mprotect with VMA range tracking, and a small ring3 userland with `/sbin/init` and `/bin/aursh`.
 
 ## Working now
 
@@ -11,7 +11,7 @@ The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stag
 - Writable ramfs at `/`, devfs at `/dev`, tarfs support, and partition-bounded writable EXT4 mounted from the first Linux MBR partition.
 - ATA PIO, MBR parsing, and a block layer for the VMware IDE disk path.
 - ELF64 user program loading, kernel `#!` interpreter dispatch for scripts, ring3 entry, `int 0x80` syscalls, `/sbin/init`, and `/bin/aursh`.
-- Process records, file descriptors, async `spawn`, blocking `wait` and `sleep`, copy-on-write `fork`, per-process `brk`/`sbrk` heaps, anonymous `mmap`/`munmap`/`mprotect`, and `exec`/`execv`/`execve`, including shebang scripts with bounded recursion.
+- Process records, file descriptors, async `spawn`, blocking `wait` and `sleep`, copy-on-write `fork`, per-process `brk`/`sbrk` heaps, anonymous and file-backed private `mmap`/`munmap`/`mprotect`, and `exec`/`execv`/`execve`, including shebang scripts with bounded recursion.
 - Single-core preemptive scheduling through PIT IRQ0.
 - Rust safety-boundary modules linked into the kernel for syscall dispatch, usercopy, VFS routing, and path policy checks, with generated ABI constants shared from the C header.
 - Host tests and in-kernel `ktest`.

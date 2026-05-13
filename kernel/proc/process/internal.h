@@ -53,6 +53,10 @@ typedef struct user_vma {
     u32 flags;
     u32 kind;
     u32 reserved;
+    u64 file_offset;
+    u64 file_size;
+    u32 file_id;
+    u32 file_reserved;
 } user_vma_t;
 
 typedef struct user_mapping {
@@ -167,5 +171,6 @@ static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, up
 static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out);
 static bool process_range_has_vma(const active_process_t *p, uptr start, uptr end, u32 kind);
 static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind);
+static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id);
 static process_status_t process_split_vmas_for_range(active_process_t *p, uptr start, uptr end);
 

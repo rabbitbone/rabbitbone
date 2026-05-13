@@ -3,6 +3,7 @@
 #include <aurora/types.h>
 #include <aurora/arch/cpu.h>
 #include <aurora/abi.h>
+#include <aurora/vfs.h>
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -76,7 +77,7 @@ bool process_request_wait(u32 pid, uptr out_ptr);
 bool process_request_fork(void);
 process_status_t process_current_brk(uptr requested, uptr *current_out);
 process_status_t process_current_sbrk(i64 increment, uptr *old_break_out);
-process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u32 flags, uptr *addr_out);
+process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u32 flags, u64 fd, u64 file_offset, const vfs_node_ref_t *file_ref, u64 file_size, uptr *addr_out);
 process_status_t process_current_munmap(uptr addr, usize length);
 process_status_t process_current_mprotect(uptr addr, usize length, u32 prot);
 process_status_t process_request_exec(const char *path, int argc, const char *const *argv);
