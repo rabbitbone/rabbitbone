@@ -19,6 +19,11 @@
 
 namespace {
 
+struct InstallFile {
+    std::filesystem::path source;
+    std::string dest;
+};
+
 struct Args {
     std::string out;
     std::string stage1;
@@ -26,6 +31,13 @@ struct Args {
     std::string kernel;
     std::uint64_t size_mib = 64;
     bool force = false;
+    std::vector<InstallFile> install_files;
+};
+
+struct SeedFile {
+    std::string path;
+    std::vector<std::uint8_t> data;
+    std::uint16_t mode = 0100644;
 };
 
 constexpr std::uint32_t kPartitionLba = 2048;
@@ -48,21 +60,15 @@ constexpr std::uint32_t kBlockBitmapBlock = 3;
 constexpr std::uint32_t kInodeBitmapBlock = 4;
 constexpr std::uint32_t kInodeTableBlock = 5;
 constexpr std::uint32_t kFirstDataBlock = 1;
-constexpr std::uint32_t kRootDirBlock = 133;
-constexpr std::uint32_t kEtcDirBlock = 134;
-constexpr std::uint32_t kHelloBlock = 135;
-constexpr std::uint32_t kIssueBlock = 136;
-constexpr std::uint32_t kReadmeBlock = 137;
+constexpr std::uint32_t kDataBlockStart = 133;
 constexpr std::uint32_t kRootIno = 2;
 constexpr std::uint32_t kEtcIno = 12;
-constexpr std::uint32_t kHelloIno = 13;
-constexpr std::uint32_t kIssueIno = 14;
-constexpr std::uint32_t kReadmeIno = 15;
-constexpr std::uint32_t kLastUsedBlock = kReadmeBlock;
-constexpr std::uint32_t kLastUsedInode = kReadmeIno;
+constexpr std::uint32_t kBinIno = 13;
+constexpr std::uint32_t kSbinIno = 14;
+constexpr std::uint32_t kFirstDynamicInode = 15;
 
 [[noreturn]] void usage() {
-    std::cerr << "usage: aurora-install --out disk.img --stage1 stage1.bin --stage2 stage2.bin --kernel kernel.bin [--size-mib N] [--force]\n";
+    std::cerr << "usage: aurora-install --out disk.img --stage1 stage1.bin --stage2 stage2.bin --kernel kernel.bin [--size-mib N] [--install SRC:DEST]... [--force]\n";
     std::exit(2);
 }
 
@@ -76,6 +82,22 @@ constexpr std::uint32_t kLastUsedInode = kReadmeIno;
 
 std::string errno_message(const std::string &prefix) {
     return prefix + ": " + std::strerror(errno);
+}
+
+InstallFile parse_install_spec(const std::string &spec) {
+    const std::size_t sep = spec.find(':');
+    if (sep == std::string::npos || sep == 0 || sep + 1 >= spec.size()) {
+        throw std::runtime_error("--install expects SRC:DEST");
+    }
+    InstallFile f;
+    f.source = spec.substr(0, sep);
+    f.dest = spec.substr(sep + 1);
+    if (f.dest.empty() || f.dest[0] != '/') throw std::runtime_error("--install DEST must be absolute: " + f.dest);
+    if (f.dest.find("//") != std::string::npos || f.dest.find("/../") != std::string::npos ||
+        f.dest.find("/./") != std::string::npos || f.dest == "/." || f.dest == "/..") {
+        throw std::runtime_error("--install DEST must be normalized: " + f.dest);
+    }
+    return f;
 }
 
 std::uint64_t parse_u64_strict(const std::string &s, const char *name) {

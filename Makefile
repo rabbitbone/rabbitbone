@@ -29,8 +29,10 @@ USER_DEFAULT_INSTALLS := $(foreach p,$(USER_DEFAULT_INSTALL_PROGS),$(BUILD)/user
 USER_INSTALL_ALIASES := aursh:/bin/sh aursh:/bin/aursh init:/sbin/init
 USER_ALIAS_INSTALLS := $(foreach m,$(USER_INSTALL_ALIASES),$(BUILD)/user/$(firstword $(subst :, ,$(m))).elf:$(word 2,$(subst :, ,$(m))))
 USER_BIN_INSTALLS := $(USER_DEFAULT_INSTALLS) $(USER_ALIAS_INSTALLS)
+INSTALLER_USER_ARGS := $(foreach f,$(USER_BIN_INSTALLS),--install $(f))
+AURORA_EMBED_USERLAND ?= 0
 
-K_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CFLAGS := -DAURORA_EMBED_USERLAND=$(AURORA_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T scripts/kernel.ld -Map=$(BUILD)/kernel.map
@@ -118,7 +120,7 @@ K_RUST_SRCS := \
 K_RUST_OBJ := $(BUILD)/kernel/rust/lib.o
 K_RUST_ABI := $(BUILD)/kernel/rust/abi_generated.rs
 
-K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(BUILD)/user_bins.o
+K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(if $(filter 1,$(AURORA_EMBED_USERLAND)),$(BUILD)/user_bins.o,)
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
 
 .PHONY: all clean test image bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck
@@ -243,8 +245,8 @@ $(BUILD)/tools/installer/aurora-install: $(INSTALLER_SRCS)
 	mkdir -p $(dir $@)
 	"$(HOSTCXX)" -std=c++17 -O2 -Wall -Wextra -Werror $< -o $@
 
-image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(BUILD)/tools/installer/aurora-install
-	"$(BUILD)/tools/installer/aurora-install" --out "$(BUILD)/aurora.img" --stage1 "$(BUILD)/stage1.bin" --stage2 "$(BUILD)/stage2.bin" --kernel "$(BUILD)/kernel.bin" --size-mib 64 --force
+image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(USER_ELFS) $(BUILD)/tools/installer/aurora-install
+	"$(BUILD)/tools/installer/aurora-install" --out "$(BUILD)/aurora.img" --stage1 "$(BUILD)/stage1.bin" --stage2 "$(BUILD)/stage2.bin" --kernel "$(BUILD)/kernel.bin" $(INSTALLER_USER_ARGS) --size-mib 64 --force
 
 bootcheck:
 	python3 scripts/check_boot_sources.py boot/stage1.S boot/stage2.S

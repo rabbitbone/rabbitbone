@@ -31,7 +31,6 @@
 #include <aurora/arch/gdt.h>
 #include <aurora/arch/cpu.h>
 #include <aurora/process.h>
-#include <aurora/user_bins.h>
 #include <aurora/rust.h>
 #include <aurora/version.h>
 #include <aurora/tty.h>

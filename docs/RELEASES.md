@@ -3,6 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.14
+
+Disk-backed userland and boot contract cleanup over `0.0.2.13`.
+
+- Removed `user_bins.o` from the default kernel release link; embedded userland is now gated behind `AURORA_EMBED_USERLAND=1` as a debug/fallback build option.
+- Extended the image installer to seed `/bin`, `/sbin`, and `/etc` into the EXT4 partition and install all user ELF payloads there.
+- Changed the kernel boot path to mount the first valid EXT4 partition at `/disk0` and start `/disk0/sbin/init`.
+- Added compatibility symlinks from the boot ramfs `/bin` and `/sbin/init` to `/disk0` so existing absolute-path tests keep exercising the disk-backed files.
+- Updated PATH defaults to `/disk0/bin:/disk0/sbin:/bin:/sbin` in the seed filesystem, boot ramfs profile, and shell fallback.
+- Upgraded bootinfo to v2 with boot modules, root-device LBA/size, kernel source, flags, and command-line fields plus `boot` diagnostics.
+- Bumped the kernel version and syscall ABI to `0.0.2.14` / `0x0000020e`.
+
 ## 0.0.2.13
 
 Signals, process groups, and terminal job-control groundwork over `0.0.2.12`.

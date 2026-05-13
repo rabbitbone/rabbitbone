@@ -3,7 +3,7 @@
 #define SH_STAGES_MAX 6u
 #define SH_ARG_MAX 16u
 #define SH_PATH_MAX AURORA_PATH_MAX
-#define SH_DEFAULT_PATH "/bin:/sbin"
+#define SH_DEFAULT_PATH "/disk0/bin:/disk0/sbin:/bin:/sbin"
 #define SH_ENV_FILE "/etc/profile"
 #define SH_SCAN_PID_MAX 256u
 #define SH_PATH_PARSE_BUF 512u

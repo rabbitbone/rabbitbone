@@ -3,7 +3,7 @@
 .include "boot_config.inc"
 .equ E820_BUFFER, 0x5000
 .equ E820_MAX_ENTRIES, 64
-.equ BOOTINFO_VERSION, 1
+.equ BOOTINFO_VERSION, 2
 .equ KERNEL_LOAD_BASE, 0x10000
 .equ KERNEL_LOAD_LIMIT, 0x9f000
 .equ KERNEL_LOAD_MAX_SECTORS, ((KERNEL_LOAD_LIMIT - KERNEL_LOAD_BASE) / 512)
@@ -355,6 +355,14 @@ long_mode_entry:
     mov qword ptr [bootinfo + 32], rax
     movabs rax, KERNEL_SECTORS
     mov qword ptr [bootinfo + 40], rax
+    mov dword ptr [bootinfo + 12], 1
+    movabs rax, 2048
+    mov qword ptr [bootinfo + 56], rax
+    xor rax, rax
+    mov qword ptr [bootinfo + 64], rax
+    mov rax, offset boot_cmdline
+    mov qword ptr [bootinfo + 72], rax
+    mov dword ptr [bootinfo + 80], 89
 
     mov rsi, offset msg_jump_kernel
     call serial_puts64
@@ -449,4 +457,7 @@ dap:
  dap_lba_high: .long 0
 .align 16
 bootinfo:
-    .space 64, 0
+    .space 128, 0
+boot_cmdline:
+    .asciz "root=/disk0 init=/disk0/sbin/init userland=disk fallback=embedded-debug boot=legacy-bios"
+boot_cmdline_end:

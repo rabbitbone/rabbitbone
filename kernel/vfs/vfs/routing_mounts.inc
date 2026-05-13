@@ -27,6 +27,31 @@ typedef struct vfs_route {
     char relative[VFS_PATH_MAX];
 } vfs_route_t;
 
+static bool vfs_disk0_mount_present(const aurora_rust_mount_view_t *view) {
+    if (!view) return false;
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
+        if (view[i].active && strcmp(view[i].path, "/disk0") == 0) return true;
+    }
+    return false;
+}
+
+static bool vfs_rewrite_disk_userland_alias(const char *path, const aurora_rust_mount_view_t *view, char *out, usize out_size) {
+    if (!path || !out || out_size == 0 || !vfs_disk0_mount_present(view)) return false;
+    const char *suffix = 0;
+    if (strcmp(path, "/bin") == 0) {
+        suffix = "/bin";
+    } else if (strncmp(path, "/bin/", 5u) == 0) {
+        suffix = path;
+    } else if (strcmp(path, "/sbin") == 0) {
+        suffix = "/sbin";
+    } else if (strncmp(path, "/sbin/", 6u) == 0) {
+        suffix = path;
+    }
+    if (!suffix) return false;
+    int written = ksnprintf(out, out_size, "/disk0%s", suffix);
+    return written > 0 && (usize)written < out_size;
+}
+
 static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
     if (!path || !route) return VFS_ERR_INVAL;
     memset(route, 0, sizeof(*route));
@@ -48,9 +73,17 @@ static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
     }
     spin_unlock_irqrestore(&mounts_lock, flags);
 
+    char alias_path[VFS_PATH_MAX];
+    const char *route_path = path;
+    usize route_len = len;
+    if (vfs_rewrite_disk_userland_alias(path, view, alias_path, sizeof(alias_path))) {
+        route_path = alias_path;
+        route_len = strlen(alias_path);
+    }
+
     aurora_rust_route_out_t out;
     memset(&out, 0, sizeof(out));
-    i32 rc = aurora_rust_vfs_route(view, (const u8 *)path, len + 1u, &out);
+    i32 rc = aurora_rust_vfs_route(view, (const u8 *)route_path, route_len + 1u, &out);
     if (rc == VFS_ERR_NOENT) return VFS_ERR_NOENT;
     if (rc != VFS_OK) return VFS_ERR_INVAL;
     if (!out.found || out.mount_index >= VFS_MAX_MOUNTS || generations[out.mount_index] == 0) return VFS_ERR_NOENT;

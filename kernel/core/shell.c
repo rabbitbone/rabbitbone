@@ -14,6 +14,7 @@
 #include <aurora/smp.h>
 #include <aurora/timer.h>
 #include <aurora/process.h>
+#include <aurora/bootinfo.h>
 
 #ifdef AURORA_DEBUG_SHELL
 #define DEBUG_SHELL_LINE_MAX 96u
@@ -23,9 +24,13 @@ static void debug_log_writer(const char *line) { kprintf("%s", line); }
 static void debug_execute(char *line) {
     while (*line == ' ' || *line == '\t') ++line;
     if (strcmp(line, "help") == 0) {
-        kprintf("debug shell commands: help logs acpi apic hpet timer smp pci lspci disks blk mounts signals jobs panic reboot halt\n");
+        kprintf("debug shell commands: help logs boot acpi apic hpet timer smp pci lspci disks blk mounts signals jobs panic reboot halt\n");
     } else if (strcmp(line, "logs") == 0) {
         log_dump_ring(debug_log_writer);
+    } else if (strcmp(line, "boot") == 0) {
+        char out[1024];
+        bootinfo_format_status(out, sizeof(out));
+        kprintf("%s", out);
     } else if (strcmp(line, "acpi") == 0) {
         char out[4096];
         acpi_format_status(out, sizeof(out));

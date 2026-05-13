@@ -20,6 +20,7 @@
 #include <aurora/arch/cpu.h>
 #include <aurora/ktest.h>
 #include <aurora/block.h>
+#include <aurora/bootinfo.h>
 #include <aurora/pci.h>
 #include <aurora/acpi.h>
 #include <aurora/apic.h>

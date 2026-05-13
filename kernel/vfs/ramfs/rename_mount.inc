@@ -80,12 +80,13 @@ vfs_status_t ramfs_mount_boot(void) {
     if (!fs) return VFS_ERR_NOMEM;
     vfs_status_t st = ramfs_add_dir(fs, "/etc");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/bin");
+    if (st == VFS_OK) st = ramfs_add_dir(fs, "/sbin");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/tmp");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/home");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/home/aurora");
     static const char motd[] = AURORA_VERSION_FULL " boot ramfs\nKernel-owned VFS root is online.\n";
     static const char version[] = AURORA_UNAME_TEXT "\n";
-    static const char profile[] = "PATH=/bin:/sbin\nSHELL=/bin/sh\n";
+    static const char profile[] = "PATH=/disk0/bin:/disk0/sbin:/bin:/sbin\nSHELL=/disk0/bin/sh\n";
     static const char passwd[] = "root:x:0:0:root:/root:/bin/sh\naurora:x:1000:1000:Aurora User:/home/aurora:/bin/sh\nguest:x:1001:1000:Guest:/tmp:/bin/sh\n";
     static const char group[] = "root:x:0:\nusers:x:1000:aurora,guest\nadmin:x:27:aurora\n";
     static const char sudoers[] = "root ALL=(ALL) ALL\naurora ALL=(ALL) ALL\n";

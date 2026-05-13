@@ -75,17 +75,6 @@
     }
     check(vfs_unlink(dirent_child) == VFS_OK && vfs_unlink(dirent_dir) == VFS_OK, "VFS cleanup ext4 dirent repair target");
 
-    if (part && split_baseline_ok) {
-        ext4_mount_t after_mnt;
-        ext4_fsck_report_t after_report;
-        bool no_leak = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &after_mnt) == EXT4_OK &&
-                       ext4_validate_metadata(&after_mnt, &after_report) == EXT4_OK &&
-                       after_report.errors == 0 && after_report.sb_free_blocks == split_free_before;
-        check(no_leak, "EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
-    } else {
-        skip("EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
-    }
-
     check(vfs_unlink(renamed_path) == VFS_OK, "VFS unlink ext4 renamed file");
     if (part) {
         ext4_mount_t final_mnt;

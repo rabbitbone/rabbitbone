@@ -78,6 +78,17 @@
         skip("EXT4 demotes multi-leaf file to inline extents after deep truncate");
     }
     check(vfs_unlink(split_path) == VFS_OK, "VFS unlink ext4 multi-leaf indexed extent file");
+    bool split_release_no_leak = false;
+    if (part && split_baseline_ok) {
+        ext4_mount_t split_after_mnt;
+        ext4_fsck_report_t split_after_report;
+        split_release_no_leak = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &split_after_mnt) == EXT4_OK &&
+                                ext4_validate_metadata(&split_after_mnt, &split_after_report) == EXT4_OK &&
+                                split_after_report.errors == 0 && split_after_report.sb_free_blocks == split_free_before;
+        check(split_release_no_leak, "EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
+    } else {
+        skip("EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
+    }
 
     check(ktest_cleanup_disk_prefix("aurora-depth2-extents"), "cleanup old aurora-depth2-extents artifacts");
     char deep_path[96];

@@ -49,7 +49,7 @@ e820_len = sym["E820_MAX_ENTRIES"] * 24
 bootinfo = sym["bootinfo"]
 
 check(stage2_start == 0x8000, f"stage2_start must be 0x8000, got 0x{stage2_start:x}")
-check(sym["BOOTINFO_VERSION"] == 1, f"bootinfo version ABI mismatch: stage2={sym['BOOTINFO_VERSION']}, kernel expects 1")
+check(sym["BOOTINFO_VERSION"] == 2, f"bootinfo version ABI mismatch: stage2={sym['BOOTINFO_VERSION']}, kernel expects 2")
 check(pml4 % 0x1000 == 0 and pdpt % 0x1000 == 0 and pd % 0x1000 == 0, "page tables must be 4 KiB aligned")
 check(pml4 == 0x9000 and pdpt == 0xA000 and pd == 0xB000, f"unexpected page table addresses: pml4=0x{pml4:x} pdpt=0x{pdpt:x} pd=0x{pd:x}")
 check(0x500 <= e820 < stage2_start, f"E820 buffer must stay below stage2 load window, got 0x{e820:x}")

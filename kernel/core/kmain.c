@@ -21,7 +21,9 @@
 #include <aurora/task.h>
 #include <aurora/process.h>
 #include <aurora/scheduler.h>
+#if AURORA_EMBED_USERLAND
 #include <aurora/user_bins.h>
+#endif
 #include <aurora/version.h>
 #include <aurora/tty.h>
 #include <aurora/libc.h>
@@ -42,9 +44,30 @@ static void kernel_mount_filesystems(void) {
     if (st != VFS_OK) PANIC("boot ramfs mount failed: %s", vfs_status_name(st));
     st = devfs_mount();
     if (st != VFS_OK) KLOG(LOG_WARN, "kernel", "devfs mount failed: %s", vfs_status_name(st));
+#if AURORA_EMBED_USERLAND
     user_bins_install();
+#endif
     st = ext4_vfs_mount_first_linux_partition("/disk0");
-    if (st != VFS_OK) KLOG(LOG_WARN, "kernel", "no ext4 root mounted at /disk0: %s", vfs_status_name(st));
+    if (st != VFS_OK) {
+        KLOG(LOG_WARN, "kernel", "no ext4 root mounted at /disk0: %s", vfs_status_name(st));
+        return;
+    }
+    static const char *const userland_aliases[] = {
+        "hello", "fscheck", "writetest", "badptr", "badpath", "statcheck", "procstat",
+        "spawncheck", "schedcheck", "preemptcheck", "fdcheck", "isolate", "fdleak",
+        "forkcheck", "heapcheck", "mmapcheck", "mmapfilecheck", "mmapsharedcheck",
+        "procctl", "execcheck", "execfdcheck", "execfdchild", "execvecheck", "exectarget",
+        "pipecheck", "fdremapcheck", "pollcheck", "stdcat", "termcheck", "regtrash",
+        "sh", "aursh", 0
+    };
+    for (unsigned int i = 0; userland_aliases[i]; ++i) {
+        char link_path[64];
+        char target_path[96];
+        ksnprintf(link_path, sizeof(link_path), "/bin/%s", userland_aliases[i]);
+        ksnprintf(target_path, sizeof(target_path), "/disk0/bin/%s", userland_aliases[i]);
+        (void)vfs_symlink(target_path, link_path);
+    }
+    (void)vfs_symlink("/disk0/sbin/init", "/sbin/init");
 }
 
 void kernel_main(const aurora_bootinfo_t *bootinfo) {
@@ -57,6 +80,7 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     if (!bootinfo_validate(bootinfo)) {
         PANIC("invalid boot information block at %p", bootinfo);
     }
+    bootinfo_remember(bootinfo);
     bootinfo_dump(bootinfo);
     memory_init(bootinfo);
     vmm_init(1024ull * 1024ull * 1024ull);
@@ -96,13 +120,19 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
 #ifdef AURORA_DEBUG_SHELL
     shell_run();
 #else
-    const char *init_argv[] = { "/sbin/init" };
+    const char *init_argv[] = { "/disk0/sbin/init" };
     u32 init_pid = 0;
-    process_status_t init_status = process_spawn_async("/sbin/init", 1, init_argv, &init_pid);
+    process_status_t init_status = process_spawn_async("/disk0/sbin/init", 1, init_argv, &init_pid);
+#if AURORA_EMBED_USERLAND
     if (init_status != PROC_OK) {
-        PANIC("failed to start /sbin/init: %s", process_status_name(init_status));
+        const char *fallback_argv[] = { "/sbin/init" };
+        init_status = process_spawn_async("/sbin/init", 1, fallback_argv, &init_pid);
     }
-    KLOG(LOG_INFO, "kernel", "started /sbin/init pid=%u", init_pid);
+#endif
+    if (init_status != PROC_OK) {
+        PANIC("failed to start disk-backed /disk0/sbin/init: %s", process_status_name(init_status));
+    }
+    KLOG(LOG_INFO, "kernel", "started /disk0/sbin/init pid=%u", init_pid);
     process_scheduler_loop();
 #endif
 }

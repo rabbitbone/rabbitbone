@@ -11,6 +11,7 @@ Args parse(int argc, char **argv) {
         else if (k == "--stage1") a.stage1 = need("--stage1");
         else if (k == "--stage2") a.stage2 = need("--stage2");
         else if (k == "--kernel") a.kernel = need("--kernel");
+        else if (k == "--install") a.install_files.push_back(parse_install_spec(need("--install")));
         else if (k == "--size-mib") a.size_mib = parse_u64_strict(need("--size-mib"), "size-mib");
         else if (k == "--force") a.force = true;
         else usage();
@@ -28,6 +29,16 @@ int main(int argc, char **argv) {
         auto stage1 = read_file(args.stage1);
         auto stage2 = read_file(args.stage2);
         auto kernel = read_file(args.kernel);
+        std::vector<SeedFile> userland_files;
+        userland_files.reserve(args.install_files.size());
+        for (const auto &install : args.install_files) {
+            SeedFile f;
+            f.path = install.dest;
+            f.data = read_file(install.source.string());
+            if (f.data.empty()) throw std::runtime_error("refusing to install empty userland file " + install.source.string());
+            f.mode = 0100755;
+            userland_files.push_back(std::move(f));
+        }
         if (stage1.size() != 512) throw std::runtime_error("stage1 must be 512 bytes");
         if (stage1[510] != 0x55 || stage1[511] != 0xaa) throw std::runtime_error("stage1 missing boot signature");
         if (stage2.size() > static_cast<std::uint64_t>(kStage2ReservedSectors) * kSectorSize) throw std::runtime_error("stage2 exceeds reserved sectors");
@@ -43,7 +54,7 @@ int main(int argc, char **argv) {
         const std::uint64_t image_size = args.size_mib * 1024ull * 1024ull;
         const std::uint64_t total_sectors = image_size / 512ull;
         if (total_sectors <= kPartitionLba + 4096) throw std::runtime_error("image too small");
-        auto seed_fs = make_ext4_seed_fs();
+        auto seed_fs = make_ext4_seed_fs(userland_files);
         if (seed_fs.size() > (total_sectors - kPartitionLba) * 512ull) throw std::runtime_error("seed filesystem exceeds partition");
 
         std::array<std::uint8_t, 16> part{};

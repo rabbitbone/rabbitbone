@@ -31,17 +31,17 @@ int main(int argc, char **argv) {
     (void)argv;
     put("init: pid=");
     put_i64(au_getpid());
-    put(" starting /bin/sh\n");
+    put(" starting /disk0/bin/sh\n");
 
     for (;;) {
-        const char *sh_argv[] = { "/bin/sh", "--login", "aurora" };
-        au_i64 pid = au_spawnv("/bin/sh", 3, sh_argv);
+        const char *sh_argv[] = { "/disk0/bin/sh", "--login", "aurora" };
+        au_i64 pid = au_spawnv("/disk0/bin/sh", 3, sh_argv);
         if (pid < 0) {
-            put("init: cannot spawn /bin/sh, retrying\n");
+            put("init: cannot spawn /disk0/bin/sh, retrying\n");
             (void)au_sleep(100);
             continue;
         }
-        put("init: /bin/sh pid=");
+        put("init: /disk0/bin/sh pid=");
         put_i64(pid);
         put("\n");
 
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
             (void)au_sleep(25);
             continue;
         }
-        put("init: /bin/sh exited pid=");
+        put("init: /disk0/bin/sh exited pid=");
         put_u64(info.pid);
         put(" exit=");
         put_i64(info.exit_code);

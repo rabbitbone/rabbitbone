@@ -20,10 +20,11 @@ static void detail_process_result(const char *label, process_status_t st, const 
 }
 
 static void test_user_processes(void) {
-    suite_begin("gdt/userbin/ring3-process");
+    suite_begin("gdt/disk-userland/ring3-process");
     check(gdt_selftest(), "GDT has user segments and TSS kernel stack");
-    check(user_bins_selftest(), "embedded /bin ELF payloads installed in VFS");
     vfs_stat_t st;
+    check(vfs_stat("/disk0/sbin/init", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "disk-backed /disk0/sbin/init installed in EXT4");
+    check(vfs_stat("/disk0/bin/sh", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "disk-backed /disk0/bin/sh installed in EXT4");
     check(vfs_stat("/bin/hello", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/hello user ELF");
     check(vfs_stat("/bin/regtrash", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/regtrash ABI stress ELF");
     check(vfs_stat("/bin/badptr", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/badptr pointer hardening ELF");
