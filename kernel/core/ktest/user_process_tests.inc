@@ -40,6 +40,7 @@ static void test_user_processes(void) {
     check(vfs_stat("/bin/heapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/heapcheck brk/sbrk malloc ELF");
     check(vfs_stat("/bin/mmapcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapcheck anonymous mmap/mprotect ELF");
     check(vfs_stat("/bin/mmapfilecheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapfilecheck file-backed private mmap ELF");
+    check(vfs_stat("/bin/mmapsharedcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/mmapsharedcheck anonymous shared mmap ELF");
     check(vfs_stat("/bin/procctl", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/procctl async spawn/wait ELF");
     check(vfs_stat("/bin/execcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execcheck execv ELF");
     check(vfs_stat("/bin/execfdcheck", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "VFS stat /bin/execfdcheck fd inheritance/CLOEXEC ELF");
@@ -230,6 +231,16 @@ static void test_user_processes(void) {
     bool mmapfile_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmapfile_mem_after.free_frames >= mmapfile_mem_before.free_frames;
     check(mmapfile_ok, "ring3 /bin/mmapfilecheck validates demand-paged file-backed private mmap over VFS handles");
     if (!mmapfile_ok) detail_process_result("/bin/mmapfilecheck", ps, &r);
+
+    const char *mmapshared_argv[] = { "/bin/mmapsharedcheck" };
+    memory_stats_t mmapshared_mem_before;
+    memory_stats_t mmapshared_mem_after;
+    memory_get_stats(&mmapshared_mem_before);
+    ps = process_exec("/bin/mmapsharedcheck", 1, mmapshared_argv, &r);
+    memory_get_stats(&mmapshared_mem_after);
+    bool mmapshared_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0 && mmapshared_mem_after.free_frames >= mmapshared_mem_before.free_frames;
+    check(mmapshared_ok, "ring3 /bin/mmapsharedcheck validates anonymous MAP_SHARED VMAs inherited across fork");
+    if (!mmapshared_ok) detail_process_result("/bin/mmapsharedcheck", ps, &r);
 
     const char *pipe_argv[] = { "/bin/pipecheck" };
     ps = process_exec("/bin/pipecheck", 1, pipe_argv, &r);

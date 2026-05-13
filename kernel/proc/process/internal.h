@@ -38,7 +38,17 @@
 #define PROCESS_SHEBANG_LINE_MAX 127u
 #define PROCESS_SHEBANG_MAX_DEPTH 2u
 #define USER_MMAP_FILE_BACKING_NONE 0xffffffffu
+#define USER_SHARED_ANON_INVALID 0xffffffffu
+#define USER_SHARED_ANON_OBJECTS 32u
 
+typedef struct user_shared_anon_object {
+    bool used;
+    u32 refcount;
+    u32 page_count;
+    u32 reserved;
+    u64 generation;
+    uptr pages[USER_MMAP_MAX_PAGES];
+} user_shared_anon_object_t;
 
 typedef enum user_vma_kind {
     USER_VMA_IMAGE = 1,
@@ -163,6 +173,8 @@ static process_info_t *process_table;
 static usize process_table_len;
 static usize process_table_next;
 static bool process_initialized;
+static user_shared_anon_object_t *shared_anon_objects;
+static u64 next_shared_anon_generation = 1;
 
 static void release_mappings(active_process_t *p);
 static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
@@ -176,4 +188,10 @@ static bool process_range_has_vma(const active_process_t *p, uptr start, uptr en
 static process_status_t process_add_vma(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind);
 static process_status_t process_add_vma_backed(active_process_t *p, uptr start, uptr end, u32 prot, u32 flags, u32 kind, u64 file_offset, u64 file_size, u32 file_id, const vfs_node_ref_t *file_ref);
 static process_status_t process_split_vmas_for_range(active_process_t *p, uptr start, uptr end);
+static const user_vma_t *process_find_vma_for_page_const(const active_process_t *p, uptr page_virt);
+static bool process_vma_is_shared_anon(const user_vma_t *v);
+static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt);
+static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out);
+static bool shared_anon_retain(u32 id);
+static void shared_anon_release(u32 id);
 

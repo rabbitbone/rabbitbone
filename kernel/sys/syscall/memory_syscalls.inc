@@ -17,6 +17,7 @@ syscall_result_t aurora_sys_mmap(u64 requested, u64 length, u64 prot64, u64 flag
     if (length == 0 || length > SYSCALL_MMAP_MAX_BYTES || prot64 > 0xffffffffull || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     u32 flags = (u32)flags64;
     bool is_anon = (flags & AURORA_MAP_ANON) != 0;
+    bool is_shared = (flags & AURORA_MAP_SHARED) != 0;
     vfs_node_ref_t ref;
     memset(&ref, 0, sizeof(ref));
     const vfs_node_ref_t *ref_ptr = 0;
@@ -24,6 +25,7 @@ syscall_result_t aurora_sys_mmap(u64 requested, u64 length, u64 prot64, u64 flag
     if (is_anon) {
         if (fd64 != 0xffffffffffffffffull || offset64 != 0) return err(VFS_ERR_INVAL);
     } else {
+        if (is_shared) return err(VFS_ERR_INVAL);
         if ((offset64 & (PAGE_SIZE - 1u)) != 0 || fd64 >= SYSCALL_MAX_HANDLES) return err(VFS_ERR_INVAL);
         sys_handle_t *handles = active_handles();
         usize h = (usize)fd64;

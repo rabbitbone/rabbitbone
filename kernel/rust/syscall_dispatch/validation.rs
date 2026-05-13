@@ -3,7 +3,8 @@ fn valid_mmap_prot(prot: u64) -> bool {
     prot != 0 && (prot & !PROT_SUPPORTED) == 0 && !((prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0)
 }
 fn valid_mmap_flags(flags: u64) -> bool {
-    (flags & !MAP_SUPPORTED) == 0 && (flags & MAP_PRIVATE) != 0
+    let sharing = flags & (MAP_PRIVATE | MAP_SHARED);
+    (flags & !MAP_SUPPORTED) == 0 && (sharing == MAP_PRIVATE || sharing == MAP_SHARED)
 }
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
@@ -15,7 +16,7 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             else if (a.a3 & MAP_FIXED) != 0 && (a.a0 == 0 || (a.a0 & 4095) != 0) { Err(VFS_ERR_INVAL) }
             else if a.a0 != 0 && (a.a0 & 4095) != 0 { Err(VFS_ERR_INVAL) }
             else if anon && (a.a4 != u64::MAX || a.a5 != 0) { Err(VFS_ERR_INVAL) }
-            else if !anon && (!valid_handle(a.a4) || (a.a5 & 4095) != 0) { Err(VFS_ERR_INVAL) }
+            else if !anon && ((a.a3 & MAP_SHARED) != 0 || !valid_handle(a.a4) || (a.a5 & 4095) != 0) { Err(VFS_ERR_INVAL) }
             else { Ok(()) }
         }
         SyscallNo::Munmap => {

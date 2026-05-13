@@ -64,6 +64,9 @@ static bool clone_current_address_space(active_process_t *child) {
     child->mapping_count = 0;
     child->vma_count = current_proc.vma_count;
     memcpy(child->vmas, current_proc.vmas, sizeof(current_proc.vmas));
+    for (usize vi = 0; vi < child->vma_count; ++vi) {
+        if (process_vma_is_shared_anon(&child->vmas[vi]) && !shared_anon_retain(child->vmas[vi].file_id)) return false;
+    }
     child->mmap_cursor = current_proc.mmap_cursor;
     child->heap_base = current_proc.heap_base;
     child->heap_break = current_proc.heap_break;
@@ -74,7 +77,8 @@ static bool clone_current_address_space(active_process_t *child) {
         uptr virt = parent_mapping->virt;
         uptr phys = parent_mapping->phys;
         u64 child_flags = parent_mapping->final_flags;
-        if (parent_mapping->final_flags & VMM_WRITE) {
+        bool shared_anon = process_mapping_is_shared_anon(&current_proc, virt);
+        if (!shared_anon && (parent_mapping->final_flags & VMM_WRITE)) {
             u64 cow_flags = (parent_mapping->final_flags & ~VMM_WRITE) | VMM_COW;
             if (!vmm_space_protect_4k(&current_proc.space, virt, cow_flags)) return false;
             parent_mapping->final_flags = cow_flags;

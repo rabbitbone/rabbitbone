@@ -4,6 +4,14 @@ This file keeps the release history short enough to be useful. Older one-off sta
 
 
 
+## 0.0.2.10
+
+- Added anonymous `MAP_SHARED` VMAs for `mmap` with fork inheritance.
+- Backed shared anonymous mappings with refcounted kernel shared-anon objects and demand page materialization.
+- Kept `MAP_PRIVATE` COW behavior unchanged and rejected unsupported file-backed `MAP_SHARED`.
+- Added `/bin/mmapsharedcheck` and ktest coverage for materialized/unmaterialized shared mappings, child `munmap`, fork+exec release, and invalid flag combinations.
+- Bumped the kernel version and syscall ABI to `0.0.2.10` / `0x0000020a`.
+
 ## 0.0.2.9
 
 VMA-backed demand paging for mmap update over `0.0.2.8`.

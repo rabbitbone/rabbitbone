@@ -30,6 +30,10 @@ void process_init(void) {
     process_table_next = 0;
     next_user_pid = 1;
     next_address_space_generation = 1;
+    if (!shared_anon_objects) shared_anon_objects = (user_shared_anon_object_t *)kmalloc(sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
+    if (!shared_anon_objects) PANIC("process shared-anon object table allocation failed");
+    memset(shared_anon_objects, 0, sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
+    next_shared_anon_generation = 1;
     KLOG(LOG_INFO, "process", "user process subsystem initialized");
 }
 

@@ -98,6 +98,79 @@ bool process_copy_string_from_user(uptr user, char *out, usize out_size) {
     return false;
 }
 
+
+static bool process_vma_is_shared_anon(const user_vma_t *v) {
+    return v && v->kind == USER_VMA_MMAP && (v->flags & AURORA_MAP_ANON) != 0 &&
+           (v->flags & AURORA_MAP_SHARED) != 0 && v->file_id != USER_SHARED_ANON_INVALID;
+}
+
+static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt) {
+    if (!p) return false;
+    const user_vma_t *v = process_find_vma_for_page_const(p, page_virt);
+    return process_vma_is_shared_anon(v);
+}
+
+static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out) {
+    if (!id_out || !shared_anon_objects || page_count == 0 || page_count > USER_MMAP_MAX_PAGES) return PROC_ERR_INVAL;
+    for (u32 i = 0; i < USER_SHARED_ANON_OBJECTS; ++i) {
+        user_shared_anon_object_t *obj = &shared_anon_objects[i];
+        if (obj->used) continue;
+        memset(obj, 0, sizeof(*obj));
+        obj->used = true;
+        obj->refcount = 1;
+        obj->page_count = page_count;
+        obj->generation = next_shared_anon_generation++;
+        if (!obj->generation) obj->generation = next_shared_anon_generation++;
+        *id_out = i;
+        return PROC_OK;
+    }
+    return PROC_ERR_NOMEM;
+}
+
+static bool shared_anon_retain(u32 id) {
+    if (!shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return false;
+    user_shared_anon_object_t *obj = &shared_anon_objects[id];
+    if (!obj->used || obj->refcount == 0 || obj->refcount == 0xffffffffu) return false;
+    ++obj->refcount;
+    return true;
+}
+
+static void shared_anon_release(u32 id) {
+    if (!shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return;
+    user_shared_anon_object_t *obj = &shared_anon_objects[id];
+    if (!obj->used || obj->refcount == 0) return;
+    --obj->refcount;
+    if (obj->refcount != 0) return;
+    for (u32 i = 0; i < obj->page_count && i < USER_MMAP_MAX_PAGES; ++i) {
+        if (obj->pages[i]) {
+            (void)memory_unref_page((void *)obj->pages[i]);
+            obj->pages[i] = 0;
+        }
+    }
+    memset(obj, 0, sizeof(*obj));
+}
+
+static bool shared_anon_materialize(u32 id, u32 page_index, uptr *phys_out) {
+    if (!phys_out || !shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return false;
+    user_shared_anon_object_t *obj = &shared_anon_objects[id];
+    if (!obj->used || page_index >= obj->page_count || page_index >= USER_MMAP_MAX_PAGES) return false;
+    if (!obj->pages[page_index]) {
+        void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+        if (!page) return false;
+        memset(page, 0, PAGE_SIZE);
+        obj->pages[page_index] = (uptr)page;
+    }
+    *phys_out = obj->pages[page_index];
+    return true;
+}
+
+static void process_release_shared_vmas(active_process_t *p) {
+    if (!p) return;
+    for (usize i = 0; i < p->vma_count; ++i) {
+        if (process_vma_is_shared_anon(&p->vmas[i])) shared_anon_release(p->vmas[i].file_id);
+    }
+}
+
 static void release_mappings(active_process_t *p) {
     if (!p) return;
     for (usize i = 0; i < p->mapping_count; ++i) {
@@ -117,6 +190,7 @@ static void release_mappings(active_process_t *p) {
      * memset or explicitly reinitialize result.mapped_pages before loading a
      * new image.
      */
+    process_release_shared_vmas(p);
     p->mapping_count = 0;
     p->vma_count = 0;
     p->mmap_cursor = USER_MMAP_BASE;
@@ -146,7 +220,8 @@ static bool process_prot_valid(u32 prot) {
 
 static bool process_mmap_flags_valid(u32 flags) {
     if ((flags & ~AURORA_MAP_SUPPORTED) != 0) return false;
-    return (flags & AURORA_MAP_PRIVATE) != 0;
+    u32 sharing = flags & (AURORA_MAP_PRIVATE | AURORA_MAP_SHARED);
+    return sharing == AURORA_MAP_PRIVATE || sharing == AURORA_MAP_SHARED;
 }
 
 static bool process_mmap_is_anon(u32 flags) {
@@ -182,7 +257,9 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
     if (p->vma_count >= USER_MAX_VMAS) return PROC_ERR_NOMEM;
     if (!process_range_free(p, start, end)) return PROC_ERR_RANGE;
     bool file_backed = kind == USER_VMA_MMAP && (flags & AURORA_MAP_ANON) == 0;
+    bool shared_anon = kind == USER_VMA_MMAP && (flags & AURORA_MAP_ANON) != 0 && (flags & AURORA_MAP_SHARED) != 0;
     if (file_backed && !file_ref) return PROC_ERR_INVAL;
+    if (shared_anon && file_id >= USER_SHARED_ANON_OBJECTS) return PROC_ERR_INVAL;
     user_vma_t v;
     memset(&v, 0, sizeof(v));
     v.start = start;
@@ -192,7 +269,7 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
     v.kind = kind;
     v.file_offset = file_offset;
     v.file_size = file_size;
-    v.file_id = file_backed ? file_id : USER_MMAP_FILE_BACKING_NONE;
+    v.file_id = file_backed || shared_anon ? file_id : USER_MMAP_FILE_BACKING_NONE;
     if (file_backed) v.file_ref = *file_ref;
     usize pos = 0;
     while (pos < p->vma_count && p->vmas[pos].start < start) ++pos;
@@ -208,6 +285,7 @@ static process_status_t process_add_vma(active_process_t *p, uptr start, uptr en
 
 static void process_remove_vma_at(active_process_t *p, usize idx) {
     if (!p || idx >= p->vma_count) return;
+    if (process_vma_is_shared_anon(&p->vmas[idx])) shared_anon_release(p->vmas[idx].file_id);
     for (usize i = idx + 1u; i < p->vma_count; ++i) p->vmas[i - 1u] = p->vmas[i];
     --p->vma_count;
 }
@@ -233,14 +311,20 @@ static process_status_t process_split_vma_at(active_process_t *p, usize idx, upt
     user_vma_t right = *v;
     uptr old_start = v->start;
     right.start = cut;
-    if (right.kind == USER_VMA_MMAP && (right.flags & AURORA_MAP_ANON) == 0) {
+    if (right.kind == USER_VMA_MMAP && ((right.flags & AURORA_MAP_ANON) == 0 || (right.flags & AURORA_MAP_SHARED) != 0)) {
         u64 delta = (u64)(cut - old_start);
         if (__builtin_add_overflow(right.file_offset, delta, &right.file_offset)) return PROC_ERR_RANGE;
+    }
+    bool retained_shared = false;
+    if (process_vma_is_shared_anon(&right)) {
+        if (!shared_anon_retain(right.file_id)) return PROC_ERR_RANGE;
+        retained_shared = true;
     }
     v->end = cut;
     for (usize i = p->vma_count; i > idx + 1u; --i) p->vmas[i] = p->vmas[i - 1u];
     p->vmas[idx + 1u] = right;
     ++p->vma_count;
+    (void)retained_shared;
     return PROC_OK;
 }
 
@@ -337,6 +421,30 @@ static process_status_t map_user_page(active_process_t *p, uptr virt, u64 flags)
     return st;
 }
 
+
+
+static process_status_t map_user_shared_anon_page(active_process_t *p, uptr virt, u64 flags, u32 object_id, u64 object_offset) {
+    if (!user_addr_range_valid(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1u))) return PROC_ERR_RANGE;
+    if (find_mapping(p, virt)) return PROC_ERR_RANGE;
+    if ((object_offset & (PAGE_SIZE - 1u)) != 0) return PROC_ERR_RANGE;
+    u64 page_index64 = object_offset / PAGE_SIZE;
+    if (page_index64 > 0xffffffffull) return PROC_ERR_RANGE;
+    uptr phys = 0;
+    if (!shared_anon_materialize(object_id, (u32)page_index64, &phys)) return PROC_ERR_NOMEM;
+    if (!memory_ref_page((void *)phys)) return PROC_ERR_NOMEM;
+    (void)vmm_space_unmap_4k(&p->space, virt);
+    u64 final_flags = VMM_USER | flags;
+    if (!vmm_space_map_4k(&p->space, virt, phys, final_flags)) {
+        (void)memory_unref_page((void *)phys);
+        return PROC_ERR_NOMEM;
+    }
+    process_status_t st = track_mapping(p, virt, phys, final_flags);
+    if (st != PROC_OK) {
+        (void)vmm_space_unmap_4k(&p->space, virt);
+        (void)memory_unref_page((void *)phys);
+    }
+    return st;
+}
 
 static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out) {
     if (!p || !p->active || !p->heap_base || p->heap_base > p->heap_limit) return PROC_ERR_INVAL;
@@ -514,7 +622,14 @@ static bool process_resolve_vma_fault(active_process_t *p, uptr fault_addr, bool
     u64 pte_flags = process_flags_from_prot(v->prot) & ~VMM_USER;
     process_status_t st;
     if (v->flags & AURORA_MAP_ANON) {
-        st = map_user_page(p, page_virt, pte_flags);
+        if (v->flags & AURORA_MAP_SHARED) {
+            u64 delta = (u64)(page_virt - v->start);
+            u64 shared_offset = 0;
+            if (!process_vma_is_shared_anon(v) || __builtin_add_overflow(v->file_offset, delta, &shared_offset)) return false;
+            st = map_user_shared_anon_page(p, page_virt, pte_flags, v->file_id, shared_offset);
+        } else {
+            st = map_user_page(p, page_virt, pte_flags);
+        }
     } else {
         u64 delta = (u64)(page_virt - v->start);
         u64 backing_offset = 0;
@@ -528,9 +643,11 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
     if (!current_proc.active || !addr_out) return PROC_ERR_INVAL;
     if (!process_prot_valid(prot) || !process_mmap_flags_valid(flags)) return PROC_ERR_INVAL;
     bool is_anon = process_mmap_is_anon(flags);
+    bool is_shared = (flags & AURORA_MAP_SHARED) != 0;
     if (is_anon) {
         if (fd != 0xffffffffffffffffull || file_offset != 0 || file_ref) return PROC_ERR_INVAL;
     } else {
+        if (is_shared) return PROC_ERR_INVAL;
         if (!file_ref || fd > 0xffffffffull || (file_offset & (PAGE_SIZE - 1u)) != 0) return PROC_ERR_INVAL;
     }
     usize size = 0;
@@ -560,8 +677,19 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
     }
     uptr end = start + (uptr)size;
     u32 stored_flags = flags;
-    process_status_t st = process_add_vma_backed(&current_proc, start, end, prot, stored_flags, USER_VMA_MMAP, is_anon ? 0 : file_offset, file_size, is_anon ? USER_MMAP_FILE_BACKING_NONE : (u32)fd, is_anon ? 0 : file_ref);
-    if (st != PROC_OK) return st;
+    u32 backing_id = USER_MMAP_FILE_BACKING_NONE;
+    if (is_anon && is_shared) {
+        u32 pages = (u32)(size / PAGE_SIZE);
+        process_status_t ast = shared_anon_alloc(pages, &backing_id);
+        if (ast != PROC_OK) return ast;
+    } else if (!is_anon) {
+        backing_id = (u32)fd;
+    }
+    process_status_t st = process_add_vma_backed(&current_proc, start, end, prot, stored_flags, USER_VMA_MMAP, is_anon ? 0 : file_offset, is_anon ? (u64)size : file_size, backing_id, is_anon ? 0 : file_ref);
+    if (st != PROC_OK) {
+        if (is_anon && is_shared) shared_anon_release(backing_id);
+        return st;
+    }
     current_proc.mmap_cursor = end < arena_end ? end : USER_MMAP_BASE;
     *addr_out = start;
     return PROC_OK;
