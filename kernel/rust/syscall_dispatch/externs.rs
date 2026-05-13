@@ -72,5 +72,19 @@ extern "C" {
     fn aurora_sys_mmap(requested: u64, length: u64, prot: u64, flags: u64, fd: u64, offset: u64) -> SyscallResult;
     fn aurora_sys_munmap(addr: u64, length: u64) -> SyscallResult;
     fn aurora_sys_mprotect(addr: u64, length: u64, prot: u64) -> SyscallResult;
+    fn aurora_sys_signal(sig: u64, handler: u64) -> SyscallResult;
+    fn aurora_sys_sigaction(sig: u64, act: u64, old: u64) -> SyscallResult;
+    fn aurora_sys_sigprocmask(how: u64, set: u64, old: u64) -> SyscallResult;
+    fn aurora_sys_sigpending(out: u64) -> SyscallResult;
+    fn aurora_sys_kill(pid: u64, sig: u64) -> SyscallResult;
+    fn aurora_sys_raise(sig: u64) -> SyscallResult;
+    fn aurora_sys_getpgrp() -> SyscallResult;
+    fn aurora_sys_setpgid(pid: u64, pgid: u64) -> SyscallResult;
+    fn aurora_sys_getpgid(pid: u64) -> SyscallResult;
+    fn aurora_sys_setsid() -> SyscallResult;
+    fn aurora_sys_getsid(pid: u64) -> SyscallResult;
+    fn aurora_sys_tcgetpgrp() -> SyscallResult;
+    fn aurora_sys_tcsetpgrp(pgid: u64) -> SyscallResult;
+    fn aurora_sys_sigreturn(frame: u64) -> SyscallResult;
 }
 

@@ -10,6 +10,7 @@
 #include "syscall/fs_syscalls.inc"
 #include "syscall/exec_process_syscalls.inc"
 #include "syscall/memory_syscalls.inc"
+#include "syscall/signals_jobs_syscalls.inc"
 #include "syscall/fd_poll_syscalls.inc"
 #include "syscall/terminal_log_dispatch.inc"
 #include "syscall/selftest.inc"

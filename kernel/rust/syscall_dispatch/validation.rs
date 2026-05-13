@@ -9,7 +9,38 @@ fn valid_mmap_flags(flags: u64) -> bool {
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
-        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync | SyscallNo::Brk | SyscallNo::Sbrk => Ok(()),
+        SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync | SyscallNo::Brk | SyscallNo::Sbrk | SyscallNo::Getpgrp | SyscallNo::Setsid | SyscallNo::Tcgetpgrp => Ok(()),
+
+        SyscallNo::Signal => {
+            if a.a0 == 0 || a.a0 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Sigaction => {
+            if a.a0 == 0 || a.a0 >= NSIG || (a.a1 == 0 && a.a2 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Sigprocmask => {
+            if a.a0 > SIG_SETMASK || (a.a1 == 0 && a.a2 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Sigpending => {
+            if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Kill => {
+            if a.a0 > MAX_PID || a.a1 == 0 || a.a1 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Raise => {
+            if a.a0 == 0 || a.a0 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Setpgid => {
+            if a.a0 > MAX_PID || a.a1 > MAX_PID { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Getpgid | SyscallNo::Getsid => {
+            if a.a0 > MAX_PID { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Tcsetpgrp => {
+            if a.a0 == 0 || a.a0 > MAX_PID { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
+        SyscallNo::Sigreturn => {
+            if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+        }
         SyscallNo::Mmap => {
             let anon = (a.a3 & MAP_ANON) != 0;
             if a.a1 == 0 || a.a1 > MMAP_MAX_BYTES || !valid_mmap_prot(a.a2) || !valid_mmap_flags(a.a3) { Err(VFS_ERR_INVAL) }

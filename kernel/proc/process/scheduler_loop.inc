@@ -34,6 +34,14 @@ static bool any_waiting_process(void) {
     return false;
 }
 
+static bool any_stopped_process(void) {
+    if (!async_slots) return false;
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+        if (async_slots[i].active && async_slots[i].state == PROCESS_STATE_STOPPED) return true;
+    }
+    return false;
+}
+
 static void fault_wait_deadlock(void) {
     if (!async_slots) return;
     u64 now = pit_ticks();
@@ -83,6 +91,14 @@ static void dispose_terminal_slots_except(u32 keep_pid) {
 
 static void enter_ready_slot(usize idx) {
     load_slot_to_current(idx);
+    int sig_result = process_signal_deliver_pending(&current_proc, &current_proc.regs);
+    if (sig_result == 2 || sig_result == 3) {
+        (void)sync_current_to_slot();
+        clear_current_async();
+        vmm_switch_kernel();
+        return;
+    }
+    if (sig_result == 1) (void)sync_current_to_slot();
     vmm_switch_space(&current_proc.space);
     arch_user_resume(&current_proc.regs);
     cpu_sti();
@@ -108,7 +124,7 @@ AURORA_NORETURN void process_scheduler_loop(void) {
             clear_current_async();
             PANIC("persistent user scheduler has no live processes");
         }
-        if (any_sleeping_process() || any_waiting_process()) {
+        if (any_sleeping_process() || any_waiting_process() || any_stopped_process()) {
             cpu_sti();
             cpu_hlt();
             continue;
@@ -134,7 +150,7 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
         usize idx = 0;
         if (!pick_ready_slot(&idx)) {
             if (!any_live_process()) break;
-            if (!any_sleeping_process() && !any_waiting_process()) {
+            if (!any_sleeping_process() && !any_waiting_process() && !any_stopped_process()) {
                 fault_wait_deadlock();
                 continue;
             }

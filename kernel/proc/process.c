@@ -5,6 +5,7 @@
 #include "process/shebang.inc"
 #include "process/loader_stack.inc"
 #include "process/spawn_fork.inc"
+#include "process/signals_jobs.inc"
 #include "process/scheduler_loop.inc"
 #include "process/ktest_context.inc"
 #include "process/exec_wait_api.inc"

@@ -55,7 +55,28 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(70) != Ok(SyscallNo::Mmap) { return false; }
     if SyscallNo::decode(71) != Ok(SyscallNo::Munmap) { return false; }
     if SyscallNo::decode(72) != Ok(SyscallNo::Mprotect) { return false; }
+    if SyscallNo::decode(73) != Ok(SyscallNo::Signal) { return false; }
+    if SyscallNo::decode(74) != Ok(SyscallNo::Sigaction) { return false; }
+    if SyscallNo::decode(75) != Ok(SyscallNo::Sigprocmask) { return false; }
+    if SyscallNo::decode(76) != Ok(SyscallNo::Sigpending) { return false; }
+    if SyscallNo::decode(77) != Ok(SyscallNo::Kill) { return false; }
+    if SyscallNo::decode(78) != Ok(SyscallNo::Raise) { return false; }
+    if SyscallNo::decode(79) != Ok(SyscallNo::Getpgrp) { return false; }
+    if SyscallNo::decode(80) != Ok(SyscallNo::Setpgid) { return false; }
+    if SyscallNo::decode(81) != Ok(SyscallNo::Getpgid) { return false; }
+    if SyscallNo::decode(82) != Ok(SyscallNo::Setsid) { return false; }
+    if SyscallNo::decode(83) != Ok(SyscallNo::Getsid) { return false; }
+    if SyscallNo::decode(84) != Ok(SyscallNo::Tcgetpgrp) { return false; }
+    if SyscallNo::decode(85) != Ok(SyscallNo::Tcsetpgrp) { return false; }
+    if SyscallNo::decode(86) != Ok(SyscallNo::Sigreturn) { return false; }
     if SyscallNo::decode(crate::abi::AURORA_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
+    if validate_args(SyscallNo::Raise, SysArgs { a0: crate::abi::AURORA_SIGUSR1 as u64, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Raise, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::AURORA_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::AURORA_NSIG as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Sigprocmask, SysArgs { a0: crate::abi::AURORA_SIG_SETMASK as u64, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Sigpending, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Tcsetpgrp, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: MAX_CONSOLE_WRITE + 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 1, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }

@@ -160,11 +160,21 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     p->active = true;
     p->state = PROCESS_STATE_READY;
     p->parent_pid = parent_pid;
+    if (current_proc.active) {
+        p->process_group = current_proc.process_group ? current_proc.process_group : current_proc.result.pid;
+        p->session_id = current_proc.session_id ? current_proc.session_id : current_proc.result.pid;
+    }
     process_inherit_cred(p);
     if (current_proc.active && current_proc.cwd[0]) strncpy(p->cwd, current_proc.cwd, sizeof(p->cwd) - 1u);
     else strncpy(p->cwd, "/", sizeof(p->cwd) - 1u);
     p->result.pid = alloc_user_pid();
     if (!p->result.pid) { vmm_space_destroy(&p->space); memset(p, 0, sizeof(*p)); return PROC_ERR_BUSY; }
+    if (!p->process_group) p->process_group = p->result.pid;
+    if (!p->session_id) p->session_id = p->result.pid;
+    if (!tty_session_id) tty_session_id = p->session_id;
+    if (!tty_foreground_pgrp) tty_foreground_pgrp = p->process_group;
+    p->signal_flags = (p->result.pid == p->session_id) ? AURORA_PROCESS_FLAG_SESSION_LEADER : 0u;
+    process_signal_init(p);
     p->result.started_ticks = pit_ticks();
     p->result.address_space = p->space.pml4_physical;
     p->result.address_space_generation = alloc_address_space_generation();
@@ -216,6 +226,11 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->active = true;
     dst->state = PROCESS_STATE_RUNNING;
     dst->parent_pid = current_proc.parent_pid;
+    dst->process_group = current_proc.process_group;
+    dst->session_id = current_proc.session_id;
+    dst->signal_flags = current_proc.signal_flags & AURORA_PROCESS_FLAG_SESSION_LEADER;
+    dst->signal_blocked = current_proc.signal_blocked;
+    memcpy(dst->signal_actions, current_proc.signal_actions, sizeof(dst->signal_actions));
     dst->cred = current_proc.cred;
     strncpy(dst->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(dst->cwd) - 1u);
     dst->wait_pid = 0;

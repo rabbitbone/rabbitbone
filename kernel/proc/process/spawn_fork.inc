@@ -47,6 +47,13 @@ static bool clone_current_address_space(active_process_t *child) {
     child->active = true;
     child->state = PROCESS_STATE_READY;
     child->parent_pid = current_proc.result.pid;
+    child->process_group = current_proc.process_group;
+    child->session_id = current_proc.session_id;
+    child->signal_flags = current_proc.signal_flags & ~AURORA_PROCESS_FLAG_STOPPED;
+    child->signal_pending = 0;
+    child->signal_blocked = current_proc.signal_blocked;
+    child->signal_in_handler = false;
+    memcpy(child->signal_actions, current_proc.signal_actions, sizeof(child->signal_actions));
     child->cred = current_proc.cred;
     strncpy(child->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(child->cwd) - 1u);
     child->result = current_proc.result;
@@ -135,6 +142,7 @@ static void finish_current(process_lifecycle_t state, process_status_t status, c
     current_proc.active = true;
     current_proc.result.finished_ticks = pit_ticks();
     reparent_children(current_proc.result.pid, current_proc.result.pid == 1u ? 0u : 1u);
+    if (current_proc.parent_pid) (void)process_signal_send(current_proc.parent_pid, AURORA_SIGCHLD);
 
     /*
      * A terminal process no longer owns its descriptor table.  Closing the

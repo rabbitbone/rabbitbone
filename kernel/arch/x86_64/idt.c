@@ -95,6 +95,16 @@ static void syscall_int80(cpu_regs_t *regs) {
         return;
     }
 
+    if (no == AURORA_SYS_SIGRETURN && regs_from_user(regs) && process_user_active()) {
+        bool restored = process_signal_return((uptr)a0, regs);
+        if (!restored) {
+            regs->rax = (u64)-1ll;
+            regs->rdx = (u64)-1ll;
+        }
+        (void)process_after_syscall(regs);
+        return;
+    }
+
     syscall_result_t r = syscall_dispatch(no, a0, regs->rsi, regs->rdx, regs->r10, regs->r8, regs->r9);
     regs->rax = (u64)r.value;
     regs->rdx = (u64)r.error;

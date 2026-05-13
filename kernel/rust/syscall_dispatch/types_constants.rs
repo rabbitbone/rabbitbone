@@ -97,6 +97,20 @@ pub enum SyscallNo {
     Mmap = 70,
     Munmap = 71,
     Mprotect = 72,
+    Signal = 73,
+    Sigaction = 74,
+    Sigprocmask = 75,
+    Sigpending = 76,
+    Kill = 77,
+    Raise = 78,
+    Getpgrp = 79,
+    Setpgid = 80,
+    Getpgid = 81,
+    Setsid = 82,
+    Getsid = 83,
+    Tcgetpgrp = 84,
+    Tcsetpgrp = 85,
+    Sigreturn = 86,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -151,3 +165,6 @@ const MAP_SUPPORTED: u64 = MAP_ANON | MAP_PRIVATE | MAP_FIXED | MAP_SHARED;
 
 const KCTL_OP_MAX: u64 = crate::abi::AURORA_KCTL_OP_MAX;
 const KCTL_OUT_MAX: u64 = crate::abi::AURORA_KCTL_OUT_MAX;
+
+const NSIG: u64 = crate::abi::AURORA_NSIG;
+const SIG_SETMASK: u64 = crate::abi::AURORA_SIG_SETMASK;

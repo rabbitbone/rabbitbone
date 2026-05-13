@@ -40,6 +40,7 @@
 #define USER_MMAP_FILE_BACKING_NONE 0xffffffffu
 #define USER_SHARED_ANON_INVALID 0xffffffffu
 #define USER_SHARED_ANON_OBJECTS 32u
+#define PROCESS_SIGNAL_FRAME_MAGIC 0x5349474652414d45ull
 
 typedef struct user_shared_anon_object {
     bool used;
@@ -85,11 +86,31 @@ typedef struct process_exec_plan {
     bool shebang;
 } process_exec_plan_t;
 
+typedef struct process_signal_action {
+    uptr handler;
+    u64 mask;
+    u32 flags;
+    u32 reserved;
+    uptr restorer;
+} process_signal_action_t;
+
+typedef struct process_signal_frame {
+    u64 restorer;
+    u64 magic;
+    u64 old_mask;
+    u32 signal;
+    u32 reserved;
+    cpu_regs_t saved_regs;
+} process_signal_frame_t;
+
 typedef struct active_process {
     bool active;
     bool returned;
     process_lifecycle_t state;
     u32 parent_pid;
+    u32 process_group;
+    u32 session_id;
+    u32 signal_flags;
     u32 wait_pid;
     uptr wait_out_ptr;
     u64 wake_tick;
@@ -107,6 +128,10 @@ typedef struct active_process {
     u8 fd_snapshot[SYSCALL_USER_HANDLE_SNAPSHOT_BYTES];
     char cwd[VFS_PATH_MAX];
     aurora_credinfo_t cred;
+    u64 signal_pending;
+    u64 signal_blocked;
+    bool signal_in_handler;
+    process_signal_action_t signal_actions[AURORA_NSIG];
 } active_process_t;
 
 extern void arch_user_enter(u64 entry, u64 user_rsp, u64 argc, u64 argv, u64 aux);
@@ -175,6 +200,8 @@ static usize process_table_next;
 static bool process_initialized;
 static user_shared_anon_object_t *shared_anon_objects;
 static u64 next_shared_anon_generation = 1;
+static u32 tty_foreground_pgrp;
+static u32 tty_session_id;
 
 static void release_mappings(active_process_t *p);
 static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
@@ -191,6 +218,8 @@ static process_status_t process_split_vmas_for_range(active_process_t *p, uptr s
 static const user_vma_t *process_find_vma_for_page_const(const active_process_t *p, uptr page_virt);
 static bool process_vma_is_shared_anon(const user_vma_t *v);
 static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt);
+static void process_signal_init(active_process_t *p);
+static int process_signal_deliver_pending(active_process_t *p, cpu_regs_t *regs);
 static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out);
 static bool shared_anon_retain(u32 id);
 static void shared_anon_release(u32 id);

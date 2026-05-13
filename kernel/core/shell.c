@@ -13,6 +13,7 @@
 #include <aurora/hpet.h>
 #include <aurora/smp.h>
 #include <aurora/timer.h>
+#include <aurora/process.h>
 
 #ifdef AURORA_DEBUG_SHELL
 #define DEBUG_SHELL_LINE_MAX 96u
@@ -22,7 +23,7 @@ static void debug_log_writer(const char *line) { kprintf("%s", line); }
 static void debug_execute(char *line) {
     while (*line == ' ' || *line == '\t') ++line;
     if (strcmp(line, "help") == 0) {
-        kprintf("debug shell commands: help logs acpi apic hpet timer smp pci lspci disks blk mounts panic reboot halt\n");
+        kprintf("debug shell commands: help logs acpi apic hpet timer smp pci lspci disks blk mounts signals jobs panic reboot halt\n");
     } else if (strcmp(line, "logs") == 0) {
         log_dump_ring(debug_log_writer);
     } else if (strcmp(line, "acpi") == 0) {
@@ -53,6 +54,14 @@ static void debug_execute(char *line) {
         block_log_devices();
     } else if (strcmp(line, "mounts") == 0) {
         vfs_dump_mounts();
+    } else if (strcmp(line, "signals") == 0) {
+        char out[1024];
+        process_format_signals(out, sizeof(out));
+        kprintf("%s", out);
+    } else if (strcmp(line, "jobs") == 0) {
+        char out[2048];
+        process_format_jobs(out, sizeof(out));
+        kprintf("%s", out);
     } else if (strcmp(line, "panic") == 0) {
         PANIC("manual panic requested from debug shell");
     } else if (strcmp(line, "reboot") == 0) {

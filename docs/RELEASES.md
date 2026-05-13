@@ -3,6 +3,17 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.2.13
+
+Signals, process groups, and terminal job-control groundwork over `0.0.2.12`.
+
+- Added kernel signal state: actions, masks, pending sets, default terminate/stop/ignore semantics, user handler delivery frames, and `sigreturn`.
+- Added process-group/session tracking plus terminal foreground process-group state for future job control.
+- Added syscalls and userlib wrappers for signal, sigaction, sigprocmask, sigpending, kill, raise, getpgrp/setpgid/getpgid, setsid/getsid, and tcgetpgrp/tcsetpgrp.
+- Extended process info snapshots and kctl/shell diagnostics with `signals` and `jobs`.
+- Extended `/bin/procctl` and ktest coverage for handlers, blocked/pending delivery, signal termination, process groups, and terminal foreground-group groundwork.
+- Bumped the kernel version and syscall ABI to `0.0.2.13` / `0x0000020d`.
+
 ## 0.0.2.12
 
 ACPI + APIC + HPET/TSC timer + SMP bootstrap groundwork over `0.0.2.11`.

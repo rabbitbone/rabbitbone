@@ -6,7 +6,7 @@ static void sh_help(void) {
     sh_puts("  ls [-l] [PATH] stat chmod chown cat write touch mkdir rm mv truncate link ln symlink readlink\n");
     sh_puts("  run spawn qspawn wait runq procs ps proc lastproc sched schedtest preempt ticks sleep yield count\n");
     sh_puts("  fdprobe fdinfo tty statvfs mounts sync fsync syscall elf userbins log\n");
-    sh_puts("  mem heap vmm ktest logs acpi apic hpet timer smp pci lspci disks blk ext4 panic reboot halt\n");
+    sh_puts("  mem heap vmm ktest logs acpi apic hpet timer smp signals jobs pci lspci disks blk ext4 panic reboot halt\n");
     sh_puts("syntax: cmd [args] | cmd, redirects: < file, > file, 2> file, quotes: '...' or \"...\"\n");
     sh_puts("editing: Left/Right/Home/End move cursor, Backspace/Delete edit, Tab completes, Up/Down history, PageUp/PageDown scroll output.\n");
     sh_puts("keys: Ctrl+C cancels input, Ctrl+D exits on an empty line or deletes under cursor, Ctrl+L clears and redraws. Long input wraps across rows.\nexternal commands are discovered from PATH directories; bare commands are never forced into /bin.\n");

@@ -74,7 +74,21 @@
 #define AURORA_SYS_MMAP 70u
 #define AURORA_SYS_MUNMAP 71u
 #define AURORA_SYS_MPROTECT 72u
-#define AURORA_SYS_MAX 73u
+#define AURORA_SYS_SIGNAL 73u
+#define AURORA_SYS_SIGACTION 74u
+#define AURORA_SYS_SIGPROCMASK 75u
+#define AURORA_SYS_SIGPENDING 76u
+#define AURORA_SYS_KILL 77u
+#define AURORA_SYS_RAISE 78u
+#define AURORA_SYS_GETPGRP 79u
+#define AURORA_SYS_SETPGID 80u
+#define AURORA_SYS_GETPGID 81u
+#define AURORA_SYS_SETSID 82u
+#define AURORA_SYS_GETSID 83u
+#define AURORA_SYS_TCGETPGRP 84u
+#define AURORA_SYS_TCSETPGRP 85u
+#define AURORA_SYS_SIGRETURN 86u
+#define AURORA_SYS_MAX 87u
 
 #define AURORA_NAME_MAX 64u
 #define AURORA_PATH_MAX 256u
@@ -131,7 +145,9 @@
 #define AURORA_KCTL_OP_HPET 14u
 #define AURORA_KCTL_OP_TIMER 15u
 #define AURORA_KCTL_OP_SMP 16u
-#define AURORA_KCTL_OP_MAX 17u
+#define AURORA_KCTL_OP_SIGNALS 17u
+#define AURORA_KCTL_OP_JOBS 18u
+#define AURORA_KCTL_OP_MAX 19u
 #define AURORA_KCTL_OUT_MAX 4096u
 
 
@@ -151,6 +167,41 @@
 #define AURORA_MAP_FIXED   0x00000004u
 #define AURORA_MAP_SHARED  0x00000008u
 #define AURORA_MAP_SUPPORTED (AURORA_MAP_ANON | AURORA_MAP_PRIVATE | AURORA_MAP_FIXED | AURORA_MAP_SHARED)
+
+
+#define AURORA_NSIG 32u
+#define AURORA_SIG_DFL 0ull
+#define AURORA_SIG_IGN 1ull
+#define AURORA_SIG_ERR 0xffffffffffffffffull
+
+#define AURORA_SIGHUP   1u
+#define AURORA_SIGINT   2u
+#define AURORA_SIGQUIT  3u
+#define AURORA_SIGILL   4u
+#define AURORA_SIGABRT  6u
+#define AURORA_SIGKILL  9u
+#define AURORA_SIGUSR1  10u
+#define AURORA_SIGSEGV  11u
+#define AURORA_SIGUSR2  12u
+#define AURORA_SIGPIPE  13u
+#define AURORA_SIGALRM  14u
+#define AURORA_SIGTERM  15u
+#define AURORA_SIGCHLD  17u
+#define AURORA_SIGCONT  18u
+#define AURORA_SIGSTOP  19u
+#define AURORA_SIGTSTP  20u
+#define AURORA_SIGTTIN  21u
+#define AURORA_SIGTTOU  22u
+
+#define AURORA_SIG_BLOCK   0u
+#define AURORA_SIG_UNBLOCK 1u
+#define AURORA_SIG_SETMASK 2u
+
+#define AURORA_SA_RESTART 0x00000001u
+
+#define AURORA_PROCESS_FLAG_STOPPED 0x00000001u
+#define AURORA_PROCESS_FLAG_SESSION_LEADER 0x00000002u
+#define AURORA_PROCESS_FLAG_FOREGROUND 0x00000004u
 
 #define AURORA_O_RDONLY    0x00000000u
 #define AURORA_O_WRONLY    0x00000001u
@@ -253,11 +304,17 @@ typedef struct aurora_key_event {
 
 typedef struct aurora_procinfo {
     unsigned int pid;
+    unsigned int ppid;
+    unsigned int pgrp;
+    unsigned int sid;
     unsigned int state;
     unsigned int uid;
     unsigned int euid;
     unsigned int gid;
     unsigned int egid;
+    unsigned int flags;
+    unsigned int pending_signals;
+    unsigned int blocked_signals;
     int exit_code;
     int status;
     unsigned long long started_ticks;
@@ -348,6 +405,26 @@ typedef struct aurora_pipeinfo {
     unsigned int reserved;
 } aurora_pipeinfo_t;
 
+typedef struct aurora_sigaction {
+    unsigned long long handler;
+    unsigned long long mask;
+    unsigned int flags;
+    unsigned int reserved;
+    unsigned long long restorer;
+} aurora_sigaction_t;
+
+typedef struct aurora_jobinfo {
+    unsigned int pid;
+    unsigned int ppid;
+    unsigned int pgrp;
+    unsigned int sid;
+    unsigned int state;
+    unsigned int flags;
+    unsigned int pending_signals;
+    unsigned int blocked_signals;
+    char name[AURORA_PROCESS_NAME_MAX];
+} aurora_jobinfo_t;
+
 typedef struct aurora_preemptinfo {
     unsigned int enabled;
     unsigned int quantum_ticks;
@@ -363,6 +440,7 @@ typedef struct aurora_preemptinfo {
 
 AURORA_ABI_STATIC_ASSERT(procinfo_pid_offset, __builtin_offsetof(aurora_procinfo_t, pid) == 0);
 AURORA_ABI_STATIC_ASSERT(procinfo_name_size, sizeof(((aurora_procinfo_t *)0)->name) == AURORA_PROCESS_NAME_MAX);
+AURORA_ABI_STATIC_ASSERT(sigaction_size, sizeof(aurora_sigaction_t) == 32);
 AURORA_ABI_STATIC_ASSERT(schedinfo_quantum_after_preempt_enabled, __builtin_offsetof(aurora_schedinfo_t, quantum_ticks) == __builtin_offsetof(aurora_schedinfo_t, preempt_enabled) + sizeof(unsigned int));
 AURORA_ABI_STATIC_ASSERT(fdinfo_flags_after_fsid, __builtin_offsetof(aurora_fdinfo_t, flags) == __builtin_offsetof(aurora_fdinfo_t, fs_id) + sizeof(unsigned int));
 AURORA_ABI_STATIC_ASSERT(fdinfo_open_flags_after_flags, __builtin_offsetof(aurora_fdinfo_t, open_flags) == __builtin_offsetof(aurora_fdinfo_t, flags) + sizeof(unsigned int));

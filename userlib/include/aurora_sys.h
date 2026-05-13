@@ -86,6 +86,20 @@ enum au_syscall_id {
     AU_SYS_MMAP = AURORA_SYS_MMAP,
     AU_SYS_MUNMAP = AURORA_SYS_MUNMAP,
     AU_SYS_MPROTECT = AURORA_SYS_MPROTECT,
+    AU_SYS_SIGNAL = AURORA_SYS_SIGNAL,
+    AU_SYS_SIGACTION = AURORA_SYS_SIGACTION,
+    AU_SYS_SIGPROCMASK = AURORA_SYS_SIGPROCMASK,
+    AU_SYS_SIGPENDING = AURORA_SYS_SIGPENDING,
+    AU_SYS_KILL = AURORA_SYS_KILL,
+    AU_SYS_RAISE = AURORA_SYS_RAISE,
+    AU_SYS_GETPGRP = AURORA_SYS_GETPGRP,
+    AU_SYS_SETPGID = AURORA_SYS_SETPGID,
+    AU_SYS_GETPGID = AURORA_SYS_GETPGID,
+    AU_SYS_SETSID = AURORA_SYS_SETSID,
+    AU_SYS_GETSID = AURORA_SYS_GETSID,
+    AU_SYS_TCGETPGRP = AURORA_SYS_TCGETPGRP,
+    AU_SYS_TCSETPGRP = AURORA_SYS_TCSETPGRP,
+    AU_SYS_SIGRETURN = AURORA_SYS_SIGRETURN,
 };
 
 typedef struct au_result {
@@ -119,6 +133,9 @@ typedef aurora_key_event_t au_key_event_t;
 typedef aurora_statvfs_t au_statvfs_t;
 typedef aurora_credinfo_t au_credinfo_t;
 typedef aurora_userinfo_t au_userinfo_t;
+typedef aurora_sigaction_t au_sigaction_t;
+typedef aurora_jobinfo_t au_jobinfo_t;
+typedef void (*au_sighandler_t)(int);
 
 #define AU_STDIN AURORA_STDIN
 #define AU_STDOUT AURORA_STDOUT
@@ -233,6 +250,19 @@ au_i64 mprotect(void *addr, au_usize length, unsigned int prot);
 void *au_mmap(void *addr, au_usize length, unsigned int prot, unsigned int flags, au_i64 fd, au_u64 offset);
 au_i64 au_munmap(void *addr, au_usize length);
 au_i64 au_mprotect(void *addr, au_usize length, unsigned int prot);
+au_sighandler_t au_signal(unsigned int sig, au_sighandler_t handler);
+au_i64 au_sigaction(unsigned int sig, const au_sigaction_t *act, au_sigaction_t *oldact);
+au_i64 au_sigprocmask(unsigned int how, const au_u64 *set, au_u64 *oldset);
+au_i64 au_sigpending(au_u64 *out);
+au_i64 au_kill(unsigned int pid, unsigned int sig);
+au_i64 au_raise(unsigned int sig);
+au_i64 au_getpgrp(void);
+au_i64 au_setpgid(unsigned int pid, unsigned int pgid);
+au_i64 au_getpgid(unsigned int pid);
+au_i64 au_setsid(void);
+au_i64 au_getsid(unsigned int pid);
+au_i64 au_tcgetpgrp(void);
+au_i64 au_tcsetpgrp(unsigned int pgid);
 void *malloc(au_usize size);
 void free(void *ptr);
 void *calloc(au_usize count, au_usize size);

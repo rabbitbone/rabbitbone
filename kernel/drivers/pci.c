@@ -3,12 +3,13 @@
 #include <aurora/libc.h>
 #include <aurora/log.h>
 #include <aurora/console.h>
+#include <aurora/kmem.h>
 
 #define PCI_CONFIG_ADDRESS 0xcf8u
 #define PCI_CONFIG_DATA    0xcfcu
 #define PCI_VENDOR_INVALID 0xffffu
 
-static pci_device_t pci_devices[PCI_MAX_DEVICES];
+static pci_device_t *pci_devices;
 static usize pci_devices_count;
 static bool pci_scanned;
 
@@ -96,7 +97,7 @@ static void pci_read_caps(pci_device_t *pd) {
 }
 
 static void pci_add_device(u8 bus, u8 dev, u8 func) {
-    if (pci_devices_count >= PCI_MAX_DEVICES) return;
+    if (!pci_devices || pci_devices_count >= PCI_MAX_DEVICES) return;
     u16 vendor = pci_config_read16(bus, dev, func, 0x00);
     if (vendor == PCI_VENDOR_INVALID) return;
     pci_device_t *pd = &pci_devices[pci_devices_count];
@@ -124,7 +125,8 @@ static void pci_add_device(u8 bus, u8 dev, u8 func) {
 }
 
 void pci_init(void) {
-    memset(pci_devices, 0, sizeof(pci_devices));
+    if (!pci_devices) pci_devices = (pci_device_t *)kcalloc(PCI_MAX_DEVICES, sizeof(pci_device_t));
+    if (pci_devices) memset(pci_devices, 0, PCI_MAX_DEVICES * sizeof(pci_device_t));
     pci_devices_count = 0;
     for (u16 bus = 0; bus < 256u; ++bus) {
         for (u8 dev = 0; dev < 32u; ++dev) {
@@ -140,9 +142,10 @@ void pci_init(void) {
 }
 
 usize pci_device_count(void) { return pci_devices_count; }
-const pci_device_t *pci_get_device(usize index) { return index < pci_devices_count ? &pci_devices[index] : 0; }
+const pci_device_t *pci_get_device(usize index) { return pci_devices && index < pci_devices_count ? &pci_devices[index] : 0; }
 
 const pci_device_t *pci_find_class(u8 class_code, u8 subclass, u8 prog_if, usize nth) {
+    if (!pci_devices) return 0;
     for (usize i = 0; i < pci_devices_count; ++i) {
         const pci_device_t *pd = &pci_devices[i];
         if (pd->class_code == class_code && pd->subclass == subclass && pd->prog_if == prog_if) {
@@ -173,6 +176,7 @@ void pci_format_devices(char *out, usize out_len) {
     out[0] = 0;
     usize used = 0;
     appendf(out, out_len, &used, "pci: count=%llu scanned=%u\n", (unsigned long long)pci_devices_count, pci_scanned ? 1u : 0u);
+    if (!pci_devices) return;
     for (usize i = 0; i < pci_devices_count; ++i) {
         const pci_device_t *pd = &pci_devices[i];
         appendf(out, out_len, &used, "  %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x irq=%u/%u caps=%u\n",

@@ -33,6 +33,7 @@ typedef enum process_lifecycle {
     PROCESS_STATE_READY = 5,
     PROCESS_STATE_SLEEPING = 6,
     PROCESS_STATE_WAITING = 7,
+    PROCESS_STATE_STOPPED = 8,
 } process_lifecycle_t;
 
 typedef struct process_result {
@@ -69,6 +70,7 @@ bool process_after_syscall(cpu_regs_t *regs);
 AURORA_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 code);
 void process_preempt_from_interrupt(cpu_regs_t *regs);
 void process_fault_current_from_interrupt(cpu_regs_t *regs, u64 vector, u64 cr2);
+bool process_signal_return(uptr frame, cpu_regs_t *regs);
 bool process_try_resolve_cow_fault(cpu_regs_t *regs, u64 cr2);
 void process_request_reschedule(void);
 void process_request_exit(i32 code);
@@ -82,6 +84,19 @@ process_status_t process_current_munmap(uptr addr, usize length);
 process_status_t process_current_mprotect(uptr addr, usize length, u32 prot);
 process_status_t process_request_exec(const char *path, int argc, const char *const *argv);
 process_status_t process_request_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp);
+process_status_t process_signal_set_action(u32 sig, const aurora_sigaction_t *act, aurora_sigaction_t *oldact);
+process_status_t process_signal_mask(u32 how, const u64 *set, u64 *oldset);
+process_status_t process_signal_pending(u64 *out);
+process_status_t process_signal_send(u32 pid, u32 sig);
+process_status_t process_signal_raise(u32 sig);
+process_status_t process_get_pgrp(u32 pid, u32 *out);
+process_status_t process_set_pgrp(u32 pid, u32 pgid);
+process_status_t process_get_sid(u32 pid, u32 *out);
+process_status_t process_set_sid(u32 *out);
+process_status_t process_tcgetpgrp(u32 *out);
+process_status_t process_tcsetpgrp(u32 pgid);
+void process_format_jobs(char *out, usize cap);
+void process_format_signals(char *out, usize cap);
 const char *process_status_name(process_status_t st);
 bool process_selftest(void);
 bool process_user_active(void);

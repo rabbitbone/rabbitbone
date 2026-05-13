@@ -1,8 +1,12 @@
 # AuroraOS status
 
-AuroraOS is currently at `0.0.2.12`.
+AuroraOS is currently at `0.0.2.13`.
 
 The system boots as a VMware Legacy BIOS x86_64 guest, passes through a two-stage BIOS loader, enters long mode, and starts an independent kernel. The kernel has its own memory manager, heap, interrupt setup, VFS, device files, a bounded writable EXT4 path with inline/depth-1/depth-2 extents, split extent leaf writes, truncate-time extent-tree compaction/demotion, persistent htree directory indexes, async-coalesced ordered metadata journaling/recovery with data-before-metadata sync, direct-data writeback caching with cache coherency, unwritten extent preallocation/conversion, orphan cleanup, metadata checksums, fsck repair-lite for htree/free-counter/dirent corruption with cache-coherent raw-media repair, VFS/userland sync-fsync-statvfs-install_commit-preallocate app-storage calls, cwd-relative filesystem operations, PCI enumeration, AHCI SATA discovery/read-write block support, an AHCI-first ATA-PIO-fallback block registry, a syscall layer with heap-backed descriptor tables, kernel shebang interpreter resolution, copy-on-write fork, per-process user heaps with brk/sbrk, VMA-backed demand-paged anonymous, file-backed private, and fork-inherited anonymous shared mmap/munmap/mprotect with VMA range tracking, and a small ring3 userland with `/sbin/init` and `/bin/aursh`.
+
+## 0.0.2.13 status
+
+Signals, process groups, and terminal job-control groundwork are implemented. The kernel now tracks per-process signal actions, masks, pending sets, process groups, sessions, and a terminal foreground process group. Ring3 signal handlers use a kernel-built user stack frame plus `sigreturn`, default terminate/stop/ignore behavior is modeled for the supported signal set, `kill`/`raise`/`sigaction`/`sigprocmask`/`sigpending` are exposed through the syscall ABI, and process registry snapshots include pgrp/sid/signal flags. `/bin/procctl` and ktest cover handlers, blocked delivery, pending state, child termination by signal, setpgid/getpgid, and tcgetpgrp/tcsetpgrp groundwork.
 
 ## 0.0.2.12 status
 

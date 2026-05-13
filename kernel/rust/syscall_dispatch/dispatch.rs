@@ -82,6 +82,20 @@ pub extern "C" fn aurora_rust_syscall_dispatch(no: u64, args: SysArgs) -> Syscal
             SyscallNo::Mmap => aurora_sys_mmap(args.a0, args.a1, args.a2, args.a3, args.a4, args.a5),
             SyscallNo::Munmap => aurora_sys_munmap(args.a0, args.a1),
             SyscallNo::Mprotect => aurora_sys_mprotect(args.a0, args.a1, args.a2),
+            SyscallNo::Signal => aurora_sys_signal(args.a0, args.a1),
+            SyscallNo::Sigaction => aurora_sys_sigaction(args.a0, args.a1, args.a2),
+            SyscallNo::Sigprocmask => aurora_sys_sigprocmask(args.a0, args.a1, args.a2),
+            SyscallNo::Sigpending => aurora_sys_sigpending(args.a0),
+            SyscallNo::Kill => aurora_sys_kill(args.a0, args.a1),
+            SyscallNo::Raise => aurora_sys_raise(args.a0),
+            SyscallNo::Getpgrp => aurora_sys_getpgrp(),
+            SyscallNo::Setpgid => aurora_sys_setpgid(args.a0, args.a1),
+            SyscallNo::Getpgid => aurora_sys_getpgid(args.a0),
+            SyscallNo::Setsid => aurora_sys_setsid(),
+            SyscallNo::Getsid => aurora_sys_getsid(args.a0),
+            SyscallNo::Tcgetpgrp => aurora_sys_tcgetpgrp(),
+            SyscallNo::Tcsetpgrp => aurora_sys_tcsetpgrp(args.a0),
+            SyscallNo::Sigreturn => aurora_sys_sigreturn(args.a0),
         }
     }
 }

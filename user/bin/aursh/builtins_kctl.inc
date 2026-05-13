@@ -24,6 +24,8 @@ static int sh_kctl_op_for(const char *cmd, unsigned int *op) {
     else if (sh_streq(cmd, "blk")) *op = AURORA_KCTL_OP_BLK;
     else if (sh_streq(cmd, "pci") || sh_streq(cmd, "lspci")) *op = AURORA_KCTL_OP_PCI;
     else if (sh_streq(cmd, "ext4")) *op = AURORA_KCTL_OP_EXT4;
+    else if (sh_streq(cmd, "signals")) *op = AURORA_KCTL_OP_SIGNALS;
+    else if (sh_streq(cmd, "jobs")) *op = AURORA_KCTL_OP_JOBS;
     else if (sh_streq(cmd, "panic")) *op = AURORA_KCTL_OP_PANIC;
     else if (sh_streq(cmd, "reboot")) *op = AURORA_KCTL_OP_REBOOT;
     else if (sh_streq(cmd, "halt")) *op = AURORA_KCTL_OP_HALT;

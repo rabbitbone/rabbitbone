@@ -134,7 +134,7 @@ static const sh_builtin_entry_t sh_builtins[] = {
     { "fdprobe", sh_cmd_fdprobe }, { "fdinfo", sh_cmd_fdinfo }, { "tty", sh_cmd_tty }, { "statvfs", sh_cmd_statvfs }, { "mounts", sh_cmd_mounts },
     { "sync", sh_cmd_sync }, { "fsync", sh_cmd_fsync }, { "syscall", sh_cmd_syscall }, { "elf", sh_cmd_elf }, { "userbins", sh_cmd_userbins }, { "log", sh_cmd_log },
     { "mem", sh_cmd_kctl }, { "heap", sh_cmd_kctl }, { "vmm", sh_cmd_kctl }, { "ktest", sh_cmd_kctl }, { "logs", sh_cmd_kctl },
-    { "acpi", sh_cmd_kctl }, { "apic", sh_cmd_kctl }, { "hpet", sh_cmd_kctl }, { "timer", sh_cmd_kctl }, { "smp", sh_cmd_kctl }, { "pci", sh_cmd_kctl }, { "lspci", sh_cmd_kctl }, { "disks", sh_cmd_kctl }, { "blk", sh_cmd_kctl }, { "ext4", sh_cmd_kctl }, { "panic", sh_cmd_kctl }, { "reboot", sh_cmd_kctl }, { "halt", sh_cmd_kctl },
+    { "acpi", sh_cmd_kctl }, { "apic", sh_cmd_kctl }, { "hpet", sh_cmd_kctl }, { "timer", sh_cmd_kctl }, { "smp", sh_cmd_kctl }, { "signals", sh_cmd_kctl }, { "jobs", sh_cmd_kctl }, { "pci", sh_cmd_kctl }, { "lspci", sh_cmd_kctl }, { "disks", sh_cmd_kctl }, { "blk", sh_cmd_kctl }, { "ext4", sh_cmd_kctl }, { "panic", sh_cmd_kctl }, { "reboot", sh_cmd_kctl }, { "halt", sh_cmd_kctl },
     { "runq", sh_cmd_runq }, { "schedtest", sh_cmd_schedtest },
 };
 

@@ -34,6 +34,8 @@ void process_init(void) {
     if (!shared_anon_objects) PANIC("process shared-anon object table allocation failed");
     memset(shared_anon_objects, 0, sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
     next_shared_anon_generation = 1;
+    tty_foreground_pgrp = 0;
+    tty_session_id = 0;
     KLOG(LOG_INFO, "process", "user process subsystem initialized");
 }
 
@@ -69,6 +71,7 @@ static const char *process_state_name(u32 state) {
         case PROCESS_STATE_READY: return "ready";
         case PROCESS_STATE_SLEEPING: return "sleeping";
         case PROCESS_STATE_WAITING: return "waiting";
+        case PROCESS_STATE_STOPPED: return "stopped";
         case PROCESS_STATE_EMPTY:
         default: return "empty";
     }
@@ -110,7 +113,7 @@ static bool process_state_terminal(u32 state) {
 }
 
 static bool process_state_live(u32 state) {
-    return state == PROCESS_STATE_READY || state == PROCESS_STATE_RUNNING || state == PROCESS_STATE_SLEEPING || state == PROCESS_STATE_WAITING;
+    return state == PROCESS_STATE_READY || state == PROCESS_STATE_RUNNING || state == PROCESS_STATE_SLEEPING || state == PROCESS_STATE_WAITING || state == PROCESS_STATE_STOPPED;
 }
 
 static void process_init_root_cred(aurora_credinfo_t *cred) {
@@ -217,10 +220,16 @@ static void fill_info_from_active(process_info_t *info, const active_process_t *
     if (!info || !p) return;
     fill_info_from_result(info, &p->result, p->result.faulted ? PROC_ERR_FAULT : PROC_OK, (u32)p->state,
                           p->result.started_ticks, process_state_terminal((u32)p->state) ? p->result.finished_ticks : pit_ticks());
+    info->ppid = p->parent_pid;
+    info->pgrp = p->process_group;
+    info->sid = p->session_id;
     info->uid = p->cred.uid;
     info->euid = p->cred.euid;
     info->gid = p->cred.gid;
     info->egid = p->cred.egid;
+    info->flags = p->signal_flags | ((tty_foreground_pgrp && p->process_group == tty_foreground_pgrp) ? AURORA_PROCESS_FLAG_FOREGROUND : 0u);
+    info->pending_signals = (u32)(p->signal_pending & 0xffffffffu);
+    info->blocked_signals = (u32)(p->signal_blocked & 0xffffffffu);
 }
 
 static void sync_current_handles_to_snapshot(void) {

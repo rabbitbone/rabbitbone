@@ -86,12 +86,32 @@ bool process_after_syscall(cpu_regs_t *regs) {
         clear_current_async();
         leave_user_scheduler();
     }
+    int sig_result = process_signal_deliver_pending(&current_proc, regs);
+    if (sig_result == 2) {
+        clear_current_async();
+        leave_user_scheduler();
+    }
+    if (sig_result == 3) {
+        (void)sync_current_to_slot();
+        clear_current_async();
+        leave_user_scheduler();
+    }
+    if (exit_requested) {
+        current_proc.result.exit_code = requested_exit_code;
+        finish_current(PROCESS_STATE_EXITED, PROC_OK, regs);
+        wake_waiters(current_proc.result.pid);
+        exit_requested = false;
+        requested_exit_code = 0;
+        clear_current_async();
+        leave_user_scheduler();
+    }
     if (reschedule_requested || current_proc.state == PROCESS_STATE_SLEEPING || current_proc.state == PROCESS_STATE_WAITING) {
         if (current_proc.state == PROCESS_STATE_RUNNING) current_proc.state = PROCESS_STATE_READY;
         reschedule_requested = false;
         process_preempt_from_interrupt(regs);
         return true;
     }
+    if (sig_result == 1) (void)sync_current_to_slot();
     return false;
 }
 
