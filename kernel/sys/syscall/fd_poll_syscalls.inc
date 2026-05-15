@@ -109,7 +109,7 @@ syscall_result_t rabbitbone_sys_tell(u64 handle) {
 }
 
 syscall_result_t rabbitbone_sys_fstat(u64 handle, u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(vfs_stat_t))) return err(VFS_ERR_INVAL);
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h)) return err(VFS_ERR_INVAL);
@@ -154,7 +154,7 @@ syscall_result_t rabbitbone_sys_fstat(u64 handle, u64 out_ptr) {
 }
 
 syscall_result_t rabbitbone_sys_fdinfo(u64 handle, u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_fdinfo_t))) return err(VFS_ERR_INVAL);
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h)) return err(VFS_ERR_INVAL);
@@ -211,7 +211,7 @@ static bool readdir_pick(const vfs_dirent_t *entry, void *raw) {
 }
 
 syscall_result_t rabbitbone_sys_readdir(u64 handle, u64 index, u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_dirent_t))) return err(VFS_ERR_INVAL);
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h)) return err(VFS_ERR_INVAL);
@@ -234,7 +234,7 @@ syscall_result_t rabbitbone_sys_readdir(u64 handle, u64 index, u64 out_ptr) {
 }
 
 syscall_result_t rabbitbone_sys_pipe(u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!out_ptr || !validate_user_write_range(out_ptr, sizeof(u32) * 2u)) return err(VFS_ERR_INVAL);
     sys_handle_t *handles = active_handles();
     if (count_pipe_endpoints(handles) + 2u > SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP) return err(VFS_ERR_NOSPC);
     sys_pipe_t *p = alloc_pipe();
@@ -256,7 +256,7 @@ syscall_result_t rabbitbone_sys_pipe(u64 out_ptr) {
 }
 
 syscall_result_t rabbitbone_sys_pipeinfo(u64 handle, u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_pipeinfo_t))) return err(VFS_ERR_INVAL);
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || (handles[h].kind != SYS_HANDLE_PIPE_READ && handles[h].kind != SYS_HANDLE_PIPE_WRITE)) return err(VFS_ERR_INVAL);

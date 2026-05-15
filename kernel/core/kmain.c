@@ -89,6 +89,7 @@ void kernel_main(const rabbitbone_bootinfo_t *bootinfo) {
     bootinfo_remember(bootinfo);
     bootramdisk_init(bootinfo);
     kmem_init();
+    serial_enable_heap_ring();
     log_enable_heap_ring();
     if (!gdt_install_dynamic_stacks(64u * 1024u, 8u * 1024u)) {
         PANIC("failed to install heap-backed TSS stacks");

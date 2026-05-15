@@ -51,6 +51,29 @@ static bool cpu_has_nx(void) {
     return (d & (1u << 20)) != 0;
 }
 
+
+static bool cpu_has_pat(void) {
+    if (!cpu_has_leaf(1u)) return false;
+    u32 d = 0;
+    cpu_cpuid(1u, 0, 0, 0, 0, &d);
+    return (d & (1u << 16)) != 0;
+}
+
+static void cpu_enable_pat_wc_entry(void) {
+    if (!cpu_has_pat()) return;
+    const u32 ia32_pat = 0x277u;
+    const u64 pat_wc = 0x01ull;
+    u64 pat = cpu_read_msr(ia32_pat);
+    u64 old = pat;
+    pat &= ~(0xffull << 8u);
+    pat |= (pat_wc << 8u);
+    if (pat != old) {
+        __asm__ volatile("wbinvd" ::: "memory");
+        cpu_write_msr(ia32_pat, pat);
+        __asm__ volatile("wbinvd" ::: "memory");
+    }
+}
+
 static void cpu_enable_nxe(void) {
     if (!cpu_has_nx()) PANIC("cpu: NX bit is required but not supported");
     const u64 efer_nxe = 1ull << 11;
@@ -62,6 +85,7 @@ void cpu_init(void) {
     __asm__ volatile("cld");
 
     cpu_enable_nxe();
+    cpu_enable_pat_wc_entry();
 
     u64 cr0 = read_cr0();
     cr0 &= ~(1ull << 2);

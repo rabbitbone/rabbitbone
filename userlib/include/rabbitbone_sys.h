@@ -254,7 +254,7 @@ au_sighandler_t au_signal(unsigned int sig, au_sighandler_t handler);
 au_i64 au_sigaction(unsigned int sig, const au_sigaction_t *act, au_sigaction_t *oldact);
 au_i64 au_sigprocmask(unsigned int how, const au_u64 *set, au_u64 *oldset);
 au_i64 au_sigpending(au_u64 *out);
-au_i64 au_kill(unsigned int pid, unsigned int sig);
+au_i64 au_kill(int pid, unsigned int sig);
 au_i64 au_raise(unsigned int sig);
 au_i64 au_getpgrp(void);
 au_i64 au_setpgid(unsigned int pid, unsigned int pgid);

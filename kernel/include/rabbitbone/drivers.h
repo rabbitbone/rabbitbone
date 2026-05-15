@@ -8,9 +8,11 @@ extern "C" {
 #endif
 
 void serial_init(void);
+void serial_enable_heap_ring(void);
 void serial_write(const char *s);
 void serial_write_n(const char *s, usize n);
 void serial_putc(char c);
+void serial_poll(void);
 bool serial_available(void);
 bool serial_received(void);
 int serial_read(void);

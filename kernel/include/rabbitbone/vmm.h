@@ -15,6 +15,7 @@ extern "C" {
 #define VMM_HUGE     (1ull << 7)
 #define VMM_GLOBAL   (1ull << 8)
 #define VMM_COW      (1ull << 9)  /* x86 software-available PTE bit */
+#define VMM_WRITECOMB (1ull << 10) /* request PAT WC; encoded as PWT in hardware PTE */
 #define VMM_NX       (1ull << 63)
 
 #define VMM_SPACE_MAX_TABLES 128u

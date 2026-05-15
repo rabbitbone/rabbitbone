@@ -143,9 +143,12 @@ ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 par
             if (st != EXT4_OK) return st;
         }
     }
-    if (out->sb.s_checksum == 0 || out->sb.s_checksum != super_checksum(&out->sb)) {
+    u32 expected_super_checksum = super_checksum(&out->sb);
+    if (out->sb.s_checksum == 0) {
         st = write_super(out);
         if (st != EXT4_OK) return st;
+    } else if (out->sb.s_checksum != expected_super_checksum) {
+        return EXT4_ERR_CORRUPT;
     }
     return EXT4_OK;
 }

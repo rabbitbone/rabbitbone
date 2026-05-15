@@ -6,16 +6,6 @@
 static char sh_history[SH_HISTORY_MAX][SH_LINE_MAX];
 static au_usize sh_history_count = 0;
 
-static void sh_write_n_fd(au_i64 fd, const char *s, au_usize n) {
-    if (!s || n == 0) return;
-    au_usize off = 0;
-    while (off < n) {
-        au_i64 wrote = au_write(fd, s + off, n - off);
-        if (wrote <= 0) return;
-        off += (au_usize)wrote;
-    }
-}
-
 static void sh_term_move_to(unsigned int row0, unsigned int col0) { (void)au_tty_setcursor(row0, col0); }
 static void sh_term_clear_to_eol(void) { (void)au_tty_clearline(); }
 static void sh_term_cursor_visible(unsigned int visible) { (void)au_tty_cursor_visible(visible); }
@@ -33,18 +23,20 @@ static unsigned int sh_scroll_page(void) {
 
 static void sh_make_prompt(char *out, au_usize cap) {
     char cwd[SH_PATH_MAX];
+    au_usize off = 0;
     if (!out || cap == 0) return;
+    out[0] = 0;
     if (au_getcwd(cwd, sizeof(cwd)) < 0) sh_copy(cwd, sizeof(cwd), "?");
-    au_usize cwd_len = au_strlen(cwd);
-    if (cwd_len + 3u <= cap) {
-        au_memcpy(out, cwd, cwd_len);
-        out[cwd_len] = '$';
-        out[cwd_len + 1u] = ' ';
-        out[cwd_len + 2u] = 0;
-        return;
+    const char *user = sh_user_name();
+    (void)sh_append_str(out, cap, &off, user);
+    (void)sh_append_char(out, cap, &off, ':');
+    if (!sh_append_str(out, cap, &off, cwd)) {
+        out[0] = 0;
+        off = 0;
+        (void)sh_append_str(out, cap, &off, cwd);
     }
-    if (cap >= 4u) sh_copy(out, cap, "$ ");
-    else out[0] = 0;
+    (void)sh_append_char(out, cap, &off, sh_streq(user, "root") ? '#' : '$');
+    (void)sh_append_char(out, cap, &off, ' ');
 }
 
 typedef struct sh_completion {
@@ -212,44 +204,19 @@ static void sh_editor_insert_text(sh_line_editor_t *ed, const char *text, au_usi
 
 static void sh_editor_insert(sh_line_editor_t *ed, char c) {
     if (!ed || !ed->line || ed->len + 1u >= ed->cap) return;
-    au_usize old_cursor = ed->cursor;
-    au_usize old_len = ed->len;
-    unsigned int old_rows = sh_editor_rows_used(ed);
-    int append = ed->cursor == ed->len;
     for (au_usize i = ed->len; i > ed->cursor; --i) ed->line[i] = ed->line[i - 1u];
     ed->line[ed->cursor] = c;
     ++ed->len;
     ++ed->cursor;
     ed->line[ed->len] = 0;
-    unsigned int new_rows = sh_editor_rows_used(ed);
-    if (append && old_rows == new_rows) {
-        ed->cursor = old_cursor;
-        sh_editor_place_cursor(ed);
-        ed->cursor = old_cursor + 1u;
-        sh_write_n_fd((au_i64)RABBITBONE_STDOUT, &c, 1u);
-        ed->old_rows_used = new_rows;
-        sh_editor_place_cursor(ed);
-        (void)old_len;
-        return;
-    }
     sh_editor_refresh(ed);
 }
 
 static void sh_editor_backspace(sh_line_editor_t *ed) {
     if (!ed || !ed->line || ed->cursor == 0) return;
-    unsigned int old_rows = sh_editor_rows_used(ed);
-    int deleting_tail = ed->cursor == ed->len;
     for (au_usize i = ed->cursor - 1u; i < ed->len; ++i) ed->line[i] = ed->line[i + 1u];
     --ed->cursor;
     --ed->len;
-    unsigned int new_rows = sh_editor_rows_used(ed);
-    if (deleting_tail && old_rows == new_rows) {
-        sh_editor_place_cursor(ed);
-        sh_write_n_fd((au_i64)RABBITBONE_STDOUT, " ", 1u);
-        ed->old_rows_used = new_rows;
-        sh_editor_place_cursor(ed);
-        return;
-    }
     sh_editor_refresh(ed);
 }
 
@@ -316,7 +283,7 @@ static unsigned int sh_token_start_for_completion(const sh_line_editor_t *ed) {
     unsigned int start = (unsigned int)ed->cursor;
     while (start > 0) {
         char c = ed->line[start - 1u];
-        if (c == ' ' || c == '\t' || c == '|' || c == '<' || c == '>') break;
+        if (c == ' ' || c == '\t' || c == '|' || c == '<' || c == '>' || c == ';' || c == '&') break;
         --start;
     }
     return start;
@@ -327,7 +294,7 @@ static int sh_completion_is_command_position(const sh_line_editor_t *ed, unsigne
     unsigned int i = token_start;
     while (i > 0 && (ed->line[i - 1u] == ' ' || ed->line[i - 1u] == '\t')) --i;
     if (i == 0) return 1;
-    return ed->line[i - 1u] == '|';
+    return ed->line[i - 1u] == '|' || ed->line[i - 1u] == ';' || ed->line[i - 1u] == '&';
 }
 
 static int sh_dirname_for_token(const char *token, char *dir, au_usize dir_cap, char *prefix, au_usize prefix_cap, char *token_dir_prefix, au_usize token_dir_cap) {
@@ -414,7 +381,7 @@ static void sh_editor_print_completions(sh_line_editor_t *ed, const sh_completio
     sh_editor_refresh(ed);
 }
 
-static void sh_editor_complete(sh_line_editor_t *ed) {
+static SH_NOINLINE void sh_editor_complete(sh_line_editor_t *ed) {
     if (!ed || !ed->line) return;
     unsigned int token_start = sh_token_start_for_completion(ed);
     au_usize token_len = ed->cursor - token_start;
@@ -479,7 +446,7 @@ static void sh_editor_ctrl_l(sh_line_editor_t *ed) {
     sh_editor_refresh(ed);
 }
 
-static int sh_read_line(char *line, au_usize cap) {
+static SH_NOINLINE int sh_read_line(char *line, au_usize cap) {
     if (!line || cap < 2u) return -1;
     line[0] = 0;
     sh_line_editor_t ed;

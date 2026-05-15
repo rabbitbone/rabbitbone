@@ -72,7 +72,7 @@ syscall_result_t rabbitbone_sys_theme(u64 op64, u64 value64) {
 }
 
 syscall_result_t rabbitbone_sys_tty_getinfo(u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_ttyinfo_t))) return err(VFS_ERR_INVAL);
     rabbitbone_ttyinfo_t info;
     if (!tty_getinfo(&info)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
@@ -85,6 +85,7 @@ syscall_result_t rabbitbone_sys_tty_setmode(u64 mode64) {
 
 syscall_result_t rabbitbone_sys_tty_readkey(u64 out_ptr, u64 flags64) {
     if (!out_ptr || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_key_event_t))) return err(VFS_ERR_INVAL);
     rabbitbone_key_event_t ev;
     if (!tty_read_key(&ev, (u32)flags64)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &ev, sizeof(ev)) ? ok(0) : err(VFS_ERR_INVAL);

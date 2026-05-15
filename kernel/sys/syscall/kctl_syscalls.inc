@@ -140,6 +140,11 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
     if (op64 >= RABBITBONE_KCTL_OP_MAX) return err(VFS_ERR_INVAL);
     u32 op = (u32)op64;
     if (kctl_root_required(op) && !sys_cred_root()) return err(VFS_ERR_PERM);
+    bool terminal_op = op == RABBITBONE_KCTL_OP_PANIC || op == RABBITBONE_KCTL_OP_REBOOT || op == RABBITBONE_KCTL_OP_HALT;
+    if (!terminal_op) {
+        if (!out_ptr || out_len64 == 0 || out_len64 > RABBITBONE_KCTL_OUT_MAX || (usize)out_len64 != out_len64) return err(VFS_ERR_INVAL);
+        if (!validate_user_write_range(out_ptr, (usize)out_len64)) return err(VFS_ERR_INVAL);
+    }
 
     char tmp[RABBITBONE_KCTL_OUT_MAX];
     memset(tmp, 0, sizeof(tmp));

@@ -139,6 +139,14 @@ vfs_status_t vfs_truncate(const char *path, u64 size) {
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
     if (!mnt->ops->truncate) { mount_release(mnt); return VFS_ERR_UNSUPPORTED; }
+    vfs_stat_t target_st;
+    memset(&target_st, 0, sizeof(target_st));
+    if (mnt->ops->stat) rs = mnt->ops->stat(mnt, route.relative, &target_st);
+    else rs = VFS_ERR_UNSUPPORTED;
+    if (rs != VFS_OK) { mount_release(mnt); return rs; }
+    vfs_node_ref_t target_ref;
+    fill_ref_from_stat(&target_ref, route.normalized, &target_st, &route);
+    if (vfs_ref_pin_count(&target_ref) != 0) { mount_release(mnt); return VFS_ERR_BUSY; }
     rs = mnt->ops->truncate(mnt, route.relative, size);
     mount_release(mnt);
     return rs;
@@ -149,6 +157,7 @@ vfs_status_t vfs_truncate_ref(const vfs_node_ref_t *ref, u64 size) {
     vfs_mount_t *mnt = mount_by_fs_id(ref->fs_id, ref->mount_generation);
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
+    if (vfs_ref_pin_count(ref) > 1u) { mount_release(mnt); return VFS_ERR_BUSY; }
     vfs_status_t rs = VFS_ERR_UNSUPPORTED;
     if (mnt->ops->truncate_inode) rs = mnt->ops->truncate_inode(mnt, ref->inode, size);
     mount_release(mnt);
@@ -197,6 +206,14 @@ vfs_status_t vfs_preallocate(const char *path, u64 size) {
     vfs_mount_t *mnt = route_mount(&route);
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
+    vfs_stat_t target_st;
+    memset(&target_st, 0, sizeof(target_st));
+    if (mnt->ops->stat) rs = mnt->ops->stat(mnt, route.relative, &target_st);
+    else rs = VFS_ERR_UNSUPPORTED;
+    if (rs != VFS_OK) { mount_release(mnt); return rs; }
+    vfs_node_ref_t target_ref;
+    fill_ref_from_stat(&target_ref, route.normalized, &target_st, &route);
+    if (vfs_ref_pin_count(&target_ref) != 0) { mount_release(mnt); return VFS_ERR_BUSY; }
     if (!mnt->ops->preallocate) { mount_release(mnt); return VFS_ERR_UNSUPPORTED; }
     rs = mnt->ops->preallocate(mnt, route.relative, size);
     mount_release(mnt);
@@ -208,6 +225,7 @@ vfs_status_t vfs_preallocate_ref(const vfs_node_ref_t *ref, u64 size) {
     vfs_mount_t *mnt = mount_by_fs_id(ref->fs_id, ref->mount_generation);
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
+    if (vfs_ref_pin_count(ref) > 1u) { mount_release(mnt); return VFS_ERR_BUSY; }
     vfs_status_t rs = VFS_ERR_UNSUPPORTED;
     if (mnt->ops->preallocate_inode) rs = mnt->ops->preallocate_inode(mnt, ref->inode, size);
     mount_release(mnt);

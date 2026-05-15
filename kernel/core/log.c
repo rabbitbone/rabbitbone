@@ -95,8 +95,8 @@ void log_write(log_level_t level, const char *component, const char *fmt, ...) {
     dst[ring_line_len - 1u] = 0;
     write_index = (write_index + 1u) % ring_lines;
     if (total_lines < ring_lines) ++total_lines;
-    if (level >= serial_min_level) serial_write(line);
     if (level >= console_min_level) console_write(line);
+    else if (level >= serial_min_level) serial_write(line);
     spin_unlock_irqrestore(&log_lock, flags);
 }
 

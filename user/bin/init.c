@@ -26,6 +26,19 @@ static void put_i64(au_i64 v) {
     }
 }
 
+static void put_hex64(au_u64 v) {
+    static const char hex[] = "0123456789abcdef";
+    char out[19];
+    out[0] = '0';
+    out[1] = 'x';
+    for (unsigned int i = 0; i < 16u; ++i) {
+        unsigned int shift = (15u - i) * 4u;
+        out[2u + i] = hex[(v >> shift) & 0xfu];
+    }
+    out[18] = 0;
+    put(out);
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -50,7 +63,14 @@ int main(int argc, char **argv) {
         if (info.faulted || info.exit_code != 0) {
             put("init: shell stopped exit=");
             put_i64(info.exit_code);
-            if (info.faulted) put(" faulted");
+            if (info.faulted) {
+                put(" faulted vector=");
+                put_u64(info.fault_vector);
+                put(" rip=");
+                put_hex64(info.fault_rip);
+                put(" addr=");
+                put_hex64(info.fault_addr);
+            }
             put("\n");
         }
         (void)au_sleep(10);

@@ -38,8 +38,8 @@ au_i64 au_sigpending(au_u64 *out) {
     return au_result_code(r);
 }
 
-au_i64 au_kill(unsigned int pid, unsigned int sig) {
-    au_result_t r = au_syscall3(AU_SYS_KILL, (au_u64)pid, (au_u64)sig, 0);
+au_i64 au_kill(int pid, unsigned int sig) {
+    au_result_t r = au_syscall3(AU_SYS_KILL, (au_u64)(au_i64)pid, (au_u64)sig, 0);
     return au_result_code(r);
 }
 

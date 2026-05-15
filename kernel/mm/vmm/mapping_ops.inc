@@ -3,7 +3,7 @@ bool vmm_space_map_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     u64 irq = spin_lock_irqsave(&vmm_lock);
     pte_t *pml4 = space_pml4(space);
     if (!pml4) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
-    u64 table_flags = flags & VMM_ALLOWED_TABLE_FLAGS;
+    u64 table_flags = vmm_table_pte_flags(flags);
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     vmm_created_table_t created[3];
@@ -26,7 +26,7 @@ bool vmm_space_map_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     if (!pt || (pt[d] & VMM_PRESENT)) goto fail;
     if (created_pt) created[created_count++] = (vmm_created_table_t){ .parent = pd, .index = c, .table = pt };
 
-    pt[d] = (phys & PTE_ADDR_MASK) | flags | VMM_PRESENT;
+    pt[d] = (phys & PTE_ADDR_MASK) | vmm_leaf_pte_flags(flags) | VMM_PRESENT;
     stats.mapped_4k_pages++;
     spin_unlock_irqrestore(&vmm_lock, irq);
     return true;
@@ -48,7 +48,7 @@ bool vmm_map_2m(uptr virt, uptr phys, u64 flags) {
     u64 irq = spin_lock_irqsave(&vmm_lock);
     pte_t *pml4 = space_pml4(&kernel_space_obj);
     if (!pml4) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
-    u64 table_flags = flags & VMM_ALLOWED_TABLE_FLAGS;
+    u64 table_flags = vmm_table_pte_flags(flags);
     usize a, b, c, d;
     split_indices(virt, &a, &b, &c, &d);
     (void)d;
@@ -66,7 +66,7 @@ bool vmm_map_2m(uptr virt, uptr phys, u64 flags) {
     if (!pd || (pd[c] & VMM_PRESENT)) goto fail;
     if (created_pd) created[created_count++] = (vmm_created_table_t){ .parent = pdpt, .index = b, .table = pd };
 
-    pd[c] = (phys & PTE_ADDR_MASK) | flags | VMM_PRESENT | VMM_HUGE;
+    pd[c] = (phys & PTE_ADDR_MASK) | vmm_leaf_pte_flags(flags) | VMM_PRESENT | VMM_HUGE;
     stats.mapped_2m_pages++;
     spin_unlock_irqrestore(&vmm_lock, irq);
     return true;
@@ -113,7 +113,7 @@ bool vmm_space_protect_4k(vmm_space_t *space, uptr virt, u64 flags) {
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     uptr phys = pt[d] & PTE_ADDR_MASK;
-    pt[d] = phys | (flags & ~PTE_ADDR_MASK) | VMM_PRESENT;
+    pt[d] = phys | (vmm_leaf_pte_flags(flags) & ~PTE_ADDR_MASK) | VMM_PRESENT;
     if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     spin_unlock_irqrestore(&vmm_lock, irq);
     return true;
@@ -138,7 +138,7 @@ bool vmm_space_remap_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     if (!pd || (pd[c] & VMM_HUGE)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
-    pt[d] = (phys & PTE_ADDR_MASK) | (flags & ~PTE_ADDR_MASK) | VMM_PRESENT;
+    pt[d] = (phys & PTE_ADDR_MASK) | (vmm_leaf_pte_flags(flags) & ~PTE_ADDR_MASK) | VMM_PRESENT;
     if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     spin_unlock_irqrestore(&vmm_lock, irq);
     return true;

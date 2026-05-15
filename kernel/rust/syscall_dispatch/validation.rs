@@ -7,6 +7,10 @@ fn valid_mmap_flags(flags: u64) -> bool {
     (flags & !MAP_SUPPORTED) == 0 && (sharing == MAP_PRIVATE || sharing == MAP_SHARED)
 }
 
+fn valid_pid_or_pgrp_arg(pid: u64) -> bool {
+    pid <= MAX_PID || pid >= 0xffff_ffff_8000_0000
+}
+
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
     match no {
         SyscallNo::Version | SyscallNo::Ticks | SyscallNo::GetPid | SyscallNo::Yield | SyscallNo::Fork | SyscallNo::Sync | SyscallNo::Brk | SyscallNo::Sbrk | SyscallNo::Getpgrp | SyscallNo::Setsid | SyscallNo::Tcgetpgrp => Ok(()),
@@ -24,7 +28,7 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Kill => {
-            if a.a0 > MAX_PID || a.a1 == 0 || a.a1 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !valid_pid_or_pgrp_arg(a.a0) || a.a1 == 0 || a.a1 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Raise => {
             if a.a0 == 0 || a.a0 >= NSIG { Err(VFS_ERR_INVAL) } else { Ok(()) }

@@ -86,15 +86,6 @@ static bool copy_out_buf(u64 dst, const void *src, usize len) {
     return true;
 }
 
-static bool validate_user_read_range(u64 src, usize len) {
-    if (!len) return true;
-    if (!src) return false;
-    u64 end = 0;
-    if (__builtin_add_overflow(src, (u64)len - 1u, &end)) return false;
-    if (process_user_active()) return process_validate_user_range((uptr)src, len, false);
-    return true;
-}
-
 static bool validate_user_write_range(u64 dst, usize len) {
     if (!len) return true;
     if (!dst) return false;
@@ -102,5 +93,22 @@ static bool validate_user_write_range(u64 dst, usize len) {
     if (__builtin_add_overflow(dst, (u64)len - 1u, &end)) return false;
     if (process_user_active()) return process_validate_user_range((uptr)dst, len, true);
     return true;
+}
+
+static bool validate_user_range_shape(u64 ptr, usize len) {
+    if (!len) return true;
+    if (!ptr) return false;
+    u64 end = 0;
+    if (__builtin_add_overflow(ptr, (u64)len - 1u, &end)) return false;
+    if (process_user_active()) return rabbitbone_rust_user_range_check(ptr, len);
+    return true;
+}
+
+static usize limit_user_io_chunk(u64 base, usize done, usize desired) {
+    if (desired == 0 || !process_user_active()) return desired;
+    u64 ptr = 0;
+    if (!add_user_ptr(base, done, &ptr)) return 0;
+    usize room = PAGE_SIZE - (usize)(ptr & (PAGE_SIZE - 1u));
+    return desired < room ? desired : room;
 }
 

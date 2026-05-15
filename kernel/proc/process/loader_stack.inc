@@ -48,6 +48,7 @@ static bool user_stack_align_down(uptr stack_base, uptr *sp, uptr align) {
 }
 
 static process_status_t load_elf_image(active_process_t *p, const char *path, u64 *entry_out) {
+    if (!p || !process_cred_can_traverse_parent(&p->cred, path)) return PROC_ERR_IO;
     vfs_stat_t st;
     if (vfs_stat(path, &st) != VFS_OK || st.type != VFS_NODE_FILE) return PROC_ERR_IO;
     if (!process_cred_can_access(&p->cred, &st, 01u)) return PROC_ERR_IO;

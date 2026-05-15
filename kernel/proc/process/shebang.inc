@@ -59,6 +59,8 @@ static process_status_t read_shebang_for_path(const active_process_t *proc, cons
     *has_shebang = false;
     memset(out, 0, sizeof(*out));
 
+    if (!process_cred_can_traverse_parent(proc ? &proc->cred : 0, path)) return PROC_ERR_IO;
+
     vfs_stat_t st;
     if (vfs_stat(path, &st) != VFS_OK || st.type != VFS_NODE_FILE) return PROC_ERR_IO;
 

@@ -358,6 +358,34 @@ static vfs_status_t op_truncate_inode(vfs_mount_t *mnt, u32 ino, u64 size64) {
     return st;
 }
 
+
+static vfs_status_t preallocate_node(ramfs_t *fs, ramfs_node_t *n, u64 size64) {
+    if (size64 > RAMFS_MAX_FILE_SIZE) return VFS_ERR_INVAL;
+    if (!n || !n->obj) return VFS_ERR_NOENT;
+    if (n->obj->type == VFS_NODE_DIR) return VFS_ERR_ISDIR;
+    if (n->obj->type == VFS_NODE_SYMLINK) return VFS_ERR_UNSUPPORTED;
+    usize size = (usize)size64;
+    if (size <= n->obj->size) return VFS_OK;
+    return truncate_node(fs, n, size64);
+}
+
+static vfs_status_t op_preallocate(vfs_mount_t *mnt, const char *path, u64 size64) {
+    ramfs_t *fs = (ramfs_t *)mnt->ctx;
+    u64 flags = spin_lock_irqsave(&fs->lock);
+    vfs_status_t st = preallocate_node(fs, resolve(fs, path), size64);
+    spin_unlock_irqrestore(&fs->lock, flags);
+    return st;
+}
+
+static vfs_status_t op_preallocate_inode(vfs_mount_t *mnt, u32 ino, u64 size64) {
+    if (ino == 0) return VFS_ERR_INVAL;
+    ramfs_t *fs = (ramfs_t *)mnt->ctx;
+    u64 flags = spin_lock_irqsave(&fs->lock);
+    vfs_status_t st = preallocate_node(fs, node_find_inode(fs->root, ino), size64);
+    spin_unlock_irqrestore(&fs->lock, flags);
+    return st;
+}
+
 static vfs_status_t op_chmod(vfs_mount_t *mnt, const char *path, u32 mode) {
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);

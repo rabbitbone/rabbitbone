@@ -199,6 +199,33 @@ static int check_file_demand_faults_after_close(void) {
     return 0;
 }
 
+
+static int check_size_mutations_blocked_while_mapped(void) {
+    if (prepare_file() != 0) return 180;
+    au_i64 fd = au_open2(PATH, RABBITBONE_O_RDWR);
+    if (fd < 0) return 181;
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FILE_FLAGS, fd, 0);
+    if (p == (void *)-1 || !p) return 182;
+    if (au_ftruncate(fd, FILE_SIZE / 2u) != RABBITBONE_ERR_BUSY) return 183;
+    if (au_fpreallocate(fd, FILE_SIZE + PAGE) != RABBITBONE_ERR_BUSY) return 184;
+    if (au_truncate(PATH, FILE_SIZE / 2u) != RABBITBONE_ERR_BUSY) return 185;
+    if (au_preallocate(PATH, FILE_SIZE + PAGE) != RABBITBONE_ERR_BUSY) return 186;
+    if (p[0] != pattern_at(0)) return 187;
+    if (munmap(p, PAGE) != 0) return 188;
+    if (au_ftruncate(fd, FILE_SIZE / 2u) != 0) return 189;
+    au_stat_t st;
+    au_memset(&st, 0, sizeof(st));
+    if (au_fstat(fd, &st) != 0 || st.size != FILE_SIZE / 2u) return 190;
+    if (au_truncate(PATH, FILE_SIZE / 4u) != RABBITBONE_ERR_BUSY) return 191;
+    if (au_close(fd) != 0) return 192;
+    if (au_truncate(PATH, FILE_SIZE / 4u) != 0) return 193;
+    au_memset(&st, 0, sizeof(st));
+    if (au_preallocate(PATH, FILE_SIZE / 2u) != 0) return 194;
+    if (au_stat(PATH, &st) != 0 || st.size != FILE_SIZE / 2u) return 195;
+    if (au_unlink(PATH) != 0) return 196;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -213,6 +240,8 @@ int main(int argc, char **argv) {
     r = check_rejects();
     if (r) return r;
     r = check_file_demand_faults_after_close();
+    if (r) return r;
+    r = check_size_mutations_blocked_while_mapped();
     if (r) return r;
     return 0;
 }

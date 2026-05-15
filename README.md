@@ -5,7 +5,7 @@
 <h1 align="center">Rabbitbone</h1>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.1-2f6fed" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.2-2f6fed" />
   <img alt="Target" src="https://img.shields.io/badge/target-x86_64%20UEFI%20Live%20ISO-222222" />
   <img alt="Kernel" src="https://img.shields.io/badge/kernel-independent-6b46c1" />
   <img alt="Written with" src="https://img.shields.io/badge/written%20with-GPT--5.5-0f766e" />
@@ -19,7 +19,7 @@
 
 Rabbitbone is a small amd64 operating system built from scratch for UEFI virtual machines. It is not Linux, not a Unix clone, and not a bootloader demo. The default artifact is a live ISO that boots an independent kernel, loads a RAM-backed root image as a boot module, mounts it at `/disk0`, and starts a disk-backed userland with `/disk0/sbin/init` and `rbsh`.
 
-The current release line is `0.0.3.1`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
+The current release line is `0.0.3.2`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
 
 ## Highlights
 

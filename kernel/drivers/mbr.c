@@ -52,8 +52,10 @@ static bool mbr_parts_overlap(const mbr_partition_t *a, const mbr_partition_t *b
     if (!mbr_part_nonempty(a) || !mbr_part_nonempty(b)) return false;
     u64 a_first = a->lba_first;
     u64 b_first = b->lba_first;
-    u64 a_last = a_first + (u64)a->sector_count - 1u;
-    u64 b_last = b_first + (u64)b->sector_count - 1u;
+    u64 a_last = 0;
+    u64 b_last = 0;
+    if (__builtin_add_overflow(a_first, (u64)a->sector_count - 1u, &a_last)) return true;
+    if (__builtin_add_overflow(b_first, (u64)b->sector_count - 1u, &b_last)) return true;
     return a_first <= b_last && b_first <= a_last;
 }
 

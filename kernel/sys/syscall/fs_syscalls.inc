@@ -91,7 +91,7 @@ syscall_result_t rabbitbone_sys_seek(u64 handle, u64 off64, u64 whence) {
 
 syscall_result_t rabbitbone_sys_stat(u64 path_ptr, u64 stat_out) {
     char path[SYSCALL_PATH_MAX];
-    if (!copy_path_arg(path_ptr, path) || !stat_out) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || !validate_user_write_range(stat_out, sizeof(vfs_stat_t))) return err(VFS_ERR_INVAL);
     if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t vs = vfs_stat(path, &st);
@@ -101,7 +101,7 @@ syscall_result_t rabbitbone_sys_stat(u64 path_ptr, u64 stat_out) {
 
 syscall_result_t rabbitbone_sys_lstat(u64 path_ptr, u64 stat_out) {
     char path[SYSCALL_PATH_MAX];
-    if (!copy_path_arg(path_ptr, path) || !stat_out) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || !validate_user_write_range(stat_out, sizeof(vfs_stat_t))) return err(VFS_ERR_INVAL);
     if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t vs = vfs_lstat(path, &st);
@@ -123,7 +123,8 @@ syscall_result_t rabbitbone_sys_readlink(u64 path_ptr, u64 out_ptr, u64 size64) 
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || (!out_ptr && size64)) return err(VFS_ERR_INVAL);
     if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
-    if (size64 > SYSCALL_PATH_MAX) return err(VFS_ERR_INVAL);
+    if (size64 > SYSCALL_PATH_MAX || (usize)size64 != size64) return err(VFS_ERR_INVAL);
+    if (size64 && !validate_user_write_range(out_ptr, (usize)size64)) return err(VFS_ERR_INVAL);
     char target[SYSCALL_PATH_MAX];
     usize got = 0;
     vfs_status_t vs = vfs_readlink(path, target, (usize)size64, &got);
@@ -159,13 +160,13 @@ syscall_result_t rabbitbone_sys_create(u64 path_ptr, u64 data_ptr, u64 len64) {
     char path[SYSCALL_PATH_MAX];
     usize len = (usize)len64;
     if (!copy_path_arg(path_ptr, path) || (!data_ptr && len) || len64 > 65536u) return err(VFS_ERR_INVAL);
+    if (!sys_can_modify_parent(path)) return err(VFS_ERR_PERM);
     void *tmp = 0;
     if (len) {
         tmp = kmalloc(len);
         if (!tmp) return err(VFS_ERR_NOMEM);
         if (!copy_in_buf(tmp, data_ptr, len)) { kfree(tmp); return err(VFS_ERR_INVAL); }
     }
-    if (!sys_can_modify_parent(path)) { if (tmp) kfree(tmp); return err(VFS_ERR_PERM); }
     vfs_status_t vs = vfs_create(path, tmp, len);
     if (vs == VFS_OK) { rabbitbone_credinfo_t c; if (sys_current_cred(&c)) { (void)vfs_chown(path, c.euid, c.egid); (void)vfs_chmod(path, 0666u & ~c.umask); } }
     if (tmp) kfree(tmp);
@@ -343,7 +344,7 @@ syscall_result_t rabbitbone_sys_fdatasync(u64 handle) {
 
 syscall_result_t rabbitbone_sys_statvfs(u64 path_ptr, u64 out_ptr) {
     char path[SYSCALL_PATH_MAX];
-    if (!copy_path_arg(path_ptr, path) || !out_ptr) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || !validate_user_write_range(out_ptr, sizeof(rabbitbone_statvfs_t))) return err(VFS_ERR_INVAL);
     if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_statvfs_t st;
     vfs_status_t vs = vfs_statvfs(path, &st);
@@ -373,7 +374,7 @@ syscall_result_t rabbitbone_sys_getpid(void) {
 }
 
 syscall_result_t rabbitbone_sys_procinfo(u64 pid64, u64 out_ptr) {
-    if (!out_ptr || pid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    if (pid64 > 0xffffffffull || !validate_user_write_range(out_ptr, sizeof(process_info_t))) return err(VFS_ERR_INVAL);
     process_info_t info;
     u32 pid = (u32)pid64;
     if (process_user_active()) {

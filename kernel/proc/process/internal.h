@@ -20,6 +20,7 @@
 #include <rabbitbone/panic.h>
 #include <rabbitbone/path.h>
 #include <rabbitbone/tty.h>
+#include <rabbitbone/spinlock.h>
 
 #define USER_IMAGE_BASE      ELF64_RABBITBONE_USER_IMAGE_BASE
 #define USER_SPACE_LIMIT     ELF64_RABBITBONE_USER_SPACE_LIMIT
@@ -133,6 +134,7 @@ typedef struct active_process {
     u64 signal_pending;
     u64 signal_blocked;
     bool signal_in_handler;
+    uptr signal_frame_addr;
     process_signal_action_t signal_actions[RABBITBONE_NSIG];
 } active_process_t;
 
@@ -201,6 +203,7 @@ static usize process_table_len;
 static usize process_table_next;
 static bool process_initialized;
 static user_shared_anon_object_t *shared_anon_objects;
+static spinlock_t shared_anon_lock;
 static u64 next_shared_anon_generation = 1;
 static u32 tty_foreground_pgrp;
 static u32 tty_session_id;

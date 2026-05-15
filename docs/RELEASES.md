@@ -2,10 +2,15 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
-## 0.0.3.1
 
-- Bumped the kernel version and syscall ABI to `0.0.3.1` / `0x00000301`.
-- Added GitHub community health files and repository contribution templates.
+## 0.0.3.2
+
+Fifth-pass hardening update over `0.0.3.0`.
+
+- Added VFS pin-count guards for destructive size mutations so `truncate`, `ftruncate`, `preallocate`, and `fpreallocate` fail with `busy` while another open file object or file-backed mapping still pins the inode.
+- Added mmap regression coverage for truncate/preallocate denial while a private file mapping is alive and release after `munmap`.
+- Tightened release/version metadata for `0.0.3.2` and bumped the syscall ABI to `0x00000302`.
+
 
 ## 0.0.3.0
 

@@ -136,6 +136,7 @@ syscall_result_t rabbitbone_sys_chdir(u64 path_ptr) {
 
 syscall_result_t rabbitbone_sys_getcwd(u64 out_ptr, u64 size64) {
     if (!out_ptr || size64 == 0 || size64 > SYSCALL_PATH_MAX || (usize)size64 != size64) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, (usize)size64)) return err(VFS_ERR_INVAL);
     char cwd[SYSCALL_PATH_MAX];
     if (!syscall_get_cwd(cwd, sizeof(cwd))) return err(VFS_ERR_INVAL);
     usize n = strlen(cwd) + 1u;
@@ -178,14 +179,14 @@ syscall_result_t rabbitbone_sys_sleep(u64 ticks) {
 }
 
 syscall_result_t rabbitbone_sys_schedinfo(u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(sched_stats_t))) return err(VFS_ERR_INVAL);
     sched_stats_t stats;
     scheduler_stats(&stats);
     return copy_out_buf(out_ptr, &stats, sizeof(stats)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
 syscall_result_t rabbitbone_sys_preemptinfo(u64 out_ptr) {
-    if (!out_ptr) return err(VFS_ERR_INVAL);
+    if (!validate_user_write_range(out_ptr, sizeof(rabbitbone_preemptinfo_t))) return err(VFS_ERR_INVAL);
     rabbitbone_preemptinfo_t info;
     if (!scheduler_preempt_info(&info)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);

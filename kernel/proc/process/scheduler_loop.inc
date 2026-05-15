@@ -89,6 +89,24 @@ static void dispose_terminal_slots_except(u32 keep_pid) {
     }
 }
 
+static void dispose_run_until_idle_children(u32 root_pid) {
+    if (!async_slots || !root_pid) return;
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+        active_process_t *p = &async_slots[i];
+        if (!p->active || p->result.pid == root_pid) continue;
+        if (p->parent_pid == root_pid || p->parent_pid == 1u || process_state_live((u32)p->state)) {
+            if (process_state_live((u32)p->state)) {
+                p->state = PROCESS_STATE_EXITED;
+                p->result.exit_code = 128 + (i32)RABBITBONE_SIGKILL;
+                p->result.finished_ticks = pit_ticks();
+                p->result.faulted = false;
+                record_process_result(&p->result, PROC_OK, p->result.started_ticks, p->result.finished_ticks);
+            }
+            release_process_slot(p);
+        }
+    }
+}
+
 static void enter_ready_slot(usize idx) {
     load_slot_to_current(idx);
     int sig_result = process_signal_deliver_pending(&current_proc, &current_proc.regs);
@@ -143,7 +161,7 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
         active_process_t *root = slot_by_pid(root_pid, 0);
         if (root && process_state_terminal((u32)root->state)) {
             found_root = true;
-            if (!any_live_process()) break;
+            break;
         } else if (!root) {
             break;
         }
@@ -168,6 +186,7 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
     if (root) {
         if (root_out) *root_out = root->result;
         last_result = root->result;
+        dispose_run_until_idle_children(root_pid);
         release_process_slot(root);
     }
     dispose_terminal_slots_except(root_pid);

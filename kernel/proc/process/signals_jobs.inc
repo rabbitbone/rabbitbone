@@ -10,6 +10,7 @@ static void process_signal_init(active_process_t *p) {
     p->signal_pending = 0;
     p->signal_blocked = 0;
     p->signal_in_handler = false;
+    p->signal_frame_addr = 0;
     memset(p->signal_actions, 0, sizeof(p->signal_actions));
 }
 
@@ -45,13 +46,48 @@ static bool process_group_exists(u32 pgid) {
     return false;
 }
 
+static bool process_group_exists_in_session(u32 pgid, u32 sid) {
+    if (!pgid || !sid) return false;
+    if (current_proc.active && current_proc.process_group == pgid && current_proc.session_id == sid) return true;
+    if (async_slots) {
+        for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
+            if (async_slots[i].active && async_slots[i].process_group == pgid && async_slots[i].session_id == sid) return true;
+        }
+    }
+    return false;
+}
+
+static bool process_signal_sender_can_target(const active_process_t *target, u32 sig) {
+    if (!target || !target->active || !signal_valid(sig)) return false;
+    if (!current_proc.active) return true;
+    if (target->result.pid == current_proc.result.pid) return true;
+    if (process_cred_is_root(&current_proc.cred)) return true;
+    if (sig == RABBITBONE_SIGCONT && current_proc.session_id && current_proc.session_id == target->session_id) return true;
+    if (current_proc.cred.euid == target->cred.uid || current_proc.cred.euid == target->cred.euid) return true;
+    if (current_proc.cred.uid == target->cred.uid || current_proc.cred.uid == target->cred.euid) return true;
+    return false;
+}
+
+static u64 signal_stop_pending_mask(void) {
+    return signal_bit(RABBITBONE_SIGSTOP) | signal_bit(RABBITBONE_SIGTSTP) |
+           signal_bit(RABBITBONE_SIGTTIN) | signal_bit(RABBITBONE_SIGTTOU);
+}
+
 static bool process_signal_queue_one(active_process_t *p, u32 sig) {
     if (!p || !p->active || !signal_valid(sig)) return false;
-    p->signal_pending |= signal_bit(sig);
-    if (sig == RABBITBONE_SIGCONT && p->state == PROCESS_STATE_STOPPED) {
+    if (sig == RABBITBONE_SIGCONT) {
+        p->signal_pending &= ~signal_stop_pending_mask();
+        if (p->state == PROCESS_STATE_STOPPED) {
+            p->state = PROCESS_STATE_READY;
+            p->signal_flags &= ~RABBITBONE_PROCESS_FLAG_STOPPED;
+        }
+    } else if (signal_stop_default(sig)) {
+        p->signal_pending &= ~signal_bit(RABBITBONE_SIGCONT);
+    } else if (sig == RABBITBONE_SIGKILL && p->state == PROCESS_STATE_STOPPED) {
         p->state = PROCESS_STATE_READY;
         p->signal_flags &= ~RABBITBONE_PROCESS_FLAG_STOPPED;
     }
+    p->signal_pending |= signal_bit(sig);
     if (current_proc.active && p == &current_proc) return sync_current_to_slot();
     return true;
 }
@@ -59,22 +95,50 @@ static bool process_signal_queue_one(active_process_t *p, u32 sig) {
 process_status_t process_signal_send(u32 pid, u32 sig) {
     if (!signal_valid(sig)) return PROC_ERR_INVAL;
     bool any = false;
+    bool denied = false;
     if (pid == 0) {
         u32 pgid = current_proc.active ? current_proc.process_group : 0;
         if (!pgid) return PROC_ERR_INVAL;
-        if (current_proc.active && current_proc.process_group == pgid) any |= process_signal_queue_one(&current_proc, sig);
-        if (async_slots) for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) if (async_slots[i].active && async_slots[i].process_group == pgid) any |= process_signal_queue_one(&async_slots[i], sig);
-        return any ? PROC_OK : PROC_ERR_INVAL;
+        if (current_proc.active && current_proc.process_group == pgid) {
+            if (process_signal_sender_can_target(&current_proc, sig)) any |= process_signal_queue_one(&current_proc, sig);
+            else denied = true;
+        }
+        if (async_slots) for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) if (async_slots[i].active && async_slots[i].process_group == pgid) {
+            if (process_signal_sender_can_target(&async_slots[i], sig)) any |= process_signal_queue_one(&async_slots[i], sig);
+            else denied = true;
+        }
+        if (any) return PROC_OK;
+        return denied ? PROC_ERR_FAULT : PROC_ERR_INVAL;
     }
     if ((i32)pid < 0) {
+        if (pid == 0xffffffffu) {
+            if (current_proc.active) {
+                if (process_signal_sender_can_target(&current_proc, sig)) any |= process_signal_queue_one(&current_proc, sig);
+                else denied = true;
+            }
+            if (async_slots) for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) if (async_slots[i].active) {
+                if (process_signal_sender_can_target(&async_slots[i], sig)) any |= process_signal_queue_one(&async_slots[i], sig);
+                else denied = true;
+            }
+            if (any) return PROC_OK;
+            return denied ? PROC_ERR_FAULT : PROC_ERR_INVAL;
+        }
         u32 pgid = (u32)(-(i32)pid);
         if (!pgid) return PROC_ERR_INVAL;
-        if (current_proc.active && current_proc.process_group == pgid) any |= process_signal_queue_one(&current_proc, sig);
-        if (async_slots) for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) if (async_slots[i].active && async_slots[i].process_group == pgid) any |= process_signal_queue_one(&async_slots[i], sig);
-        return any ? PROC_OK : PROC_ERR_INVAL;
+        if (current_proc.active && current_proc.process_group == pgid) {
+            if (process_signal_sender_can_target(&current_proc, sig)) any |= process_signal_queue_one(&current_proc, sig);
+            else denied = true;
+        }
+        if (async_slots) for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) if (async_slots[i].active && async_slots[i].process_group == pgid) {
+            if (process_signal_sender_can_target(&async_slots[i], sig)) any |= process_signal_queue_one(&async_slots[i], sig);
+            else denied = true;
+        }
+        if (any) return PROC_OK;
+        return denied ? PROC_ERR_FAULT : PROC_ERR_INVAL;
     }
     active_process_t *p = process_find_any(pid);
     if (!p) return PROC_ERR_INVAL;
+    if (!process_signal_sender_can_target(p, sig)) return PROC_ERR_FAULT;
     return process_signal_queue_one(p, sig) ? PROC_OK : PROC_ERR_INVAL;
 }
 
@@ -83,6 +147,7 @@ process_status_t process_signal_raise(u32 sig) { return current_proc.active ? pr
 process_status_t process_signal_set_action(u32 sig, const rabbitbone_sigaction_t *act, rabbitbone_sigaction_t *oldact) {
     if (!current_proc.active || !signal_valid(sig)) return PROC_ERR_INVAL;
     if ((sig == RABBITBONE_SIGKILL || sig == RABBITBONE_SIGSTOP) && act) return PROC_ERR_INVAL;
+    if (act && (act->flags & ~RABBITBONE_SA_RESTART) != 0) return PROC_ERR_INVAL;
     if (act && act->handler > 1) {
         if (!act->restorer) return PROC_ERR_INVAL;
         if (!user_addr_range_valid((uptr)act->handler, 1u) || !user_addr_range_valid((uptr)act->restorer, 1u)) return PROC_ERR_RANGE;
@@ -142,6 +207,7 @@ static bool process_signal_make_frame(active_process_t *p, cpu_regs_t *regs, u32
     p->signal_blocked |= a->mask | signal_bit(sig);
     p->signal_blocked = signal_sanitized_mask(p->signal_blocked);
     p->signal_in_handler = true;
+    p->signal_frame_addr = frame_addr;
     return true;
 }
 
@@ -159,7 +225,14 @@ static int process_signal_deliver_pending(active_process_t *p, cpu_regs_t *regs)
     process_signal_action_t *a = &p->signal_actions[sig];
     if (!signal_unmaskable(sig) && a->handler == RABBITBONE_SIG_IGN) return 1;
     if (!signal_unmaskable(sig) && a->handler > 1) {
-        return process_signal_make_frame(p, regs, sig, a) ? 1 : 0;
+        if (process_signal_make_frame(p, regs, sig, a)) return 1;
+        p->result.exit_code = 128 + (i32)sig;
+        p->result.faulted = true;
+        p->result.fault_vector = 0;
+        p->result.fault_rip = regs->rip;
+        finish_current(PROCESS_STATE_FAULTED, PROC_ERR_FAULT, regs);
+        wake_waiters(p->result.pid);
+        return 2;
     }
     if (signal_stop_default(sig)) {
         p->state = PROCESS_STATE_STOPPED;
@@ -184,13 +257,15 @@ static u64 signal_sanitize_user_rflags(u64 rflags) {
 }
 
 bool process_signal_return(uptr frame_addr, cpu_regs_t *regs) {
-    if (!current_proc.active || !regs || !frame_addr) return false;
+    if (!current_proc.active || !regs || !frame_addr || !current_proc.signal_in_handler) return false;
+    if (current_proc.signal_frame_addr == 0 || frame_addr != current_proc.signal_frame_addr) return false;
     process_signal_frame_t frame;
     if (!process_copy_from_user(&frame, frame_addr, sizeof(frame))) return false;
     if (frame.magic != PROCESS_SIGNAL_FRAME_MAGIC || frame.restorer == 0) return false;
     if (!user_addr_range_valid((uptr)frame.saved_regs.rip, 1u) || !user_addr_range_valid((uptr)frame.saved_regs.rsp, 1u)) return false;
     current_proc.signal_blocked = signal_sanitized_mask(frame.old_mask);
     current_proc.signal_in_handler = false;
+    current_proc.signal_frame_addr = 0;
     cpu_regs_t restored = frame.saved_regs;
     restored.cs = RABBITBONE_UCODE_SEL;
     restored.ss = RABBITBONE_UDATA_SEL;
@@ -226,7 +301,7 @@ process_status_t process_set_pgrp(u32 pid, u32 pgid) {
     if (p->session_id != current_proc.session_id) return PROC_ERR_INVAL;
     if (p->result.pid == p->session_id) return PROC_ERR_INVAL;
     if (pgid == 0) pgid = p->result.pid;
-    if (pgid != p->result.pid && !process_group_exists(pgid)) return PROC_ERR_INVAL;
+    if (pgid != p->result.pid && !process_group_exists_in_session(pgid, p->session_id)) return PROC_ERR_INVAL;
     p->process_group = pgid;
     if (p == &current_proc) return sync_current_to_slot() ? PROC_OK : PROC_ERR_INVAL;
     return PROC_OK;
@@ -251,7 +326,7 @@ process_status_t process_tcgetpgrp(u32 *out) {
 }
 
 process_status_t process_tcsetpgrp(u32 pgid) {
-    if (!current_proc.active || !pgid || !process_group_exists(pgid)) return PROC_ERR_INVAL;
+    if (!current_proc.active || !pgid || !process_group_exists_in_session(pgid, current_proc.session_id)) return PROC_ERR_INVAL;
     if (!process_cred_is_root(&current_proc.cred) && current_proc.session_id != tty_session_id && tty_session_id != 0) return PROC_ERR_INVAL;
     tty_session_id = current_proc.session_id;
     tty_foreground_pgrp = pgid;

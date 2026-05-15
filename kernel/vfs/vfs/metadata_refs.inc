@@ -262,22 +262,25 @@ void vfs_release_ref(const vfs_node_ref_t *ref) {
     if (release_mount) (void)mount_release_by_fs_id(ref->fs_id, ref->mount_generation);
 }
 
-bool vfs_ref_is_busy(const vfs_node_ref_t *ref) {
-    if (!ref || ref->inode == 0) return false;
-    if (ref->fs_id == 0 && strcmp(ref->path, "/") == 0) return false;
-    if (ref->fs_id == 0 || ref->mount_generation == 0) return false;
-    bool busy = false;
+u32 vfs_ref_pin_count(const vfs_node_ref_t *ref) {
+    if (!ref || ref->inode == 0) return 0;
+    if (ref->fs_id == 0 && strcmp(ref->path, "/") == 0) return 0;
+    if (ref->fs_id == 0 || ref->mount_generation == 0) return 0;
+    u32 count = 0;
     u64 flags = spin_lock_irqsave(&ref_pins_lock);
     for (usize i = 0; i < VFS_MAX_PINNED_REFS; ++i) {
         if (ref_pins[i].used && ref_pins[i].fs_id == ref->fs_id &&
-            ref_pins[i].mount_generation == ref->mount_generation && ref_pins[i].inode == ref->inode &&
-            ref_pins[i].refs != 0) {
-            busy = true;
+            ref_pins[i].mount_generation == ref->mount_generation && ref_pins[i].inode == ref->inode) {
+            count = ref_pins[i].refs;
             break;
         }
     }
     spin_unlock_irqrestore(&ref_pins_lock, flags);
-    return busy;
+    return count;
+}
+
+bool vfs_ref_is_busy(const vfs_node_ref_t *ref) {
+    return vfs_ref_pin_count(ref) != 0;
 }
 
 vfs_status_t vfs_stat_ref(const vfs_node_ref_t *ref, vfs_stat_t *out) {

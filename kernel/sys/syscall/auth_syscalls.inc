@@ -76,12 +76,14 @@ syscall_result_t rabbitbone_sys_cred(u64 op64, u64 arg0, u64 arg1, u64 value64) 
     u32 op = (u32)op64;
     if (op64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     if (op == RABBITBONE_CRED_OP_GET) {
+        if (!validate_user_write_range(arg0, sizeof(rabbitbone_credinfo_t))) return err(VFS_ERR_INVAL);
         rabbitbone_credinfo_t cred;
         if (!process_current_credentials(&cred)) return err(VFS_ERR_INVAL);
         cred.sudo_cached = auth_cache_valid(&cred) ? 1u : 0u;
         return copy_out_buf(arg0, &cred, sizeof(cred)) ? ok(0) : err(VFS_ERR_INVAL);
     }
     if (op == RABBITBONE_CRED_OP_USERINFO) {
+        if (!validate_user_write_range(arg0, sizeof(rabbitbone_userinfo_t))) return err(VFS_ERR_INVAL);
         if (value64 >= sizeof(auth_users) / sizeof(auth_users[0])) return err(VFS_ERR_NOENT);
         const sys_user_record_t *u = &auth_users[value64];
         rabbitbone_userinfo_t info;

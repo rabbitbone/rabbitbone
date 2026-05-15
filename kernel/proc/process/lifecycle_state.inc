@@ -33,6 +33,7 @@ void process_init(void) {
     if (!shared_anon_objects) shared_anon_objects = (user_shared_anon_object_t *)kmalloc(sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
     if (!shared_anon_objects) PANIC("process shared-anon object table allocation failed");
     memset(shared_anon_objects, 0, sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
+    spinlock_init(&shared_anon_lock);
     next_shared_anon_generation = 1;
     tty_foreground_pgrp = 0;
     tty_session_id = 0;
@@ -147,6 +148,38 @@ static bool process_cred_can_access(const rabbitbone_credinfo_t *cred, const vfs
     if (cred->euid == st->uid) bits = (mode >> 6) & 0007u;
     else if (cred->egid == st->gid) bits = (mode >> 3) & 0007u;
     return (bits & need) == need;
+}
+
+static bool process_cred_can_traverse_path(const rabbitbone_credinfo_t *cred, const char *path, bool include_leaf_dir) {
+    if (!cred || !path || path[0] != '/') return false;
+    vfs_stat_t st;
+    if (vfs_stat("/", &st) != VFS_OK || st.type != VFS_NODE_DIR || !process_cred_can_access(cred, &st, 01u)) return false;
+    if (path[1] == 0) return true;
+
+    char cur[VFS_PATH_MAX];
+    memset(cur, 0, sizeof(cur));
+    cur[0] = '/';
+    usize cur_len = 1u;
+    const char *p = path + 1u;
+    while (*p) {
+        const char *slash = strchr(p, '/');
+        usize comp_len = slash ? (usize)(slash - p) : strlen(p);
+        bool leaf = slash == 0;
+        if (comp_len == 0 || cur_len + comp_len + 1u >= sizeof(cur)) return false;
+        if (leaf && !include_leaf_dir) break;
+        if (cur_len > 1u) cur[cur_len++] = '/';
+        memcpy(cur + cur_len, p, comp_len);
+        cur_len += comp_len;
+        cur[cur_len] = 0;
+        if (vfs_stat(cur, &st) != VFS_OK || st.type != VFS_NODE_DIR || !process_cred_can_access(cred, &st, 01u)) return false;
+        if (leaf) break;
+        p = slash + 1u;
+    }
+    return true;
+}
+
+static bool process_cred_can_traverse_parent(const rabbitbone_credinfo_t *cred, const char *path) {
+    return process_cred_can_traverse_path(cred, path, false);
 }
 
 static u64 alloc_address_space_generation(void) {

@@ -11,7 +11,7 @@
 #define PT_ENTRIES 512u
 #define PTE_ADDR_MASK 0x000ffffffffff000ull
 #define VMM_KERNEL_DIRECT_LIMIT MEMORY_KERNEL_DIRECT_LIMIT
-#define VMM_ALLOWED_LEAF_FLAGS (VMM_WRITE | VMM_USER | VMM_WRITETHR | VMM_NOCACHE | VMM_GLOBAL | VMM_COW | VMM_NX)
+#define VMM_ALLOWED_LEAF_FLAGS (VMM_WRITE | VMM_USER | VMM_WRITETHR | VMM_NOCACHE | VMM_GLOBAL | VMM_COW | VMM_WRITECOMB | VMM_NX)
 #define VMM_ALLOWED_TABLE_FLAGS (VMM_WRITE | VMM_USER | VMM_WRITETHR | VMM_NOCACHE)
 #define VMM_CANONICAL_LOW_TOP 0x0000800000000000ull
 #define VMM_CANONICAL_HIGH_BASE 0xffff800000000000ull
@@ -47,6 +47,24 @@ static bool vmm_range_overlaps_kernel_image(uptr virt, usize bytes) {
     uptr end = 0;
     if (__builtin_add_overflow(virt, (uptr)bytes, &end)) return true;
     return vmm_ranges_overlap(virt, end, (uptr)__kernel_start, (uptr)__kernel_end);
+}
+
+
+static u64 vmm_leaf_pte_flags(u64 flags) {
+    /* VMM_WRITECOMB is a Rabbitbone software request.  cpu_init() programs
+       PAT entry 1 to WC when the CPU supports PAT, and x86 selects entry 1
+       with PWT=1, PCD=0, PAT=0 on 4 KiB pages.  Do not propagate the
+       software bit into the PTE; keep page-walk tables cacheable. */
+    if (flags & VMM_WRITECOMB) {
+        flags &= ~VMM_WRITECOMB;
+        flags |= VMM_WRITETHR;
+    }
+    return flags;
+}
+
+static u64 vmm_table_pte_flags(u64 flags) {
+    if (flags & VMM_WRITECOMB) flags &= ~(VMM_WRITECOMB | VMM_WRITETHR | VMM_NOCACHE);
+    return flags & VMM_ALLOWED_TABLE_FLAGS;
 }
 
 static bool vmm_leaf_flags_valid_for_space(const vmm_space_t *space, uptr virt, u64 flags) {

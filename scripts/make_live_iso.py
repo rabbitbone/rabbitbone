@@ -162,7 +162,7 @@ def fat_volume_label(volume_label: str) -> bytes:
     # ISO volume identifiers can be up to 32 bytes, while FAT volume labels are
     # a raw 11-byte directory field, not a normal 8.3 filename. Keep builds
     # deterministic and permissive by sanitizing the configured ISO id into a
-    # valid FAT label instead of rejecting names such as RABBITBONE_00215.
+    # valid FAT label instead of rejecting names such as RABBITBONE_00302.
     sanitized = []
     for c in volume_label.upper().replace("-", "_"):
         sanitized.append(c if c in FAT_LABEL_ALLOWED else "_")
@@ -385,7 +385,7 @@ class FatBuilder:
         boot[28:32] = le32(0)
         boot[36] = 0x80
         boot[38] = 0x29
-        boot[39:43] = le32(0xA00215EF)
+        boot[39:43] = le32(0xA00302EF)
         boot[43:54] = label
         boot[54:62] = b"FAT16   "
         boot[510:512] = b"\x55\xAA"
@@ -549,7 +549,7 @@ def main() -> int:
     ap.add_argument("--efi", required=True)
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--root", required=True)
-    ap.add_argument("--volume-id", default="RABBITBONE_00215")
+    ap.add_argument("--volume-id", default="RABBITBONE_00302")
     args = ap.parse_args()
 
     efi = read_regular_file(Path(args.efi), "EFI image")

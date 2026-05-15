@@ -130,6 +130,7 @@ static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_
 
 static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out) {
     if (!id_out || !shared_anon_objects || page_count == 0 || page_count > USER_MMAP_MAX_PAGES) return PROC_ERR_INVAL;
+    u64 flags = spin_lock_irqsave(&shared_anon_lock);
     for (u32 i = 0; i < USER_SHARED_ANON_OBJECTS; ++i) {
         user_shared_anon_object_t *obj = &shared_anon_objects[i];
         if (obj->used) continue;
@@ -140,45 +141,85 @@ static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out) {
         obj->generation = next_shared_anon_generation++;
         if (!obj->generation) obj->generation = next_shared_anon_generation++;
         *id_out = i;
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
         return PROC_OK;
     }
+    spin_unlock_irqrestore(&shared_anon_lock, flags);
     return PROC_ERR_NOMEM;
 }
 
 static bool shared_anon_retain(u32 id) {
     if (!shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return false;
+    bool ok = false;
+    u64 flags = spin_lock_irqsave(&shared_anon_lock);
     user_shared_anon_object_t *obj = &shared_anon_objects[id];
-    if (!obj->used || obj->refcount == 0 || obj->refcount == 0xffffffffu) return false;
-    ++obj->refcount;
-    return true;
+    if (obj->used && obj->refcount != 0 && obj->refcount != 0xffffffffu) {
+        ++obj->refcount;
+        ok = true;
+    }
+    spin_unlock_irqrestore(&shared_anon_lock, flags);
+    return ok;
 }
 
 static void shared_anon_release(u32 id) {
     if (!shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return;
+    uptr pages[USER_MMAP_MAX_PAGES];
+    u32 page_count = 0;
+    memset(pages, 0, sizeof(pages));
+    u64 flags = spin_lock_irqsave(&shared_anon_lock);
     user_shared_anon_object_t *obj = &shared_anon_objects[id];
-    if (!obj->used || obj->refcount == 0) return;
-    --obj->refcount;
-    if (obj->refcount != 0) return;
-    for (u32 i = 0; i < obj->page_count && i < USER_MMAP_MAX_PAGES; ++i) {
-        if (obj->pages[i]) {
-            (void)memory_unref_page((void *)obj->pages[i]);
-            obj->pages[i] = 0;
-        }
+    if (!obj->used || obj->refcount == 0) {
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        return;
     }
+    --obj->refcount;
+    if (obj->refcount != 0) {
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        return;
+    }
+    page_count = obj->page_count > USER_MMAP_MAX_PAGES ? USER_MMAP_MAX_PAGES : obj->page_count;
+    for (u32 i = 0; i < page_count; ++i) pages[i] = obj->pages[i];
     memset(obj, 0, sizeof(*obj));
+    spin_unlock_irqrestore(&shared_anon_lock, flags);
+    for (u32 i = 0; i < page_count; ++i) if (pages[i]) (void)memory_unref_page((void *)pages[i]);
 }
 
 static bool shared_anon_materialize(u32 id, u32 page_index, uptr *phys_out) {
-    if (!phys_out || !shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS) return false;
+    if (!phys_out || !shared_anon_objects || id >= USER_SHARED_ANON_OBJECTS || page_index >= USER_MMAP_MAX_PAGES) return false;
+    *phys_out = 0;
+    u64 flags = spin_lock_irqsave(&shared_anon_lock);
     user_shared_anon_object_t *obj = &shared_anon_objects[id];
-    if (!obj->used || page_index >= obj->page_count || page_index >= USER_MMAP_MAX_PAGES) return false;
-    if (!obj->pages[page_index]) {
-        void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
-        if (!page) return false;
-        memset(page, 0, PAGE_SIZE);
-        obj->pages[page_index] = (uptr)page;
+    if (!obj->used || page_index >= obj->page_count) {
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        return false;
     }
-    *phys_out = obj->pages[page_index];
+    if (obj->pages[page_index]) {
+        *phys_out = obj->pages[page_index];
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        return true;
+    }
+    spin_unlock_irqrestore(&shared_anon_lock, flags);
+
+    void *page = memory_alloc_page_below(USER_BACKING_PHYS_LIMIT);
+    if (!page) return false;
+    memset(page, 0, PAGE_SIZE);
+
+    flags = spin_lock_irqsave(&shared_anon_lock);
+    obj = &shared_anon_objects[id];
+    if (!obj->used || page_index >= obj->page_count) {
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        memory_free_page(page);
+        return false;
+    }
+    if (obj->pages[page_index]) {
+        *phys_out = obj->pages[page_index];
+        spin_unlock_irqrestore(&shared_anon_lock, flags);
+        memory_free_page(page);
+        return true;
+    }
+    obj->pages[page_index] = (uptr)page;
+    *phys_out = (uptr)page;
+    spin_unlock_irqrestore(&shared_anon_lock, flags);
     return true;
 }
 
@@ -741,12 +782,28 @@ process_status_t process_current_mprotect(uptr addr, usize length, u32 prot) {
     process_status_t st = process_split_vmas_for_range(&current_proc, start, end);
     if (st != PROC_OK) return st;
     u64 new_flags = process_flags_from_prot(prot);
+    struct protect_rollback { uptr virt; u64 old_flags; } rollback[USER_MMAP_MAX_PAGES];
+    usize rollback_count = 0;
     for (uptr v = start; v < end; v += PAGE_SIZE) {
         user_mapping_t *m = find_mapping(&current_proc, v);
         if (!m) continue;
+        if (rollback_count >= RABBITBONE_ARRAY_LEN(rollback)) return PROC_ERR_RANGE;
         u64 pte_flags = new_flags;
         if (m->final_flags & VMM_COW) pte_flags = (new_flags & ~VMM_WRITE) | VMM_COW;
-        if (!vmm_space_protect_4k(&current_proc.space, v, pte_flags)) return PROC_ERR_RANGE;
+        rollback[rollback_count].virt = v;
+        rollback[rollback_count].old_flags = m->final_flags;
+        ++rollback_count;
+        if (!vmm_space_protect_4k(&current_proc.space, v, pte_flags)) {
+            while (rollback_count) {
+                --rollback_count;
+                user_mapping_t *old = find_mapping(&current_proc, rollback[rollback_count].virt);
+                if (old) {
+                    (void)vmm_space_protect_4k(&current_proc.space, old->virt, rollback[rollback_count].old_flags);
+                    old->final_flags = rollback[rollback_count].old_flags;
+                }
+            }
+            return PROC_ERR_RANGE;
+        }
         m->final_flags = pte_flags;
     }
     for (usize i = 0; i < current_proc.vma_count; ++i) {

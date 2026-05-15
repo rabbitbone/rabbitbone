@@ -27,14 +27,15 @@ static int signal_job_tests(void) {
     if (au_setpgid((unsigned int)child, (unsigned int)child) != 0) return fail(120);
     if (au_getpgid((unsigned int)child) != child) return fail(121);
     if (au_tcsetpgrp((unsigned int)child) != 0 || au_tcgetpgrp() != child) return fail(122);
-    if (au_kill((unsigned int)child, RABBITBONE_SIGTERM) != 0) return fail(123);
+    if (au_kill(-(int)child, RABBITBONE_SIGTERM) != 0) return fail(123);
     au_procinfo_t info;
     au_memset(&info, 0, sizeof(info));
     if (au_wait((unsigned int)child, &info) != 0) return fail(124);
     if (info.exit_code != 128 + (int)RABBITBONE_SIGTERM || info.pgrp != (unsigned int)child) return fail(125);
     if (au_tcsetpgrp((unsigned int)pg) != 0) return fail(126);
     if (au_signal(RABBITBONE_SIGKILL, on_sigusr1) != (au_sighandler_t)(unsigned long)RABBITBONE_SIG_ERR) return fail(127);
-    if (au_kill(0x7ffffffeu, RABBITBONE_SIGTERM) >= 0) return fail(128);
+    if (au_kill(0x7ffffffe, RABBITBONE_SIGTERM) >= 0) return fail(128);
+    if (au_kill(-0x7ffffffe, RABBITBONE_SIGTERM) >= 0) return fail(129);
     return 0;
 }
 
