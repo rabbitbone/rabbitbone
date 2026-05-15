@@ -1,10 +1,10 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
     const char *path = "/tmp/user-writetest.txt";
-    const char payload[] = "userland wrote this through Aurora syscalls";
+    const char payload[] = "userland wrote this through Rabbitbone syscalls";
     au_unlink(path);
     if (au_create(path, payload, sizeof(payload) - 1) < 0) return 20;
     au_i64 h = au_open(path);

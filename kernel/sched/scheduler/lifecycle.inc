@@ -1,6 +1,6 @@
 static u64 sched_now(void) { return pit_ticks(); }
 
-#define SCHED_SNAPSHOT_MAGIC 0x4155524f52415343ull
+#define SCHED_SNAPSHOT_MAGIC 0x52424f4e52415343ull
 
 typedef struct scheduler_snapshot {
     u64 magic;

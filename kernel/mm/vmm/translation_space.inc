@@ -41,7 +41,7 @@ bool vmm_space_create_user(vmm_space_t *space) {
     pte_t *root = (pte_t *)memory_alloc_page_below(VMM_KERNEL_DIRECT_LIMIT);
     if (!root) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     memset(root, 0, PAGE_SIZE);
-    /* Aurora currently links the kernel in the low identity map. Keep the
+    /* Rabbitbone currently links the kernel in the low identity map. Keep the
        supervisor-only kernel entries present in user CR3 so interrupts and
        syscalls can enter the kernel safely, but never propagate user bits. */
     const pte_t *kernel_root = (const pte_t *)(uptr)kernel_space_obj.pml4_physical;

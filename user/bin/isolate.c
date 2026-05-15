@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static unsigned long long canary;
 static char local_buf[64];

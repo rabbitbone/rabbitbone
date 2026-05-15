@@ -30,7 +30,7 @@ static ext4_status_t write_cache_flush_slot_with_mount(ext4_mount_t *mnt, ext4_w
         tmp.partition_lba = slot->partition_lba;
         tmp.partition_sectors = slot->partition_sectors;
         tmp.block_size = slot->block_size;
-        tmp.blocks_count = slot->partition_sectors ? (slot->partition_sectors * 512u) / slot->block_size : ((u64)~0ull) / slot->block_size;
+        if (!ext4_partition_blocks_from_sectors(slot->partition_sectors, slot->block_size, &tmp.blocks_count)) return EXT4_ERR_RANGE;
         tmp.journal_ready = false;
         st = raw_write_block(&tmp, slot->block, slot->data);
     }

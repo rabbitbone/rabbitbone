@@ -115,9 +115,9 @@ serial_putc16:
     pop ax
     ret
 
-msg_stage1: .asciz "Aurora stage1: BIOS boot sector entered\r\n"
-msg_stage2_jump: .asciz "Aurora stage1: stage2 loaded, jumping\r\n"
-msg_disk_error: .asciz "Aurora stage1: INT13 extended read failed\r\n"
+msg_stage1: .asciz "Rabbitbone stage1: BIOS boot sector entered\r\n"
+msg_stage2_jump: .asciz "Rabbitbone stage1: stage2 loaded, jumping\r\n"
+msg_disk_error: .asciz "Rabbitbone stage1: INT13 extended read failed\r\n"
 boot_drive: .byte 0
 .align 4
 dap:

@@ -1,4 +1,4 @@
-#include <aurora/arch/gdt.h>
+#include <rabbitbone/arch/gdt.h>
 typedef struct sys_kctl_out {
     char *buf;
     usize cap;
@@ -36,7 +36,7 @@ static void kctl_log_line_writer(const char *line) {
 
 
 extern u64 arch_call_on_stack(u64 stack_top, void (*fn)(u64), u64 arg);
-extern void arch_call_on_stack_finish(u64 result) AURORA_NORETURN;
+extern void arch_call_on_stack_finish(u64 result) RABBITBONE_NORETURN;
 
 #define KCTL_KTEST_STACK_SIZE (64u * 1024u)
 #define KCTL_KTEST_TSS_STACK_SIZE (64u * 1024u)
@@ -108,7 +108,7 @@ static bool kctl_run_full_ktest_on_private_stack(void) {
 }
 
 static syscall_result_t kctl_copy_text(u64 out_ptr, u64 out_len64, const char *tmp, usize used) {
-    if (!out_ptr || out_len64 == 0 || out_len64 > AURORA_KCTL_OUT_MAX || (usize)out_len64 != out_len64) return err(VFS_ERR_INVAL);
+    if (!out_ptr || out_len64 == 0 || out_len64 > RABBITBONE_KCTL_OUT_MAX || (usize)out_len64 != out_len64) return err(VFS_ERR_INVAL);
     usize cap = (usize)out_len64;
     usize n = used < cap ? used + 1u : cap;
     if (n > cap) n = cap;
@@ -117,21 +117,21 @@ static syscall_result_t kctl_copy_text(u64 out_ptr, u64 out_len64, const char *t
 }
 
 static bool kctl_root_required(u32 op) {
-    return op == AURORA_KCTL_OP_KTEST || op == AURORA_KCTL_OP_LOGS || op == AURORA_KCTL_OP_PANIC ||
-           op == AURORA_KCTL_OP_REBOOT || op == AURORA_KCTL_OP_HALT;
+    return op == RABBITBONE_KCTL_OP_KTEST || op == RABBITBONE_KCTL_OP_LOGS || op == RABBITBONE_KCTL_OP_PANIC ||
+           op == RABBITBONE_KCTL_OP_REBOOT || op == RABBITBONE_KCTL_OP_HALT;
 }
 
-syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_ptr) {
-    if (op64 >= AURORA_KCTL_OP_MAX) return err(VFS_ERR_INVAL);
+syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_ptr) {
+    if (op64 >= RABBITBONE_KCTL_OP_MAX) return err(VFS_ERR_INVAL);
     u32 op = (u32)op64;
     if (kctl_root_required(op) && !sys_cred_root()) return err(VFS_ERR_PERM);
 
-    char tmp[AURORA_KCTL_OUT_MAX];
+    char tmp[RABBITBONE_KCTL_OUT_MAX];
     memset(tmp, 0, sizeof(tmp));
     sys_kctl_out_t out = { tmp, sizeof(tmp), 0 };
 
     switch (op) {
-        case AURORA_KCTL_OP_MEM: {
+        case RABBITBONE_KCTL_OP_MEM: {
             memory_stats_t st;
             memset(&st, 0, sizeof(st));
             memory_get_stats(&st);
@@ -143,7 +143,7 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_appendf(&out, "  free_frames=%llu\n", (unsigned long long)st.free_frames);
             break;
         }
-        case AURORA_KCTL_OP_HEAP: {
+        case RABBITBONE_KCTL_OP_HEAP: {
             kmem_stats_t st;
             memset(&st, 0, sizeof(st));
             kmem_get_stats(&st);
@@ -156,7 +156,7 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_appendf(&out, "  failed_allocations=%llu\n", (unsigned long long)st.failed_allocations);
             break;
         }
-        case AURORA_KCTL_OP_VMM: {
+        case RABBITBONE_KCTL_OP_VMM: {
             vmm_stats_t st;
             memset(&st, 0, sizeof(st));
             vmm_get_stats(&st);
@@ -174,7 +174,7 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_appendf(&out, "  kernel_data_nx=%u\n", st.kernel_data_nx ? 1u : 0u);
             break;
         }
-        case AURORA_KCTL_OP_KTEST: {
+        case RABBITBONE_KCTL_OP_KTEST: {
             bool isolated = false;
             bool need_isolation = process_user_active() || process_async_scheduler_active();
             if (need_isolation) {
@@ -200,17 +200,17 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             kctl_appendf(&out, "  skipped=%u\n", totals.skipped);
             break;
         }
-        case AURORA_KCTL_OP_LOGS: {
+        case RABBITBONE_KCTL_OP_LOGS: {
             kctl_append_raw(&out, "logs:\n");
             kctl_log_target = &out;
             log_dump_ring(kctl_log_line_writer);
             kctl_log_target = 0;
             break;
         }
-        case AURORA_KCTL_OP_DISKS:
-        case AURORA_KCTL_OP_BLK: {
+        case RABBITBONE_KCTL_OP_DISKS:
+        case RABBITBONE_KCTL_OP_BLK: {
             usize n = block_count();
-            kctl_appendf(&out, "%s: count=%llu\n", op == AURORA_KCTL_OP_BLK ? "blk" : "disks", (unsigned long long)n);
+            kctl_appendf(&out, "%s: count=%llu\n", op == RABBITBONE_KCTL_OP_BLK ? "blk" : "disks", (unsigned long long)n);
             for (usize i = 0; i < n; ++i) {
                 block_device_t *dev = block_get(i);
                 if (!dev) continue;
@@ -220,53 +220,53 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             }
             break;
         }
-        case AURORA_KCTL_OP_PCI: {
+        case RABBITBONE_KCTL_OP_PCI: {
             pci_format_devices(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
 
-        case AURORA_KCTL_OP_ACPI: {
+        case RABBITBONE_KCTL_OP_ACPI: {
             acpi_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_APIC: {
+        case RABBITBONE_KCTL_OP_APIC: {
             apic_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_HPET: {
+        case RABBITBONE_KCTL_OP_HPET: {
             hpet_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_TIMER: {
+        case RABBITBONE_KCTL_OP_TIMER: {
             timer_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_SMP: {
+        case RABBITBONE_KCTL_OP_SMP: {
             smp_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_SIGNALS: {
+        case RABBITBONE_KCTL_OP_SIGNALS: {
             process_format_signals(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_JOBS: {
+        case RABBITBONE_KCTL_OP_JOBS: {
             process_format_jobs(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_BOOT: {
+        case RABBITBONE_KCTL_OP_BOOT: {
             bootinfo_format_status(out.buf, out.cap);
             out.len = strnlen(out.buf, out.cap);
             break;
         }
-        case AURORA_KCTL_OP_EXT4: {
+        case RABBITBONE_KCTL_OP_EXT4: {
             vfs_statvfs_t sv;
             memset(&sv, 0, sizeof(sv));
             vfs_status_t vs = vfs_statvfs("/disk0", &sv);
@@ -284,18 +284,18 @@ syscall_result_t aurora_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_p
             }
             break;
         }
-        case AURORA_KCTL_OP_PANIC: {
+        case RABBITBONE_KCTL_OP_PANIC: {
             char msg[160];
             if (arg_ptr && copy_string_arg(arg_ptr, msg, sizeof(msg))) {
                 PANIC("userspace requested panic: %s", msg);
             }
             PANIC("userspace requested panic");
         }
-        case AURORA_KCTL_OP_REBOOT:
+        case RABBITBONE_KCTL_OP_REBOOT:
             KLOG(LOG_WARN, "kctl", "userspace requested reboot");
             cpu_reboot();
             break;
-        case AURORA_KCTL_OP_HALT:
+        case RABBITBONE_KCTL_OP_HALT:
             KLOG(LOG_WARN, "kctl", "userspace requested halt");
             cpu_halt_forever();
             break;

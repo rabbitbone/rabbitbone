@@ -33,6 +33,7 @@ bool scheduler_enqueue(const char *path, int argc, const char *const *argv, u32 
     inc_u32_sat(&total_enqueued);
     u32 jid = job->info.job_id;
     char log_path[SCHED_PATH_MAX];
+    memset(log_path, 0, sizeof(log_path));
     strncpy(log_path, job->info.path, sizeof(log_path) - 1u);
     spin_unlock_irqrestore(&scheduler_lock, flags);
     if (job_id_out) *job_id_out = jid;
@@ -49,6 +50,8 @@ static bool run_one(sched_job_t *job) {
     if (!job) return false;
     char path[SCHED_PATH_MAX];
     char argv_storage[SCHED_ARG_MAX][SCHED_PATH_MAX];
+    memset(path, 0, sizeof(path));
+    memset(argv_storage, 0, sizeof(argv_storage));
     int argc = 0;
     u32 job_id = 0;
 

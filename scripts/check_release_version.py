@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_H = ROOT / "include" / "aurora" / "version.h"
+VERSION_H = ROOT / "include" / "rabbitbone" / "version.h"
 README = ROOT / "README.md"
 STATUS = ROOT / "docs" / "STATUS.md"
 RELEASES = ROOT / "docs" / "RELEASES.md"
@@ -48,6 +48,34 @@ def require_contains(path: Path, needle: str) -> None:
         raise SystemExit(f"{rel} does not contain expected version marker: {needle}")
 
 
+def require_not_contains(path: Path, needle: str) -> None:
+    text = read(path)
+    if needle in text:
+        rel = path.relative_to(ROOT)
+        raise SystemExit(f"{rel} contains obsolete marker: {needle}")
+
+
+def require_no_obsolete_release_stage() -> None:
+    skipped_dirs = {".git", "build", "dist"}
+    skipped_suffixes = {".zip", ".png", ".iso", ".img", ".bin", ".elf", ".o", ".obj"}
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in skipped_dirs for part in path.relative_to(ROOT).parts):
+            continue
+        if path.suffix.lower() in skipped_suffixes:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        obsolete_compact = "stage" + "20.15"
+        obsolete_spaced = "stage " + "20.15"
+        if obsolete_compact in text or obsolete_spaced in text:
+            rel = path.relative_to(ROOT)
+            raise SystemExit(f"{rel} contains obsolete release-stage marker")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--print-version", action="store_true")
@@ -55,25 +83,27 @@ def main() -> int:
     args = parser.parse_args()
 
     version_h = read(VERSION_H)
-    major = define_u(version_h, "AURORA_VERSION_MAJOR")
-    minor = define_u(version_h, "AURORA_VERSION_MINOR")
-    patch = define_u(version_h, "AURORA_VERSION_PATCH")
-    fix = define_u(version_h, "AURORA_VERSION_FIX")
-    text = define_str(version_h, "AURORA_VERSION_TEXT")
-    abi = define_hex(version_h, "AURORA_SYSCALL_ABI_VERSION")
+    major = define_u(version_h, "RABBITBONE_VERSION_MAJOR")
+    minor = define_u(version_h, "RABBITBONE_VERSION_MINOR")
+    patch = define_u(version_h, "RABBITBONE_VERSION_PATCH")
+    fix = define_u(version_h, "RABBITBONE_VERSION_FIX")
+    text = define_str(version_h, "RABBITBONE_VERSION_TEXT")
+    abi = define_hex(version_h, "RABBITBONE_SYSCALL_ABI_VERSION")
 
     expected = f"{major}.{minor}.{patch}.{fix}"
     if text != expected:
-        raise SystemExit(f"AURORA_VERSION_TEXT is {text}, expected {expected}")
+        raise SystemExit(f"RABBITBONE_VERSION_TEXT is {text}, expected {expected}")
 
     expected_abi = (patch << 8) | fix
     if abi != expected_abi:
-        raise SystemExit(f"AURORA_SYSCALL_ABI_VERSION is 0x{abi:08x}, expected 0x{expected_abi:08x}")
+        raise SystemExit(f"RABBITBONE_SYSCALL_ABI_VERSION is 0x{abi:08x}, expected 0x{expected_abi:08x}")
 
     require_contains(README, f"badge/version-{text}-")
     require_contains(README, f"The current release line is `{text}`.")
-    require_contains(STATUS, f"AuroraOS is currently at `{text}`.")
+    require_contains(STATUS, f"Rabbitbone is currently at `{text}`.")
     require_contains(RELEASES, f"## {text}")
+    require_contains(VERSION_H, '#define RABBITBONE_KTEST_TITLE RABBITBONE_VERSION_FULL " self-test"')
+    require_no_obsolete_release_stage()
 
     if args.github_output:
         output_name = os.environ.get("GITHUB_OUTPUT")

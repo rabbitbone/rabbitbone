@@ -1,5 +1,5 @@
-#include <aurora/mbr.h>
-#include <aurora/libc.h>
+#include <rabbitbone/mbr.h>
+#include <rabbitbone/libc.h>
 
 static u32 le32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }
 
@@ -14,7 +14,8 @@ bool mbr_parse_sector(const u8 sector[512], mbr_table_t *out) {
         out->part[i].type = p[4];
         out->part[i].lba_first = le32(p + 8);
         out->part[i].sector_count = le32(p + 12);
-        if (out->part[i].type == 0 && out->part[i].sector_count != 0) return false;
+        if (out->part[i].type == 0 && (out->part[i].lba_first != 0 || out->part[i].sector_count != 0)) return false;
+        if (out->part[i].type != 0 && out->part[i].sector_count == 0) return false;
     }
     return true;
 }

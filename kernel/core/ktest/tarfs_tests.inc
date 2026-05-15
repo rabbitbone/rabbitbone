@@ -9,6 +9,14 @@ static void tar_octal(char *dst, usize width, usize value) {
     }
 }
 
+static void tar_finalize_checksum(u8 *block) {
+    memset(block + 148, ' ', 8u);
+    usize sum = 0;
+    for (usize i = 0; i < 512u; ++i) sum += block[i];
+    tar_octal((char *)block + 148, 8u, sum);
+    block[155] = ' ';
+}
+
 static void tar_header_write(u8 *block, const char *name, const char *data, usize size) {
     memset(block, 0, 512u);
     strncpy((char *)block + 0, name, 99u);
@@ -17,14 +25,10 @@ static void tar_header_write(u8 *block, const char *name, const char *data, usiz
     tar_octal((char *)block + 116, 8u, 0u);
     tar_octal((char *)block + 124, 12u, size);
     tar_octal((char *)block + 136, 12u, 1u);
-    memset(block + 148, ' ', 8u);
     block[156] = '0';
     memcpy(block + 257, "ustar", 5u);
     memcpy(block + 263, "00", 2u);
-    usize sum = 0;
-    for (usize i = 0; i < 512u; ++i) sum += block[i];
-    tar_octal((char *)block + 148, 8u, sum);
-    block[155] = ' ';
+    tar_finalize_checksum(block);
     memcpy(block + 512u, data, size);
 }
 
@@ -75,6 +79,36 @@ static void test_tarfs_module(void) {
         skip("tarfs malformed image tests");
         skip("tarfs malformed image tests");
     }
+
+    u8 *conflict = (u8 *)kcalloc(1, 4096u);
+    if (conflict) {
+        tar_header_write(conflict, "conflict", "x", 1u);
+        tar_header_write(conflict + 1024u, "conflict/child.txt", "y", 1u);
+        check(tarfs_open(conflict, 4096u) == 0, "tarfs rejects file/directory prefix conflicts");
+        memset(conflict, 0, 4096u);
+        tar_header_write(conflict, "dir", "x", 1u);
+        conflict[156] = '5';
+        tar_finalize_checksum(conflict);
+        check(tarfs_open(conflict, 2048u) == 0, "tarfs rejects directory entries with payload data");
+        kfree(conflict);
+    } else {
+        skip("tarfs prefix conflict malformed image test");
+        skip("tarfs directory payload malformed image test");
+    }
+
+    tarfs_t *parent_fs = tarfs_open(image, 2048u);
+    tarfs_t *child_fs = tarfs_open(image, 2048u);
+    if (parent_fs && child_fs) {
+        bool mounted_parent = vfs_mount("/tar-parent", "tarfs", tarfs_ops(), parent_fs, false) == VFS_OK;
+        bool mounted_child = vfs_mount("/tar-parent/child", "tarfs", tarfs_ops(), child_fs, false) == VFS_OK;
+        check(mounted_parent && mounted_child && vfs_unmount("/tar-parent") == VFS_ERR_NOTEMPTY, "vfs rejects unmount while child mount is active");
+        if (mounted_child) (void)vfs_unmount("/tar-parent/child");
+        if (mounted_parent) (void)vfs_unmount("/tar-parent");
+    } else {
+        skip("vfs nested mount unmount guard");
+    }
+    if (parent_fs) tarfs_destroy(parent_fs);
+    if (child_fs) tarfs_destroy(child_fs);
     kfree(image);
     suite_end();
 }

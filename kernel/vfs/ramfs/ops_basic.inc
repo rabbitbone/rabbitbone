@@ -7,6 +7,7 @@ vfs_status_t ramfs_add_dir(ramfs_t *fs, const char *path) {
     vfs_status_t st = resolve_parent(fs, path, &parent, leaf, sizeof(leaf));
     if (st != VFS_OK) { spin_unlock_irqrestore(&fs->lock, flags); return st; }
     if (find_child(parent, leaf)) { spin_unlock_irqrestore(&fs->lock, flags); return VFS_ERR_EXIST; }
+    if (!parent->obj || parent->obj->nlink == 0xffffffffu) { spin_unlock_irqrestore(&fs->lock, flags); return VFS_ERR_NOSPC; }
     ramfs_node_t *n = dentry_create(fs, leaf, VFS_NODE_DIR);
     if (!n) { spin_unlock_irqrestore(&fs->lock, flags); return VFS_ERR_NOSPC; }
     attach_child(parent, n);
@@ -87,6 +88,7 @@ static vfs_status_t op_lstat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out
 }
 
 static vfs_status_t op_stat_inode(vfs_mount_t *mnt, u32 ino, vfs_stat_t *out) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     ramfs_node_t *n = node_find_inode(fs->root, ino);
@@ -119,6 +121,8 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
 }
 
 static vfs_status_t op_read_inode(vfs_mount_t *mnt, u32 ino, u64 offset, void *buffer, usize size, usize *read_out) {
+    if (read_out) *read_out = 0;
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     vfs_status_t st = read_node(node_find_inode(fs->root, ino), offset, buffer, size, read_out);
@@ -137,6 +141,7 @@ static vfs_status_t write_node(ramfs_t *fs, ramfs_node_t *n, u64 offset, const v
     usize off = (usize)offset;
     usize end = off + size;
     if (end < off || end > RAMFS_MAX_FILE_SIZE) return VFS_ERR_INVAL;
+    usize old_size = n->obj->size;
     if (end > n->obj->capacity) {
         usize cap = n->obj->capacity ? n->obj->capacity : 64u;
         while (cap < end) {
@@ -156,6 +161,7 @@ static vfs_status_t write_node(ramfs_t *fs, ramfs_node_t *n, u64 offset, const v
         fs->bytes_used += delta;
         n->obj->capacity = cap;
     }
+    if (off > old_size && n->obj->data) memset(n->obj->data + old_size, 0, off - old_size);
     if (size) memcpy(n->obj->data + off, buffer, size);
     if (end > n->obj->size) n->obj->size = end;
     if (written_out) *written_out = size;
@@ -171,6 +177,8 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
 }
 
 static vfs_status_t op_write_inode(vfs_mount_t *mnt, u32 ino, u64 offset, const void *buffer, usize size, usize *written_out) {
+    if (written_out) *written_out = 0;
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     vfs_status_t st = write_node(fs, node_find_inode(fs->root, ino), offset, buffer, size, written_out);
@@ -203,6 +211,7 @@ static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn 
 }
 
 static vfs_status_t op_list_inode(vfs_mount_t *mnt, u32 ino, vfs_dir_iter_fn fn, void *ctx) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     vfs_status_t st = list_node(node_find_inode(fs->root, ino), fn, ctx);
@@ -233,6 +242,7 @@ static vfs_status_t op_symlink(vfs_mount_t *mnt, const char *target, const char 
     if (!target || !target[0]) return VFS_ERR_INVAL;
     usize len = strnlen(target, VFS_PATH_MAX);
     if (len == 0 || len >= VFS_PATH_MAX) return VFS_ERR_INVAL;
+    if (!rabbitbone_rust_path_no_traversal_check((const u8 *)target, VFS_PATH_MAX, true)) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     ramfs_node_t *parent = 0;
@@ -303,6 +313,7 @@ static vfs_status_t truncate_node(ramfs_t *fs, ramfs_node_t *n, u64 size64) {
     if (n->obj->type == VFS_NODE_DIR) return VFS_ERR_ISDIR;
     if (n->obj->type == VFS_NODE_SYMLINK) return VFS_ERR_UNSUPPORTED;
     usize size = (usize)size64;
+    usize old_size = n->obj->size;
     if (size > n->obj->capacity) {
         usize cap = n->obj->capacity ? n->obj->capacity : 64u;
         while (cap < size) {
@@ -321,8 +332,10 @@ static vfs_status_t truncate_node(ramfs_t *fs, ramfs_node_t *n, u64 size64) {
         n->obj->data = new_data;
         n->obj->capacity = cap;
         fs->bytes_used += delta;
-    } else if (size < n->obj->size && n->obj->data) {
-        memset(n->obj->data + size, 0, n->obj->size - size);
+    }
+    if (n->obj->data) {
+        if (size > old_size) memset(n->obj->data + old_size, 0, size - old_size);
+        else if (size < old_size) memset(n->obj->data + size, 0, old_size - size);
     }
     n->obj->size = size;
     return VFS_OK;
@@ -337,6 +350,7 @@ static vfs_status_t op_truncate(vfs_mount_t *mnt, const char *path, u64 size64) 
 }
 
 static vfs_status_t op_truncate_inode(vfs_mount_t *mnt, u32 ino, u64 size64) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     vfs_status_t st = truncate_node(fs, node_find_inode(fs->root, ino), size64);
@@ -367,6 +381,7 @@ static vfs_status_t op_chown(vfs_mount_t *mnt, const char *path, u32 uid, u32 gi
 
 static vfs_status_t op_sync_inode(vfs_mount_t *mnt, u32 ino, bool data_only) {
     (void)data_only;
+    if (ino == 0) return VFS_ERR_INVAL;
     ramfs_t *fs = (ramfs_t *)mnt->ctx;
     u64 flags = spin_lock_irqsave(&fs->lock);
     vfs_status_t st = node_find_inode(fs->root, ino) ? VFS_OK : VFS_ERR_NOENT;

@@ -64,6 +64,10 @@ static void test_tarfs_bounds() {
     bad_octal[124] = '9';
     host_tar_fix_checksum(bad_octal);
     require(tarfs_open(bad_octal.data(), bad_octal.size()) == nullptr, "tarfs rejects non-octal size field");
+    std::vector<u8> blank_size = img;
+    memset(blank_size.data() + 124, ' ', 12);
+    host_tar_fix_checksum(blank_size);
+    require(tarfs_open(blank_size.data(), blank_size.size()) == nullptr, "tarfs rejects size field without octal digits");
     std::vector<u8> bad_type = img;
     bad_type[156] = '2';
     host_tar_fix_checksum(bad_type);

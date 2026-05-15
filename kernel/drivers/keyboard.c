@@ -1,13 +1,14 @@
-#include <aurora/drivers.h>
-#include <aurora/arch/io.h>
-#include <aurora/log.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/spinlock.h>
 
 #define KBD_DATA 0x60
 #define KBD_STATUS 0x64
 #define QUEUE_SIZE 64u
+#define KBD_IRQ_DRAIN_LIMIT 32u
 
-static aurora_key_event_t queue[QUEUE_SIZE];
+static rabbitbone_key_event_t queue[QUEUE_SIZE];
 static u32 head, tail;
 static bool shift_down;
 static bool ctrl_down;
@@ -30,15 +31,15 @@ static const char shift_map[128] = {
 };
 
 static u32 mods(void) {
-    return (shift_down ? AURORA_KEY_MOD_SHIFT : 0u) |
-           (ctrl_down ? AURORA_KEY_MOD_CTRL : 0u) |
-           (alt_down ? AURORA_KEY_MOD_ALT : 0u);
+    return (shift_down ? RABBITBONE_KEY_MOD_SHIFT : 0u) |
+           (ctrl_down ? RABBITBONE_KEY_MOD_CTRL : 0u) |
+           (alt_down ? RABBITBONE_KEY_MOD_ALT : 0u);
 }
 
 static void enqueue_event(u32 code, u32 ch, u32 scancode) {
     u32 next = (tail + 1u) % QUEUE_SIZE;
     if (next == head) return;
-    aurora_key_event_t ev;
+    rabbitbone_key_event_t ev;
     ev.code = code;
     ev.mods = mods();
     ev.ch = ch;
@@ -48,11 +49,11 @@ static void enqueue_event(u32 code, u32 ch, u32 scancode) {
 }
 
 static void enqueue_char(char c, u32 scancode) {
-    u32 code = AURORA_KEY_CHAR;
-    if (c == '\n') code = AURORA_KEY_ENTER;
-    else if (c == '\b') code = AURORA_KEY_BACKSPACE;
-    else if (c == '\t') code = AURORA_KEY_TAB;
-    else if ((unsigned char)c == 27u) code = AURORA_KEY_ESC;
+    u32 code = RABBITBONE_KEY_CHAR;
+    if (c == '\n') code = RABBITBONE_KEY_ENTER;
+    else if (c == '\b') code = RABBITBONE_KEY_BACKSPACE;
+    else if (c == '\t') code = RABBITBONE_KEY_TAB;
+    else if ((unsigned char)c == 27u) code = RABBITBONE_KEY_ESC;
     enqueue_event(code, (u32)(unsigned char)c, scancode);
 }
 
@@ -66,10 +67,12 @@ void keyboard_init(void) {
     KLOG(LOG_INFO, "kbd", "ps/2 keyboard ready");
 }
 
-void keyboard_irq(void) {
-    if ((inb(KBD_STATUS) & 1) == 0) return;
-    u8 sc = inb(KBD_DATA);
+static void keyboard_process_scancode(u8 sc) {
     u64 flags = spin_lock_irqsave(&kbd_lock);
+    if (sc == 0xfa || sc == 0xfe) {
+        spin_unlock_irqrestore(&kbd_lock, flags);
+        return;
+    }
     if (sc == 0xe0) {
         extended = true;
         spin_unlock_irqrestore(&kbd_lock, flags);
@@ -94,15 +97,15 @@ void keyboard_irq(void) {
 
     if (was_extended) {
         switch (code) {
-            case 0x48: enqueue_event(AURORA_KEY_UP, 0, sc); break;
-            case 0x50: enqueue_event(AURORA_KEY_DOWN, 0, sc); break;
-            case 0x4b: enqueue_event(AURORA_KEY_LEFT, 0, sc); break;
-            case 0x4d: enqueue_event(AURORA_KEY_RIGHT, 0, sc); break;
-            case 0x53: enqueue_event(AURORA_KEY_DELETE, 0, sc); break;
-            case 0x47: enqueue_event(AURORA_KEY_HOME, 0, sc); break;
-            case 0x4f: enqueue_event(AURORA_KEY_END, 0, sc); break;
-            case 0x49: enqueue_event(AURORA_KEY_PAGEUP, 0, sc); break;
-            case 0x51: enqueue_event(AURORA_KEY_PAGEDOWN, 0, sc); break;
+            case 0x48: enqueue_event(RABBITBONE_KEY_UP, 0, sc); break;
+            case 0x50: enqueue_event(RABBITBONE_KEY_DOWN, 0, sc); break;
+            case 0x4b: enqueue_event(RABBITBONE_KEY_LEFT, 0, sc); break;
+            case 0x4d: enqueue_event(RABBITBONE_KEY_RIGHT, 0, sc); break;
+            case 0x53: enqueue_event(RABBITBONE_KEY_DELETE, 0, sc); break;
+            case 0x47: enqueue_event(RABBITBONE_KEY_HOME, 0, sc); break;
+            case 0x4f: enqueue_event(RABBITBONE_KEY_END, 0, sc); break;
+            case 0x49: enqueue_event(RABBITBONE_KEY_PAGEUP, 0, sc); break;
+            case 0x51: enqueue_event(RABBITBONE_KEY_PAGEDOWN, 0, sc); break;
             default: break;
         }
         spin_unlock_irqrestore(&kbd_lock, flags);
@@ -116,7 +119,14 @@ void keyboard_irq(void) {
     spin_unlock_irqrestore(&kbd_lock, flags);
 }
 
-bool keyboard_get_event(aurora_key_event_t *out) {
+void keyboard_irq(void) {
+    for (u32 drained = 0; drained < KBD_IRQ_DRAIN_LIMIT; ++drained) {
+        if ((inb(KBD_STATUS) & 1u) == 0) return;
+        keyboard_process_scancode(inb(KBD_DATA));
+    }
+}
+
+bool keyboard_get_event(rabbitbone_key_event_t *out) {
     u64 flags = spin_lock_irqsave(&kbd_lock);
     if (head == tail) { spin_unlock_irqrestore(&kbd_lock, flags); return false; }
     if (out) *out = queue[head];
@@ -125,7 +135,7 @@ bool keyboard_get_event(aurora_key_event_t *out) {
     return true;
 }
 
-bool keyboard_try_get_event(aurora_key_event_t *out) {
+bool keyboard_try_get_event(rabbitbone_key_event_t *out) {
     u64 flags = irq_save();
     for (u32 spin = 0; spin < 1024u; ++spin) {
         if (spin_try_lock(&kbd_lock)) {
@@ -145,7 +155,7 @@ bool keyboard_try_get_event(aurora_key_event_t *out) {
     return false;
 }
 
-bool keyboard_peek_event(aurora_key_event_t *out) {
+bool keyboard_peek_event(rabbitbone_key_event_t *out) {
     u64 flags = spin_lock_irqsave(&kbd_lock);
     if (head == tail) { spin_unlock_irqrestore(&kbd_lock, flags); return false; }
     if (out) *out = queue[head];
@@ -161,7 +171,7 @@ u32 keyboard_pending(void) {
 }
 
 bool keyboard_getc(char *out) {
-    aurora_key_event_t ev;
+    rabbitbone_key_event_t ev;
     while (keyboard_get_event(&ev)) {
         if (ev.ch) {
             if (out) *out = (char)ev.ch;

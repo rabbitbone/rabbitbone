@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -20,9 +21,21 @@ if a.multiple is not None and a.multiple <= 0:
     raise SystemExit('--multiple must be positive')
 
 try:
+    st = a.path.stat(follow_symlinks=False)
+except OSError as exc:
+    raise SystemExit(f'{a.path}: cannot stat: {exc}') from exc
+if stat.S_ISLNK(st.st_mode):
+    raise SystemExit(f'{a.path}: refusing to pad symlink')
+if not stat.S_ISREG(st.st_mode):
+    raise SystemExit(f'{a.path}: refusing to pad non-regular file')
+if st.st_size > MAX_PAD_BYTES:
+    raise SystemExit(f'{a.path}: input size {st.st_size} exceeds maximum {MAX_PAD_BYTES}')
+try:
     data = a.path.read_bytes()
 except OSError as exc:
     raise SystemExit(f'{a.path}: cannot read: {exc}') from exc
+if len(data) != st.st_size:
+    raise SystemExit(f'{a.path}: file changed while being read')
 
 if a.multiple is not None:
     size = ((len(data) + a.multiple - 1) // a.multiple) * a.multiple

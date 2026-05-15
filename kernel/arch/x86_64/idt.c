@@ -1,16 +1,16 @@
-#include <aurora/arch/idt.h>
-#include <aurora/arch/io.h>
-#include <aurora/arch/gdt.h>
-#include <aurora/console.h>
-#include <aurora/drivers.h>
-#include <aurora/log.h>
-#include <aurora/panic.h>
-#include <aurora/libc.h>
-#include <aurora/process.h>
-#include <aurora/syscall.h>
-#include <aurora/scheduler.h>
+#include <rabbitbone/arch/idt.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/arch/gdt.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/syscall.h>
+#include <rabbitbone/scheduler.h>
 
-typedef struct AURORA_PACKED idt_entry {
+typedef struct RABBITBONE_PACKED idt_entry {
     u16 offset_low;
     u16 selector;
     u8 ist;
@@ -20,7 +20,7 @@ typedef struct AURORA_PACKED idt_entry {
     u32 zero;
 } idt_entry_t;
 
-typedef struct AURORA_PACKED idt_ptr {
+typedef struct RABBITBONE_PACKED idt_ptr {
     u16 limit;
     u64 base;
 } idt_ptr_t;
@@ -77,6 +77,7 @@ static void default_exception(cpu_regs_t *regs) {
 
 static void irq_dispatch(cpu_regs_t *regs) {
     u8 irq = (u8)(regs->vector - 32);
+    if (pic_is_spurious_irq(irq)) return;
     bool do_preempt = false;
     if (irq == 0) { pit_irq(); do_preempt = scheduler_tick(regs); }
     else if (irq == 1) keyboard_irq();
@@ -90,12 +91,12 @@ static void syscall_int80(cpu_regs_t *regs) {
     const u64 no = regs->rax;
     const u64 a0 = regs->rdi;
 
-    if (no == AURORA_SYS_EXIT && regs_from_user(regs) && process_user_active()) {
+    if (no == RABBITBONE_SYS_EXIT && regs_from_user(regs) && process_user_active()) {
         process_exit_current_from_syscall(regs, (i32)a0);
         return;
     }
 
-    if (no == AURORA_SYS_SIGRETURN && regs_from_user(regs) && process_user_active()) {
+    if (no == RABBITBONE_SYS_SIGRETURN && regs_from_user(regs) && process_user_active()) {
         bool restored = process_signal_return((uptr)a0, regs);
         if (!restored) {
             regs->rax = (u64)-1ll;

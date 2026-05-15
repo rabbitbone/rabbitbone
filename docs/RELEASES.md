@@ -1,30 +1,43 @@
-# AuroraOS release notes
+# Rabbitbone release notes
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
+
+
+## 0.0.3.0
+
+- UEFI NXE handoff fix: the kernel now enables `EFER.NXE` before installing NX-marked page tables, matching the legacy BIOS stage2 long-mode setup and preventing early UEFI triple faults during `vmm_init`.
+- UEFI framebuffer console fix: the loader now passes GOP framebuffer metadata through bootinfo and the kernel maps it after `vmm_init`, so VMware's graphical console shows kernel/user shell output instead of remaining on the loader banner.
+- UEFI framebuffer glyph fix: lowercase ASCII glyphs with an empty top row are now rendered correctly instead of being replaced with `?`.
+### 0.0.2.15 fix notes
+
+- Fixed the VMware UEFI live configuration: the ISO CD-ROM now uses the real `ide1:0` device prefix instead of the invalid `dice0` typo.
+- Corrected the VMware ISO path to `../build/rabbitbone-live.iso`, because `.vmx` relative paths are resolved from the `vmware/` directory.
+- Added `scripts/check_vmware_configs.py` to keep UEFI live VMX examples from regressing.
+
+
+UEFI live ISO boot path over `0.0.2.14`.
+
+- Replaced the default Legacy BIOS raw-disk build with a UEFI live ISO target, `build/rabbitbone-live.iso`.
+- Added a freestanding `BOOTX64.EFI` loader that reads `RABBITBONE/KERNEL.BIN` and `RABBITBONE/ROOT.IMG` from the ISO EFI system partition, imports the UEFI memory map into bootinfo v2, exits boot services, and jumps to the Rabbitbone kernel at the existing low-memory entry point.
+- Added a self-contained Python ISO/FAT image generator, so the default live ISO does not depend on GRUB, Limine, xorriso, or mtools.
+- Added `rabbitbone-install --root-only` to build the live root disk image without BIOS stage sectors or a kernel payload.
+- Added a boot-module RAM disk block driver; the kernel now registers the UEFI-loaded root image as `ramdisk0`, probes its MBR Linux partition, and mounts the seeded EXT4 filesystem at `/disk0`.
+- Extended boot diagnostics with UEFI/live-ISO source flags and boot module reporting.
+- Kept the old BIOS disk path as an explicit `make legacy-image` regression target instead of the release artifact.
+- Bumped the kernel version and syscall ABI to `0.0.3.0` / `0x00000300`.
 
 
 ## 0.0.2.14
 
 Disk-backed userland and boot contract cleanup over `0.0.2.13`.
 
-- Removed `user_bins.o` from the default kernel release link; embedded userland is now gated behind `AURORA_EMBED_USERLAND=1` as a debug/fallback build option.
+- Removed `user_bins.o` from the default kernel release link; embedded userland is now gated behind `RABBITBONE_EMBED_USERLAND=1` as a debug/fallback build option.
 - Extended the image installer to seed `/bin`, `/sbin`, and `/etc` into the EXT4 partition and install all user ELF payloads there.
 - Changed the kernel boot path to mount the first valid EXT4 partition at `/disk0` and start `/disk0/sbin/init`.
 - Added compatibility symlinks from the boot ramfs `/bin` and `/sbin/init` to `/disk0` so existing absolute-path tests keep exercising the disk-backed files.
 - Updated PATH defaults to `/disk0/bin:/disk0/sbin:/bin:/sbin` in the seed filesystem, boot ramfs profile, and shell fallback.
 - Upgraded bootinfo to v2 with boot modules, root-device LBA/size, kernel source, flags, and command-line fields plus `boot` diagnostics.
 - Bumped the kernel version and syscall ABI to `0.0.2.14` / `0x0000020e`.
-
-## 0.0.2.13
-
-Signals, process groups, and terminal job-control groundwork over `0.0.2.12`.
-
-- Added kernel signal state: actions, masks, pending sets, default terminate/stop/ignore semantics, user handler delivery frames, and `sigreturn`.
-- Added process-group/session tracking plus terminal foreground process-group state for future job control.
-- Added syscalls and userlib wrappers for signal, sigaction, sigprocmask, sigpending, kill, raise, getpgrp/setpgid/getpgid, setsid/getsid, and tcgetpgrp/tcsetpgrp.
-- Extended process info snapshots and kctl/shell diagnostics with `signals` and `jobs`.
-- Extended `/bin/procctl` and ktest coverage for handlers, blocked/pending delivery, signal termination, process groups, and terminal foreground-group groundwork.
-- Bumped the kernel version and syscall ABI to `0.0.2.13` / `0x0000020d`.
 
 ## 0.0.2.12
 
@@ -131,7 +144,7 @@ Interpreter and shebang execution support update over `0.0.2.3`.
 - Enforces a bounded 127-byte shebang line, absolute interpreter paths, path-policy normalization, read access for the script, normal ELF validation and execute permission for the final interpreter, inherited envp handling, existing argv/env limits, and a two-hop recursion limit.
 - Added ktest coverage using existing `/bin/exectarget` and `/bin/execcheck` probes for no-argument shebangs, optional interpreter args, envp preservation, syscall `spawnv`, ring3 `execv`, relative/empty interpreters, and recursive loops.
 - Kept the low-memory kernel image within the BIOS-safe load window by reusing existing userland probes and moving syscall handle/pipe tables from static `.bss` to heap-backed initialization.
-- Relaxed `/bin/aursh` preflight checks so shell command execution and `spawn` can hand shebang files to the kernel instead of rejecting non-ELF script heads.
+- Relaxed `/bin/rbsh` preflight checks so shell command execution and `spawn` can hand shebang files to the kernel instead of rejecting non-ELF script heads.
 
 ## 0.0.2.3
 
@@ -151,7 +164,7 @@ Terminal and shell polish update over `0.0.2.1`.
 - Bumped the kernel version and syscall ABI to `0.0.2.2` / `0x00000202`.
 - Added terminal-control syscalls for scrolling, cursor movement, line clearing, full-screen clearing, and cursor visibility.
 - Extended the Rust syscall decoder/name table and userland wrappers for the new terminal ABI.
-- Split `/bin/aursh` line editing into its own checked-in fragment and routed shell input through the new terminal controls.
+- Split `/bin/rbsh` line editing into its own checked-in fragment and routed shell input through the new terminal controls.
 - Improved VGA/console/TTY cursor and screen handling and expanded `termcheck` coverage for the new calls.
 - Added Linguist hints so checked-in C `.inc` fragments are counted as C instead of inflating GitHub's C++ language share.
 
@@ -160,9 +173,9 @@ Terminal and shell polish update over `0.0.2.1`.
 Patch update over `0.0.2.0`.
 
 - Bumped the kernel version and syscall ABI to `0.0.2.1` / `0x00000201`.
-- Split `/bin/aursh` into smaller checked-in implementation fragments and taught the build to track those shell fragments as dependencies.
+- Split `/bin/rbsh` into smaller checked-in implementation fragments and taught the build to track those shell fragments as dependencies.
 - Made root directory listing merge the real root filesystem entries with mounted top-level entries without emitting duplicate names.
-- Kept the `0.0.2.x` storage/runtime surface, `/sbin/init`, `/bin/aursh`, EXT4 durability work, and validation checks from `0.0.2.0` intact.
+- Kept the `0.0.2.x` storage/runtime surface, `/sbin/init`, `/bin/rbsh`, EXT4 durability work, and validation checks from `0.0.2.0` intact.
 
 ## 0.0.2.0
 
@@ -174,7 +187,7 @@ First full `0.0.2.x` release line, compared with `0.0.1.40`.
 - Promoted the storage/runtime work landed after `0.0.1.40` into the `0.0.2.x` line: cwd-relative filesystem operations, userland wrappers, EXT4/VFS/ramfs path plumbing, and runtime bad-path/descriptor coverage.
 - Kept the app-storage surface from the `0.0.1.41` through `0.0.1.49` preparation window: `sync`, descriptor-backed `fsync`, `statvfs`, atomic `install_commit`, and `preallocate`.
 - Preserved the EXT4 durability work from the same window: ordered metadata journaling/recovery, data-before-metadata writeback, orphan cleanup, cache-coherent repair scans, metadata checksum validation, htree/free-counter/dirent repair-lite, extent-backed directories, and unwritten extent conversion.
-- Added the packaged `/sbin/init` and `/bin/aursh` userland shell path to the default image alongside the existing diagnostic programs.
+- Added the packaged `/sbin/init` and `/bin/rbsh` userland shell path to the default image alongside the existing diagnostic programs.
 - Split several large kernel, userland, test, and installer modules into smaller checked-in implementation fragments while keeping the public build targets and runtime behavior intact.
 - Extended split-source integrity, userland, boot-sector, stage2-layout, Rust-symbol, and release-version checks so the release can be validated from source.
 
@@ -251,9 +264,9 @@ Stage19.18 EXT4 atomic install/update and dirent repair.
 Stage19.17 syscall validator recovery and ABI boundary hardening.
 
 - Bumped the kernel version and syscall ABI to `0.0.1.40` / `0x00000128`.
-- Fixed the Rust syscall decoder self-test after the `sync`/`fsync`/`statvfs` ABI expansion by checking `AURORA_SYS_MAX` instead of the old `sync` syscall number as the unsupported boundary.
+- Fixed the Rust syscall decoder self-test after the `sync`/`fsync`/`statvfs` ABI expansion by checking `RABBITBONE_SYS_MAX` instead of the old `sync` syscall number as the unsupported boundary.
 - Added explicit Rust validator contracts for `sync`, `fsync`, and `statvfs`, keeping C and Rust syscall validation aligned.
-- Extended the Rust ABI generator to export `AURORA_SYS_MAX`, preventing future decoder boundary tests from drifting when syscall IDs are added.
+- Extended the Rust ABI generator to export `RABBITBONE_SYS_MAX`, preventing future decoder boundary tests from drifting when syscall IDs are added.
 - Reduced the diagnostic log ring from 40 to 32 lines to keep the freestanding kernel below the early-stack safety boundary.
 
 ## 0.0.1.39
@@ -272,7 +285,7 @@ Stage19.16 EXT4 app-storage syscall contract update.
 Stage19.15 EXT4 repair-lite and fault-injection contracts.
 
 - Bumped the kernel version and syscall ABI to `0.0.1.38` / `0x00000126`.
-- Added `ext4_repair_metadata()` for fsck-lite recovery of free block/inode counters, metadata checksums, and Aurora htree indexes.
+- Added `ext4_repair_metadata()` for fsck-lite recovery of free block/inode counters, metadata checksums, and Rabbitbone htree indexes.
 - Added htree index consistency checking and rebuild logic that scans directory records, drops a corrupt index block, rebuilds a sorted persistent index, and preserves lookups.
 - Added repair telemetry to fsck reports, EXT4 performance counters, and the `ext4` shell command.
 - Added runtime fault-injection contracts for corrupted htree metadata and corrupted free counters, followed by repair and post-repair validation.

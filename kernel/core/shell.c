@@ -1,22 +1,22 @@
-#include <aurora/console.h>
-#include <aurora/drivers.h>
-#include <aurora/arch/cpu.h>
-#include <aurora/log.h>
-#include <aurora/panic.h>
-#include <aurora/libc.h>
-#include <aurora/version.h>
-#include <aurora/block.h>
-#include <aurora/pci.h>
-#include <aurora/vfs.h>
-#include <aurora/acpi.h>
-#include <aurora/apic.h>
-#include <aurora/hpet.h>
-#include <aurora/smp.h>
-#include <aurora/timer.h>
-#include <aurora/process.h>
-#include <aurora/bootinfo.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/arch/cpu.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/version.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/hpet.h>
+#include <rabbitbone/smp.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/bootinfo.h>
 
-#ifdef AURORA_DEBUG_SHELL
+#ifdef RABBITBONE_DEBUG_SHELL
 #define DEBUG_SHELL_LINE_MAX 96u
 
 static void debug_log_writer(const char *line) { kprintf("%s", line); }
@@ -82,7 +82,7 @@ void shell_run(void) {
     char line[DEBUG_SHELL_LINE_MAX];
     usize len = 0;
     bool discarding = false;
-    kprintf("\n%s emergency debug shell. Type 'help'.\n# ", AURORA_CLI_BANNER);
+    kprintf("\n%s emergency debug shell. Type 'help'.\n# ", RABBITBONE_CLI_BANNER);
     for (;;) {
         char c;
         if (!keyboard_getc(&c)) {

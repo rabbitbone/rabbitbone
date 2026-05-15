@@ -1,4 +1,4 @@
-    const char *indexed_path = "/disk0/aurora-indexed-extents.bin";
+    const char *indexed_path = "/disk0/rabbitbone-indexed-extents.bin";
     (void)vfs_unlink(indexed_path);
     check(vfs_create(indexed_path, 0, 0) == VFS_OK, "VFS create empty ext4 indexed-extent candidate");
     bool indexed_writes_ok = true;
@@ -15,7 +15,7 @@
         ext4_inode_disk_t indexed_inode;
         u32 indexed_ino = 0;
         bool indexed_tree = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &indexed_mnt) == EXT4_OK &&
-                            ext4_lookup_path(&indexed_mnt, "/aurora-indexed-extents.bin", &indexed_inode, &indexed_ino) == EXT4_OK &&
+                            ext4_lookup_path(&indexed_mnt, "/rabbitbone-indexed-extents.bin", &indexed_inode, &indexed_ino) == EXT4_OK &&
                             indexed_ino != 0 && ext4_inode_uses_extents(&indexed_inode) &&
                             ext4_inode_extent_depth(&indexed_inode) == 1u &&
                             ext4_inode_extent_root_entries(&indexed_inode) == 1u;
@@ -42,7 +42,7 @@
         u32 indexed_demote_ino = 0;
         ext4_extent_report_t indexed_demote_extents;
         bool demoted_inline = ext4_mount_bounded(dev, part->lba_first, part->sector_count, &indexed_demote_mnt) == EXT4_OK &&
-                              ext4_lookup_path(&indexed_demote_mnt, "/aurora-indexed-extents.bin", &indexed_demote_inode, &indexed_demote_ino) == EXT4_OK &&
+                              ext4_lookup_path(&indexed_demote_mnt, "/rabbitbone-indexed-extents.bin", &indexed_demote_inode, &indexed_demote_ino) == EXT4_OK &&
                               indexed_demote_ino != 0 &&
                               ext4_inspect_inode_extents(&indexed_demote_mnt, &indexed_demote_inode, &indexed_demote_extents) == EXT4_OK &&
                               indexed_demote_extents.uses_extents && indexed_demote_extents.depth == 0u &&

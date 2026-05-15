@@ -1,14 +1,14 @@
-#include <aurora/tty.h>
-#include <aurora/drivers.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/process.h>
-#include <aurora/libc.h>
-#include <aurora/spinlock.h>
-#include <aurora/arch/io.h>
+#include <rabbitbone/tty.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/spinlock.h>
+#include <rabbitbone/arch/io.h>
 
 #define TTY_MODE_SLOTS 32u
-#define TTY_DEFAULT_MODE (AURORA_TTY_MODE_CANON | AURORA_TTY_MODE_ECHO)
+#define TTY_DEFAULT_MODE (RABBITBONE_TTY_MODE_CANON | RABBITBONE_TTY_MODE_ECHO)
 
 typedef struct tty_mode_slot {
     bool used;
@@ -21,9 +21,9 @@ static u32 kernel_tty_mode = TTY_DEFAULT_MODE;
 static tty_mode_slot_t tty_modes[TTY_MODE_SLOTS];
 
 static bool tty_mode_valid(u32 mode) {
-    const u32 allowed = AURORA_TTY_MODE_RAW | AURORA_TTY_MODE_ECHO | AURORA_TTY_MODE_CANON;
+    const u32 allowed = RABBITBONE_TTY_MODE_RAW | RABBITBONE_TTY_MODE_ECHO | RABBITBONE_TTY_MODE_CANON;
     if (mode & ~allowed) return false;
-    if ((mode & AURORA_TTY_MODE_RAW) && (mode & AURORA_TTY_MODE_CANON)) return false;
+    if ((mode & RABBITBONE_TTY_MODE_RAW) && (mode & RABBITBONE_TTY_MODE_CANON)) return false;
     return true;
 }
 
@@ -63,6 +63,19 @@ u32 tty_get_mode(void) {
     return mode;
 }
 
+
+void tty_forget_pid(u32 pid) {
+    if (!pid) return;
+    u64 flags = spin_lock_irqsave(&tty_lock);
+    for (usize i = 0; i < TTY_MODE_SLOTS; ++i) {
+        if (tty_modes[i].used && tty_modes[i].pid == pid) {
+            memset(&tty_modes[i], 0, sizeof(tty_modes[i]));
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&tty_lock, flags);
+}
+
 bool tty_set_mode(u32 mode) {
     if (!tty_mode_valid(mode)) return false;
     u32 pid = current_tty_pid();
@@ -79,15 +92,17 @@ bool tty_set_mode(u32 mode) {
 }
 
 bool tty_read_char(char *out) {
-    aurora_key_event_t ev;
-    if (!keyboard_peek_event(&ev)) return false;
-    if (!ev.ch) return false;
-    if (!keyboard_get_event(&ev)) return false;
-    if (out) *out = (char)ev.ch;
-    return true;
+    console_flush();
+    rabbitbone_key_event_t ev;
+    while (keyboard_get_event(&ev)) {
+        if (!ev.ch) continue;
+        if (out) *out = (char)ev.ch;
+        return true;
+    }
+    return false;
 }
 
-bool tty_getinfo(aurora_ttyinfo_t *out) {
+bool tty_getinfo(rabbitbone_ttyinfo_t *out) {
     if (!out) return false;
     u32 rows = 0, cols = 0, row = 0, col = 0;
     vga_get_size(&rows, &cols);
@@ -103,9 +118,9 @@ bool tty_getinfo(aurora_ttyinfo_t *out) {
     return true;
 }
 
-static void tty_key_none(aurora_key_event_t *out) {
+static void tty_key_none(rabbitbone_key_event_t *out) {
     if (!out) return;
-    out->code = AURORA_KEY_NONE;
+    out->code = RABBITBONE_KEY_NONE;
     out->mods = 0;
     out->ch = 0;
     out->scancode = 0;
@@ -136,11 +151,15 @@ bool tty_clear(void) {
     return true;
 }
 
-bool tty_read_key(aurora_key_event_t *out, u32 flags) {
+bool tty_read_key(rabbitbone_key_event_t *out, u32 flags) {
+    console_flush();
     if (!out) return false;
-    if (flags & ~AURORA_TTY_READ_NONBLOCK) return false;
+    if (flags & ~RABBITBONE_TTY_READ_NONBLOCK) {
+        tty_key_none(out);
+        return false;
+    }
     if (keyboard_get_event(out)) return true;
-    if ((flags & AURORA_TTY_READ_NONBLOCK) || process_user_active()) {
+    if ((flags & RABBITBONE_TTY_READ_NONBLOCK) || process_user_active()) {
         tty_key_none(out);
         return true;
     }
@@ -153,15 +172,19 @@ bool tty_read_key(aurora_key_event_t *out, u32 flags) {
 }
 
 bool tty_selftest(void) {
-    aurora_ttyinfo_t info;
+    rabbitbone_ttyinfo_t info;
     if (!tty_getinfo(&info)) return false;
-    if (info.rows != 25u || info.cols != 80u) return false;
+    if (info.rows < 12u || info.cols < 40u || info.cursor_row >= info.rows || info.cursor_col >= info.cols) return false;
     u32 old = tty_get_mode();
-    if (!tty_set_mode(AURORA_TTY_MODE_RAW)) return false;
-    if (tty_get_mode() != AURORA_TTY_MODE_RAW) return false;
-    if (tty_set_mode(AURORA_TTY_MODE_RAW | AURORA_TTY_MODE_CANON)) return false;
+    if (!tty_set_mode(RABBITBONE_TTY_MODE_RAW)) return false;
+    if (tty_get_mode() != RABBITBONE_TTY_MODE_RAW) return false;
+    if (tty_set_mode(RABBITBONE_TTY_MODE_RAW | RABBITBONE_TTY_MODE_CANON)) return false;
     if (!tty_set_mode(old)) return false;
-    aurora_key_event_t ev;
-    if (!tty_read_key(&ev, AURORA_TTY_READ_NONBLOCK)) return false;
-    return ev.code == AURORA_KEY_NONE || ev.code == AURORA_KEY_CHAR || ev.code >= AURORA_KEY_UP;
+    u32 old_row = info.cursor_row;
+    u32 old_col = info.cursor_col;
+    if (!tty_set_cursor(info.rows - 1u, info.cols - 1u)) return false;
+    if (!tty_set_cursor(old_row < info.rows ? old_row : 0u, old_col < info.cols ? old_col : 0u)) return false;
+    rabbitbone_key_event_t ev;
+    if (!tty_read_key(&ev, RABBITBONE_TTY_READ_NONBLOCK)) return false;
+    return ev.code == RABBITBONE_KEY_NONE || ev.code == RABBITBONE_KEY_CHAR || ev.code >= RABBITBONE_KEY_UP;
 }

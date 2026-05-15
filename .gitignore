@@ -40,12 +40,13 @@ Cargo.lock
 /vmware/*.scoreboard
 /vmware/*.lck/
 /vmware/nvram
-/vmware/AuroraOS.vmx
-/vmware/aurora-legacy.vmx
+/vmware/Rabbitbone.vmx
+/vmware/rabbitbone-legacy.vmx
 
 # Keep hand-written VMware helpers
 !/vmware/Makefile
 !/vmware/*.example
+!/vmware/rabbitbone-uefi-live.vmx
 
 # Editor and OS files
 .vscode/

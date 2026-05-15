@@ -1,9 +1,9 @@
-#include <aurora/pci.h>
-#include <aurora/arch/io.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/console.h>
-#include <aurora/kmem.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/kmem.h>
 
 #define PCI_CONFIG_ADDRESS 0xcf8u
 #define PCI_CONFIG_DATA    0xcfcu
@@ -13,11 +13,16 @@ static pci_device_t *pci_devices;
 static usize pci_devices_count;
 static bool pci_scanned;
 
+static bool pci_cfg_valid(u8 dev, u8 func, u8 offset) {
+    return dev < 32u && func < 8u && offset <= 0xfcu;
+}
+
 static u32 pci_addr(u8 bus, u8 dev, u8 func, u8 offset) {
     return 0x80000000u | ((u32)bus << 16) | ((u32)dev << 11) | ((u32)func << 8) | ((u32)offset & 0xfcu);
 }
 
 u32 pci_config_read32(u8 bus, u8 dev, u8 func, u8 offset) {
+    if (!pci_cfg_valid(dev, func, offset)) return 0xffffffffu;
     outl(PCI_CONFIG_ADDRESS, pci_addr(bus, dev, func, offset));
     return inl(PCI_CONFIG_DATA);
 }
@@ -33,11 +38,13 @@ u8 pci_config_read8(u8 bus, u8 dev, u8 func, u8 offset) {
 }
 
 void pci_config_write32(u8 bus, u8 dev, u8 func, u8 offset, u32 value) {
+    if (!pci_cfg_valid(dev, func, offset)) return;
     outl(PCI_CONFIG_ADDRESS, pci_addr(bus, dev, func, offset));
     outl(PCI_CONFIG_DATA, value);
 }
 
 void pci_config_write16(u8 bus, u8 dev, u8 func, u8 offset, u16 value) {
+    if (!pci_cfg_valid(dev, func, offset)) return;
     u32 aligned = offset & 0xfcu;
     u32 old = pci_config_read32(bus, dev, func, (u8)aligned);
     u32 shift = (u32)(offset & 2u) * 8u;
@@ -66,6 +73,7 @@ static void pci_decode_bar(pci_device_t *pd, u8 bar_index) {
     }
 
     u32 type = old & 0x6u;
+    if (type == 0x2u) return; /* 20-bit memory BARs are obsolete and unsupported. */
     u64 base = old & ~0xfull;
     u64 size_mask = mask & ~0xfull;
     bar->flags = (old & 0x8u) ? PCI_BAR_PREFETCH : 0;
@@ -78,7 +86,11 @@ static void pci_decode_bar(pci_device_t *pd, u8 bar_index) {
         size_mask |= (u64)mask_hi << 32;
         bar->flags |= PCI_BAR_MEM64;
     }
-    if (size_mask) bar->size = ~size_mask + 1u;
+    if (size_mask) {
+        u64 sz = (~size_mask) + 1ull;
+        if (sz == 0 || (base && sz > ~0ull - base)) return;
+        bar->size = sz;
+    }
     bar->base = base;
 }
 
@@ -97,7 +109,7 @@ static void pci_read_caps(pci_device_t *pd) {
 }
 
 static void pci_add_device(u8 bus, u8 dev, u8 func) {
-    if (!pci_devices || pci_devices_count >= PCI_MAX_DEVICES) return;
+    if (!pci_devices || pci_devices_count >= PCI_MAX_DEVICES || dev >= 32u || func >= 8u) return;
     u16 vendor = pci_config_read16(bus, dev, func, 0x00);
     if (vendor == PCI_VENDOR_INVALID) return;
     pci_device_t *pd = &pci_devices[pci_devices_count];

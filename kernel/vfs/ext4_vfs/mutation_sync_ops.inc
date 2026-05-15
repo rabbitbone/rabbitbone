@@ -49,6 +49,7 @@ static vfs_status_t op_write_inode(vfs_mount_t *mnt, u32 ino, u64 offset, const 
 }
 
 static vfs_status_t op_create(vfs_mount_t *mnt, const char *path, const void *data, usize size) {
+    if (size && !data) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_status_t st = ext4_create_file(&ctx->mount, path, data, size);
     if (st != EXT4_OK && ext4_vfs_repair_once(ctx, "create", st)) st = ext4_create_file(&ctx->mount, path, data, size);
@@ -98,6 +99,7 @@ static vfs_status_t op_truncate(vfs_mount_t *mnt, const char *path, u64 size) {
 }
 
 static vfs_status_t op_truncate_inode(vfs_mount_t *mnt, u32 ino, u64 size) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_status_t st = ext4_truncate_file_inode(&ctx->mount, ino, size);
     if (st != EXT4_OK && ext4_vfs_repair_once(ctx, "truncate_inode", st)) st = ext4_truncate_file_inode(&ctx->mount, ino, size);
@@ -119,6 +121,7 @@ static vfs_status_t op_preallocate(vfs_mount_t *mnt, const char *path, u64 size)
 }
 
 static vfs_status_t op_preallocate_inode(vfs_mount_t *mnt, u32 ino, u64 size) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_status_t st = ext4_preallocate_file_inode(&ctx->mount, ino, size);
     if (st != EXT4_OK && ext4_vfs_repair_once(ctx, "preallocate_inode", st)) st = ext4_preallocate_file_inode(&ctx->mount, ino, size);

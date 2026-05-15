@@ -261,10 +261,10 @@ ext4_status_t ext4_recover(ext4_mount_t *mnt, ext4_fsck_report_t *report) {
         if (!header_block) return EXT4_ERR_NO_MEMORY;
         ext4_status_t st = read_block(mnt, mnt->journal_first_block, header_block);
         if (st == EXT4_OK) {
-            aurora_ext4_journal_record_t jr;
+            rabbitbone_ext4_journal_record_t jr;
             memcpy(&jr, header_block, sizeof(jr));
             u32 want = journal_header_crc(&jr);
-            if (jr.magic == AURORA_EXT4_JOURNAL_MAGIC && jr.version == 1u && jr.state == 1u &&
+            if (jr.magic == RABBITBONE_EXT4_JOURNAL_MAGIC && jr.version == 1u && jr.state == 1u &&
                 jr.block_size == (u32)mnt->block_size && jr.header_crc == want && jr.target_block < mnt->blocks_count &&
                 !ext4_block_is_journal(mnt, jr.target_block)) {
                 u8 *payload = ext4_tmp_block(mnt);

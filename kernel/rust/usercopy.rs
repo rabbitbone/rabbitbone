@@ -42,12 +42,12 @@ fn copy_step(addr: u64, remaining: usize) -> Result<UserCopyStep, RangeError> {
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_user_range_check(addr: u64, size: usize) -> bool {
+pub extern "C" fn rabbitbone_rust_user_range_check(addr: u64, size: usize) -> bool {
     range_check(addr, size).is_ok()
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_user_copy_step(addr: u64, remaining: usize, out: *mut UserCopyStep) -> bool {
+pub extern "C" fn rabbitbone_rust_user_copy_step(addr: u64, remaining: usize, out: *mut UserCopyStep) -> bool {
     if out.is_null() { return false; }
     match copy_step(addr, remaining) {
         Ok(v) => { unsafe { *out = v; } true }
@@ -56,7 +56,7 @@ pub extern "C" fn aurora_rust_user_copy_step(addr: u64, remaining: usize, out: *
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_usercopy_selftest() -> bool {
+pub extern "C" fn rabbitbone_rust_usercopy_selftest() -> bool {
     if !range_check(USER_MIN, 1).is_ok() { return false; }
     if range_check(0, 1).is_ok() { return false; }
     if range_check(USER_MIN - 1, 1).is_ok() { return false; }

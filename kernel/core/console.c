@@ -1,8 +1,8 @@
-#include <aurora/console.h>
-#include <aurora/drivers.h>
-#include <aurora/libc.h>
-#include <aurora/spinlock.h>
-#include <aurora/abi.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/spinlock.h>
+#include <rabbitbone/abi.h>
 
 typedef enum ansi_state {
     ANSI_TEXT = 0,
@@ -20,8 +20,8 @@ typedef struct console_theme_def {
 } console_theme_def_t;
 
 static const console_theme_def_t themes[] = {
-    { AURORA_THEME_LEGACY, "legacy", 15, 1, 15, 4 },
-    { AURORA_THEME_BLACK,  "black",  15, 0, 15, 0 },
+    { RABBITBONE_THEME_LEGACY, "legacy", 15, 1, 15, 4 },
+    { RABBITBONE_THEME_BLACK,  "black",  15, 0, 15, 0 },
 };
 
 static spinlock_t console_lock;
@@ -29,10 +29,10 @@ static ansi_state_t ansi_state;
 static u32 ansi_args[4];
 static u32 ansi_argc;
 static bool ansi_arg_active;
-static u32 active_theme = AURORA_THEME_LEGACY;
+static u32 active_theme = RABBITBONE_THEME_LEGACY;
 
 static const console_theme_def_t *theme_by_id(u32 id) {
-    for (usize i = 0; i < AURORA_ARRAY_LEN(themes); ++i) {
+    for (usize i = 0; i < RABBITBONE_ARRAY_LEN(themes); ++i) {
         if (themes[i].id == id) return &themes[i];
     }
     return &themes[0];
@@ -112,9 +112,17 @@ static void ansi_finish(char cmd) {
             if (ansi_argc == 0 || ansi_args[0] == 0) apply_normal_theme_unlocked();
             for (u32 i = 0; i < ansi_argc; ++i) {
                 u32 a = ansi_args[i];
-                if (a == 0u) apply_normal_theme_unlocked();
-                else if (a >= 30u && a <= 37u) vga_set_color((u8)(a - 30u), theme->bg);
-                else if (a >= 40u && a <= 47u) vga_set_color(theme->fg, (u8)(a - 40u));
+                if (a == 0u) {
+                    apply_normal_theme_unlocked();
+                    continue;
+                }
+                u8 attr = vga_get_color();
+                u8 fg = (u8)(attr & 0x0fu);
+                u8 bg = (u8)((attr >> 4u) & 0x0fu);
+                if (a >= 30u && a <= 37u) vga_set_color((u8)(a - 30u), bg);
+                else if (a >= 40u && a <= 47u) vga_set_color(fg, (u8)(a - 40u));
+                else if (a == 39u) vga_set_color(theme->fg, bg);
+                else if (a == 49u) vga_set_color(fg, theme->bg);
             }
             break;
         default:
@@ -149,7 +157,7 @@ static void vga_ansi_putc(char c) {
                 return;
             }
             if (c == ';') {
-                if (ansi_argc < AURORA_ARRAY_LEN(ansi_args)) {
+                if (ansi_argc < RABBITBONE_ARRAY_LEN(ansi_args)) {
                     ++ansi_argc;
                     ansi_args[ansi_argc - 1u] = 0;
                     ansi_arg_active = false;
@@ -164,14 +172,16 @@ static void vga_ansi_putc(char c) {
 
 static void console_putc_unlocked(char c) {
     serial_putc(c);
+    vga_begin_update();
     vga_ansi_putc(c);
+    vga_end_update();
 }
 
 void console_init(void) {
     spinlock_init(&console_lock);
     vga_init();
     serial_init();
-    active_theme = AURORA_THEME_LEGACY;
+    active_theme = RABBITBONE_THEME_LEGACY;
     apply_normal_theme_unlocked();
     ansi_reset();
 }
@@ -185,13 +195,22 @@ void console_putc(char c) {
 void console_write_n(const char *s, usize n) {
     if (!s && n) return;
     u64 flags = spin_lock_irqsave(&console_lock);
-    for (usize i = 0; i < n; ++i) console_putc_unlocked(s[i]);
+    serial_write_n(s, n);
+    vga_begin_update();
+    for (usize i = 0; i < n; ++i) vga_ansi_putc(s[i]);
+    vga_end_update();
     spin_unlock_irqrestore(&console_lock, flags);
 }
 
 void console_write(const char *s) {
     if (!s) return;
     console_write_n(s, strlen(s));
+}
+
+void console_flush(void) {
+    u64 flags = spin_lock_irqsave(&console_lock);
+    vga_flush();
+    spin_unlock_irqrestore(&console_lock, flags);
 }
 
 void console_clear(void) {
@@ -246,7 +265,7 @@ u32 console_theme(void) {
 const char *console_theme_name(u32 id) { return theme_by_id(id)->name; }
 
 bool console_set_theme(u32 id) {
-    if (id >= AURORA_THEME_MAX) return false;
+    if (id >= RABBITBONE_THEME_MAX) return false;
     u64 flags = spin_lock_irqsave(&console_lock);
     active_theme = id;
     recolor_normal_theme_unlocked();

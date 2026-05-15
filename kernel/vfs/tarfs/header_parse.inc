@@ -9,6 +9,7 @@ static bool tar_octal(const char *s, usize n, usize *out) {
                 unsigned char t = (unsigned char)s[j];
                 if (t != 0 && t != ' ') return false;
             }
+            if (!saw_digit) return false;
             *out = v;
             return true;
         }
@@ -43,10 +44,20 @@ static bool block_empty(const u8 *p) {
     return true;
 }
 
-static bool tarfs_path_seen(const tarfs_t *fs, const char *path) {
-    if (!fs || !path) return false;
+static bool tarfs_path_is_strict_parent(const char *parent, const char *child) {
+    if (!parent || !child) return false;
+    usize plen = strlen(parent);
+    if (plen == 0 || strcmp(parent, "/") == 0) return false;
+    return strncmp(parent, child, plen) == 0 && child[plen] == '/';
+}
+
+static bool tarfs_path_conflicts(const tarfs_t *fs, const char *path, vfs_node_type_t type) {
+    if (!fs || !path) return true;
     for (usize i = 0; i < fs->count; ++i) {
-        if (strcmp(fs->entries[i].path, path) == 0) return true;
+        const tarfs_entry_t *e = &fs->entries[i];
+        if (strcmp(e->path, path) == 0) return true;
+        if (tarfs_path_is_strict_parent(e->path, path) && e->type != VFS_NODE_DIR) return true;
+        if (tarfs_path_is_strict_parent(path, e->path) && type != VFS_NODE_DIR) return true;
     }
     return false;
 }
@@ -95,7 +106,8 @@ tarfs_t *tarfs_open(const void *image, usize size) {
         if (!checksum_ok(h) || !tar_type_supported(h->typeflag)) { kfree(fs); return 0; }
         usize fsize = 0;
         if (!tar_octal(h->size, sizeof(h->size), &fsize)) { kfree(fs); return 0; }
-        usize aligned = AURORA_ALIGN_UP(fsize, 512u);
+        if (h->typeflag == '5' && fsize != 0) { kfree(fs); return 0; }
+        usize aligned = RABBITBONE_ALIGN_UP(fsize, 512u);
         if (aligned < fsize || off > size - 512u || aligned > size - off - 512u) { kfree(fs); return 0; }
         ++count;
         off += 512u + aligned;
@@ -110,15 +122,17 @@ tarfs_t *tarfs_open(const void *image, usize size) {
         if (!checksum_ok(h) || !tar_type_supported(h->typeflag)) { kfree(fs->entries); kfree(fs); return 0; }
         usize fsize = 0;
         if (!tar_octal(h->size, sizeof(h->size), &fsize)) { kfree(fs->entries); kfree(fs); return 0; }
-        usize aligned = AURORA_ALIGN_UP(fsize, 512u);
+        if (h->typeflag == '5' && fsize != 0) { kfree(fs->entries); kfree(fs); return 0; }
+        usize aligned = RABBITBONE_ALIGN_UP(fsize, 512u);
         if (aligned < fsize || off > size - 512u || aligned > size - off - 512u) { kfree(fs->entries); kfree(fs); return 0; }
         tarfs_entry_t *e = &fs->entries[fs->count];
         if (!header_path(h, e->path, sizeof(e->path))) { kfree(fs->entries); kfree(fs); return 0; }
-        if (tarfs_path_seen(fs, e->path)) { kfree(fs->entries); kfree(fs); return 0; }
+        e->type = h->typeflag == '5' ? VFS_NODE_DIR : VFS_NODE_FILE;
+        if (tarfs_path_conflicts(fs, e->path, e->type)) { kfree(fs->entries); kfree(fs); return 0; }
+        if (inode == 0xffffffffu) { kfree(fs->entries); kfree(fs); return 0; }
         ++fs->count;
         e->data = fs->image + off + 512u;
         e->size = fsize;
-        e->type = h->typeflag == '5' ? VFS_NODE_DIR : VFS_NODE_FILE;
         e->inode = inode++;
         off += 512u + aligned;
     }

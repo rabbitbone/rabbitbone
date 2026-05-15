@@ -1,10 +1,10 @@
-#include <aurora/task.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/drivers.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/task.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/spinlock.h>
 
 typedef struct task {
     task_info_t info;
@@ -20,14 +20,14 @@ static bool initialized;
 static spinlock_t task_lock;
 
 static u64 now_tick(void) {
-#if defined(AURORA_HOST_TEST)
+#if defined(RABBITBONE_HOST_TEST)
     return total_runs;
 #else
     return pit_ticks();
 #endif
 }
 
-#define TASK_SNAPSHOT_MAGIC 0x4155524f52415453ull
+#define TASK_SNAPSHOT_MAGIC 0x52424f4e52415453ull
 
 typedef struct task_snapshot {
     u64 magic;

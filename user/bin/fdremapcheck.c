@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static int same_bytes(const char *a, const char *b, au_usize n) {
     for (au_usize i = 0; i < n; ++i) if (a[i] != b[i]) return 0;
@@ -13,11 +13,11 @@ int main(int argc, char **argv) {
     if (au_write((au_i64)fds[1], msg, sizeof(msg) - 1u) != (au_i64)(sizeof(msg) - 1u)) return 11;
 
     const au_i64 target = 30;
-    if (au_dup2((au_i64)fds[0], target, AURORA_FD_CLOEXEC) != target) return 12;
+    if (au_dup2((au_i64)fds[0], target, RABBITBONE_FD_CLOEXEC) != target) return 12;
     au_fdinfo_t fi;
     au_memset(&fi, 0, sizeof(fi));
     if (au_fdinfo(target, &fi) != 0) return 13;
-    if (fi.handle != (unsigned int)target || !(fi.flags & AURORA_FD_CLOEXEC)) return 14;
+    if (fi.handle != (unsigned int)target || !(fi.flags & RABBITBONE_FD_CLOEXEC)) return 14;
 
     char buf[32];
     au_memset(buf, 0, sizeof(buf));

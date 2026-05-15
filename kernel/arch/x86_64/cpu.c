@@ -1,6 +1,7 @@
-#include <aurora/arch/cpu.h>
-#include <aurora/arch/io.h>
-#include <aurora/console.h>
+#include <rabbitbone/arch/cpu.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/panic.h>
 
 static inline u64 read_cr0(void) {
     u64 v;
@@ -37,8 +38,30 @@ static bool cpu_has_leaf(u32 leaf) {
     return max_basic >= leaf;
 }
 
+static bool cpu_has_extended_leaf(u32 leaf) {
+    u32 max_ext = 0;
+    cpu_cpuid(0x80000000u, 0, &max_ext, 0, 0, 0);
+    return max_ext >= leaf;
+}
+
+static bool cpu_has_nx(void) {
+    if (!cpu_has_extended_leaf(0x80000001u)) return false;
+    u32 d = 0;
+    cpu_cpuid(0x80000001u, 0, 0, 0, 0, &d);
+    return (d & (1u << 20)) != 0;
+}
+
+static void cpu_enable_nxe(void) {
+    if (!cpu_has_nx()) PANIC("cpu: NX bit is required but not supported");
+    const u64 efer_nxe = 1ull << 11;
+    u64 efer = cpu_read_msr(0xc0000080u);
+    if ((efer & efer_nxe) == 0) cpu_write_msr(0xc0000080u, efer | efer_nxe);
+}
+
 void cpu_init(void) {
     __asm__ volatile("cld");
+
+    cpu_enable_nxe();
 
     u64 cr0 = read_cr0();
     cr0 &= ~(1ull << 2);
@@ -129,7 +152,7 @@ void cpu_reboot(void) {
     cpu_halt_forever();
 }
 
-AURORA_NORETURN void cpu_halt_forever(void) {
+RABBITBONE_NORETURN void cpu_halt_forever(void) {
     cpu_cli();
     for (;;) cpu_hlt();
 }

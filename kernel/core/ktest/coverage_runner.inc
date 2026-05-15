@@ -1,14 +1,14 @@
 static void test_coverage_contracts(void) {
     suite_begin("coverage/contracts/postconditions");
     bool syscall_names_ok = true;
-    for (u64 no = 0; no < AURORA_SYS_MAX; ++no) {
+    for (u64 no = 0; no < RABBITBONE_SYS_MAX; ++no) {
         if (strcmp(syscall_name(no), "unknown") == 0) syscall_names_ok = false;
     }
-    check(syscall_names_ok && strcmp(syscall_name(AURORA_SYS_MAX), "unknown") == 0, "all syscall IDs have stable Rust names");
-    check(aurora_rust_syscall_selftest(), "Rust syscall validator remains linked and callable");
-    check(aurora_rust_vfs_route_selftest(), "Rust VFS router remains linked and callable");
-    check(aurora_rust_path_policy_selftest(), "Rust path policy remains linked and callable");
-    check(aurora_rust_usercopy_selftest(), "Rust usercopy checker remains linked and callable");
+    check(syscall_names_ok && strcmp(syscall_name(RABBITBONE_SYS_MAX), "unknown") == 0, "all syscall IDs have stable Rust names");
+    check(rabbitbone_rust_syscall_selftest(), "Rust syscall validator remains linked and callable");
+    check(rabbitbone_rust_vfs_route_selftest(), "Rust VFS router remains linked and callable");
+    check(rabbitbone_rust_path_policy_selftest(), "Rust path policy remains linked and callable");
+    check(rabbitbone_rust_usercopy_selftest(), "Rust usercopy checker remains linked and callable");
     check(!process_user_active(), "no active user process left after userland tests");
     check(vmm_current_space() == vmm_kernel_space(), "kernel CR3 space restored after all userland tests");
     vmm_stats_t vs;
@@ -21,7 +21,9 @@ static void test_coverage_contracts(void) {
 
 bool ktest_run_all(void) {
     memset(&totals, 0, sizeof(totals));
-    kprintf("\n%s started\n", AURORA_KTEST_TITLE);
+    ktest_verbose_passes = false;
+    kprintf("\n%s started\n", RABBITBONE_KTEST_TITLE);
+    KLOG(LOG_INFO, "ktest", "%s started", RABBITBONE_KTEST_TITLE);
     u64 start = pit_ticks();
     test_libc_bitmap_ring_crc();
     test_boot_memory_vmm_heap();
@@ -34,10 +36,12 @@ bool ktest_run_all(void) {
     test_scheduler_contracts();
     test_coverage_contracts();
     u64 end = pit_ticks();
-    kprintf("\n%s finished: suites=%u passed=%u failed=%u skipped=%u ticks=%llu\n", AURORA_KTEST_TITLE,
+    kprintf("\n%s finished: suites=%u passed=%u failed=%u skipped=%u ticks=%llu\n", RABBITBONE_KTEST_TITLE,
             totals.suites, totals.passed, totals.failed, totals.skipped, (unsigned long long)(end - start));
-    if (totals.failed == 0) kprintf("KTEST_STATUS: PASS\n");
-    else kprintf("KTEST_STATUS: FAIL\n");
+    KLOG(totals.failed ? LOG_ERROR : LOG_INFO, "ktest", "%s finished: suites=%u passed=%u failed=%u skipped=%u ticks=%llu", RABBITBONE_KTEST_TITLE,
+         totals.suites, totals.passed, totals.failed, totals.skipped, (unsigned long long)(end - start));
+    if (totals.failed == 0) { kprintf("KTEST_STATUS: PASS\n"); KLOG(LOG_INFO, "ktest", "KTEST_STATUS: PASS"); }
+    else { kprintf("KTEST_STATUS: FAIL\n"); KLOG(LOG_ERROR, "ktest", "KTEST_STATUS: FAIL"); }
     return totals.failed == 0;
 }
 

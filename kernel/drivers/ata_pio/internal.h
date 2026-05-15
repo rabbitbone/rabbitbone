@@ -1,10 +1,10 @@
 #pragma once
 
-#include <aurora/block.h>
-#include <aurora/arch/io.h>
-#include <aurora/log.h>
-#include <aurora/libc.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/spinlock.h>
 
 #define ATA_PRIMARY_IO 0x1f0u
 #define ATA_PRIMARY_CTRL 0x3f6u

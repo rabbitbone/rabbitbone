@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 int main(int argc, char **argv) {
     (void)argc;

@@ -16,15 +16,15 @@ except Exception as exc:
     print(f'nm failed: {exc}', file=sys.stderr)
     raise SystemExit(1)
 required = [
-    'aurora_rust_syscall_dispatch',
-    'aurora_rust_syscall_selftest',
-    'aurora_rust_vfs_route',
-    'aurora_rust_vfs_route_selftest',
-    'aurora_rust_path_policy_check',
-    'aurora_rust_path_policy_selftest',
-    'aurora_rust_user_range_check',
-    'aurora_rust_user_copy_step',
-    'aurora_rust_usercopy_selftest',
+    'rabbitbone_rust_syscall_dispatch',
+    'rabbitbone_rust_syscall_selftest',
+    'rabbitbone_rust_vfs_route',
+    'rabbitbone_rust_vfs_route_selftest',
+    'rabbitbone_rust_path_policy_check',
+    'rabbitbone_rust_path_policy_selftest',
+    'rabbitbone_rust_user_range_check',
+    'rabbitbone_rust_user_copy_step',
+    'rabbitbone_rust_usercopy_selftest',
 ]
 seen = set()
 for line in out.splitlines():

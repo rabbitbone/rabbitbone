@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static int wait_for(unsigned int pid, int expected_exit) {
     au_procinfo_t info;

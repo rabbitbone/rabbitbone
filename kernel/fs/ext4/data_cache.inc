@@ -117,7 +117,7 @@ static ext4_status_t data_cache_flush_slot(ext4_mount_t *mnt, ext4_data_cache_sl
         tmp.partition_lba = slot->partition_lba;
         tmp.partition_sectors = slot->partition_sectors;
         tmp.block_size = slot->block_size;
-        tmp.blocks_count = slot->partition_sectors ? (slot->partition_sectors * 512u) / slot->block_size : ((u64)~0ull) / slot->block_size;
+        if (!ext4_partition_blocks_from_sectors(slot->partition_sectors, slot->block_size, &tmp.blocks_count)) return EXT4_ERR_RANGE;
         use = &tmp;
     }
     ext4_status_t st = raw_write_block(use, slot->block, slot->data);
@@ -135,6 +135,29 @@ static ext4_status_t ext4_flush_data_cache_for_mount(ext4_mount_t *mnt) {
             slot->partition_sectors != mnt->partition_sectors || slot->block_size != (u32)mnt->block_size) continue;
         ext4_status_t st = data_cache_flush_slot(mnt, slot);
         if (st != EXT4_OK) return st;
+    }
+    return EXT4_OK;
+}
+
+static ext4_status_t ext4_flush_data_cache_for_inode(ext4_mount_t *mnt, const ext4_inode_disk_t *inode) {
+    if (!mnt || !inode) return EXT4_ERR_RANGE;
+    if (!g_ext4_data_cache || !g_ext4_data_cache_slots) return EXT4_OK;
+    if (mnt->block_size == 0) return EXT4_ERR_CORRUPT;
+    u64 size = ext4_inode_size(inode);
+    u64 blocks64 = div_round_up_u64(size, mnt->block_size);
+    if (blocks64 > 0xffffffffull) return EXT4_ERR_RANGE;
+    for (u64 logical64 = 0; logical64 < blocks64; ++logical64) {
+        u64 phys = 0;
+        ext4_status_t st = map_inode_block(mnt, inode, (u32)logical64, &phys);
+        if (st == EXT4_ERR_RANGE) continue;
+        if (st != EXT4_OK) return st;
+        for (u32 i = 0; i < g_ext4_data_cache_slots; ++i) {
+            ext4_data_cache_slot_t *slot = &g_ext4_data_cache[i];
+            if (data_cache_slot_matches(slot, mnt, phys) && slot->dirty) {
+                st = data_cache_flush_slot(mnt, slot);
+                if (st != EXT4_OK) return st;
+            }
+        }
     }
     return EXT4_OK;
 }

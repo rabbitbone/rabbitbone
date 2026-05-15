@@ -1,12 +1,13 @@
-#include <aurora/hpet.h>
-#include <aurora/acpi.h>
-#include <aurora/vmm.h>
-#include <aurora/libc.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/format.h>
-#include <aurora/types.h>
-#include <aurora/memory.h>
+#include <rabbitbone/hpet.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/format.h>
+#include <rabbitbone/types.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/math64.h>
 
 #define HPET_GCAP_ID 0x000u
 #define HPET_GEN_CONF 0x010u
@@ -32,6 +33,24 @@ static u64 hpet_read_counter_raw(void) {
     return hpet_read64(HPET_MAIN_COUNTER);
 }
 
+static bool hpet_map_mmio(u64 base, u64 size) {
+    if (base == 0 || size == 0 || base >= MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    u64 raw_end = 0;
+    if (__builtin_add_overflow(base, size, &raw_end)) return false;
+    if (raw_end > MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    u64 start = RABBITBONE_ALIGN_DOWN(base, PAGE_SIZE);
+    u64 end = 0;
+    if (!rabbitbone_align_up_u64_checked(raw_end, PAGE_SIZE, &end)) return false;
+    for (u64 p = start; p < end; p += PAGE_SIZE) {
+        uptr phys = 0;
+        u64 flags = 0;
+        if (!vmm_translate((uptr)p, &phys, &flags)) {
+            if (vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_GLOBAL) == false) return false;
+        }
+    }
+    return true;
+}
+
 void hpet_init(void) {
     memset(&hpet_info, 0, sizeof(hpet_info));
     hpet_mmio = 0;
@@ -42,14 +61,10 @@ void hpet_init(void) {
     }
     hpet_info.present = true;
     hpet_info.base = ai->hpet_address;
-    u64 start = AURORA_ALIGN_DOWN(hpet_info.base, PAGE_SIZE);
-    u64 end = AURORA_ALIGN_UP(hpet_info.base + 0x400u, PAGE_SIZE);
-    for (u64 p = start; p < end; p += PAGE_SIZE) {
-        uptr phys = 0;
-        u64 flags = 0;
-        if (!vmm_translate((uptr)p, &phys, &flags)) {
-            (void)vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_GLOBAL);
-        }
+    if (!hpet_map_mmio(hpet_info.base, 0x400u)) {
+        KLOG(LOG_WARN, "hpet", "invalid or unmappable base=%p; PIT fallback remains active", (void *)(uptr)hpet_info.base);
+        memset(&hpet_info, 0, sizeof(hpet_info));
+        return;
     }
     hpet_mmio = (volatile u8 *)(uptr)hpet_info.base;
     u64 cap = hpet_read64(HPET_GCAP_ID);
@@ -78,22 +93,24 @@ const hpet_info_t *hpet_get_info(void) { return &hpet_info; }
 bool hpet_now_ns(u64 *out_ns) {
     if (!out_ns || !hpet_info.enabled || hpet_info.period_fs == 0) return false;
     u64 counter = hpet_read_counter_raw();
-    *out_ns = (counter * (u64)hpet_info.period_fs) / 1000000ull;
+    u64 ns = rabbitbone_u64_mul_div_saturating(counter, hpet_info.period_fs, 1000000ull);
+    if (ns == ~0ull) return false;
+    *out_ns = ns;
     return true;
 }
 
 
 void hpet_format_status(char *out, usize out_len) {
     if (!out || out_len == 0) return;
-    aurora_buf_out_t bo;
-    aurora_buf_init(&bo, out, out_len);
+    rabbitbone_buf_out_t bo;
+    rabbitbone_buf_init(&bo, out, out_len);
     u64 now = 0;
     bool have_now = hpet_now_ns(&now);
-    aurora_buf_appendf(&bo, "hpet: present=%u enabled=%u base=%p period_fs=%u freq_hz=%llu bits=%u comparators=%u\n",
+    rabbitbone_buf_appendf(&bo, "hpet: present=%u enabled=%u base=%p period_fs=%u freq_hz=%llu bits=%u comparators=%u\n",
             hpet_info.present ? 1u : 0u, hpet_info.enabled ? 1u : 0u, (void *)(uptr)hpet_info.base,
             hpet_info.period_fs, (unsigned long long)hpet_info.frequency_hz, hpet_info.counter_bits,
             hpet_info.comparator_count);
-    aurora_buf_appendf(&bo, "  now_ns=%llu valid=%u\n", (unsigned long long)now, have_now ? 1u : 0u);
+    rabbitbone_buf_appendf(&bo, "  now_ns=%llu valid=%u\n", (unsigned long long)now, have_now ? 1u : 0u);
 }
 
 bool hpet_selftest(void) {

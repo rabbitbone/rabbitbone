@@ -41,7 +41,7 @@ static bool copy_env_vector(u64 env_ptr, u32 envc, char storage[PROCESS_ENV_MAX]
     return true;
 }
 
-syscall_result_t aurora_sys_spawn(u64 path_ptr) {
+syscall_result_t rabbitbone_sys_spawn(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
     const char *argv[] = { path };
@@ -56,7 +56,7 @@ syscall_result_t aurora_sys_spawn(u64 path_ptr) {
     return st == PROC_OK ? ok((i64)pid) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_spawnv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
+syscall_result_t rabbitbone_sys_spawnv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
@@ -76,7 +76,7 @@ syscall_result_t aurora_sys_spawnv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     return st == PROC_OK ? ok((i64)pid) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_exec(u64 path_ptr) {
+syscall_result_t rabbitbone_sys_exec(u64 path_ptr) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
@@ -85,7 +85,7 @@ syscall_result_t aurora_sys_exec(u64 path_ptr) {
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_execv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
+syscall_result_t rabbitbone_sys_execv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
@@ -99,7 +99,7 @@ syscall_result_t aurora_sys_execv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u64 envc64, u64 envp_ptr) {
+syscall_result_t rabbitbone_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u64 envc64, u64 envp_ptr) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr || envc64 > PROCESS_ENV_MAX || (envc64 && !envp_ptr)) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
@@ -118,7 +118,7 @@ syscall_result_t aurora_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u64 e
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_chdir(u64 path_ptr) {
+syscall_result_t rabbitbone_sys_chdir(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
     vfs_stat_t st;
@@ -128,7 +128,7 @@ syscall_result_t aurora_sys_chdir(u64 path_ptr) {
     return syscall_set_cwd(path) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_getcwd(u64 out_ptr, u64 size64) {
+syscall_result_t rabbitbone_sys_getcwd(u64 out_ptr, u64 size64) {
     if (!out_ptr || size64 == 0 || size64 > SYSCALL_PATH_MAX || (usize)size64 != size64) return err(VFS_ERR_INVAL);
     char cwd[SYSCALL_PATH_MAX];
     if (!syscall_get_cwd(cwd, sizeof(cwd))) return err(VFS_ERR_INVAL);
@@ -137,7 +137,7 @@ syscall_result_t aurora_sys_getcwd(u64 out_ptr, u64 size64) {
     return copy_out_buf(out_ptr, cwd, n) ? ok((i64)(n - 1u)) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_wait(u64 pid64, u64 out_ptr) {
+syscall_result_t rabbitbone_sys_wait(u64 pid64, u64 out_ptr) {
     if (!out_ptr || pid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     if (!validate_user_write_range(out_ptr, sizeof(process_info_t))) return err(VFS_ERR_INVAL);
     process_info_t info;
@@ -153,13 +153,13 @@ syscall_result_t aurora_sys_wait(u64 pid64, u64 out_ptr) {
 }
 
 
-syscall_result_t aurora_sys_yield(void) {
+syscall_result_t rabbitbone_sys_yield(void) {
     scheduler_note_yield();
     if (process_async_scheduler_active()) process_request_reschedule();
     return ok(0);
 }
 
-syscall_result_t aurora_sys_sleep(u64 ticks) {
+syscall_result_t rabbitbone_sys_sleep(u64 ticks) {
     if (ticks > 10000u) return err(VFS_ERR_INVAL);
     scheduler_note_sleep(ticks);
     if (process_async_scheduler_active()) {
@@ -171,16 +171,16 @@ syscall_result_t aurora_sys_sleep(u64 ticks) {
     return ok((i64)pit_ticks());
 }
 
-syscall_result_t aurora_sys_schedinfo(u64 out_ptr) {
+syscall_result_t rabbitbone_sys_schedinfo(u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
     sched_stats_t stats;
     scheduler_stats(&stats);
     return copy_out_buf(out_ptr, &stats, sizeof(stats)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_preemptinfo(u64 out_ptr) {
+syscall_result_t rabbitbone_sys_preemptinfo(u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
-    aurora_preemptinfo_t info;
+    rabbitbone_preemptinfo_t info;
     if (!scheduler_preempt_info(&info)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
 }

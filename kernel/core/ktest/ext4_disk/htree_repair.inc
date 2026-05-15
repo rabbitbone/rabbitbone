@@ -1,6 +1,6 @@
-    check(ktest_cleanup_disk_prefix("aurora-htree"), "cleanup old aurora-htree artifacts");
+    check(ktest_cleanup_disk_prefix("rabbitbone-htree"), "cleanup old rabbitbone-htree artifacts");
     char htree_dir[96];
-    ksnprintf(htree_dir, sizeof(htree_dir), "/disk0/aurora-htree");
+    ksnprintf(htree_dir, sizeof(htree_dir), "/disk0/rabbitbone-htree");
     const char *htree_raw_path = ktest_disk_raw_path(htree_dir);
     for (u32 i = 0; i < 20u; ++i) {
         char pbuf[128];

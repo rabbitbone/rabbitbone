@@ -41,10 +41,10 @@ static u32 htree_hash_name(const char *name, usize len) {
 }
 
 static u16 htree_capacity(ext4_mount_t *mnt) {
-    return (u16)((mnt->block_size - sizeof(aurora_htree_header_t)) / sizeof(aurora_htree_entry_t));
+    return (u16)((mnt->block_size - sizeof(rabbitbone_htree_header_t)) / sizeof(rabbitbone_htree_entry_t));
 }
 
-static u32 htree_checksum(ext4_mount_t *mnt, aurora_htree_header_t *hdr, aurora_htree_entry_t *entries) {
+static u32 htree_checksum(ext4_mount_t *mnt, rabbitbone_htree_header_t *hdr, rabbitbone_htree_entry_t *entries) {
     u32 saved = hdr->checksum;
     hdr->checksum = 0;
     u32 c = crc32(&mnt->sb.s_uuid, sizeof(mnt->sb.s_uuid));
@@ -54,14 +54,14 @@ static u32 htree_checksum(ext4_mount_t *mnt, aurora_htree_header_t *hdr, aurora_
     return c;
 }
 
-static ext4_status_t htree_load(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, u8 *block, aurora_htree_header_t **hdr_out, aurora_htree_entry_t **entries_out) {
+static ext4_status_t htree_load(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, u8 *block, rabbitbone_htree_header_t **hdr_out, rabbitbone_htree_entry_t **entries_out) {
     if (!mnt || !dir || !block || !hdr_out || !entries_out) return EXT4_ERR_RANGE;
     if ((le32(dir->i_flags) & EXT4_INDEX_FL) == 0 || le32(dir->i_file_acl_lo) == 0) return EXT4_ERR_NOT_FOUND;
     ext4_status_t st = read_block(mnt, le32(dir->i_file_acl_lo), block);
     if (st != EXT4_OK) return st;
-    aurora_htree_header_t *hdr = (aurora_htree_header_t *)block;
-    aurora_htree_entry_t *entries = (aurora_htree_entry_t *)(hdr + 1);
-    if (le32(hdr->magic) != AURORA_EXT4_HTREE_MAGIC || le16(hdr->version) != AURORA_EXT4_HTREE_VERSION || le16(hdr->entry_size) != sizeof(aurora_htree_entry_t)) return EXT4_ERR_CORRUPT;
+    rabbitbone_htree_header_t *hdr = (rabbitbone_htree_header_t *)block;
+    rabbitbone_htree_entry_t *entries = (rabbitbone_htree_entry_t *)(hdr + 1);
+    if (le32(hdr->magic) != RABBITBONE_EXT4_HTREE_MAGIC || le16(hdr->version) != RABBITBONE_EXT4_HTREE_VERSION || le16(hdr->entry_size) != sizeof(rabbitbone_htree_entry_t)) return EXT4_ERR_CORRUPT;
     if (le32(hdr->dir_ino) == 0) return EXT4_ERR_CORRUPT;
     if (le16(hdr->entries) > le16(hdr->max_entries) || le16(hdr->max_entries) > htree_capacity(mnt)) return EXT4_ERR_CORRUPT;
     if (hdr->checksum && hdr->checksum != htree_checksum(mnt, hdr, entries)) return EXT4_ERR_CORRUPT;
@@ -71,13 +71,13 @@ static ext4_status_t htree_load(ext4_mount_t *mnt, const ext4_inode_disk_t *dir,
 }
 
 static ext4_status_t htree_commit(ext4_mount_t *mnt, ext4_inode_disk_t *dir, u8 *block) {
-    aurora_htree_header_t *hdr = (aurora_htree_header_t *)block;
-    aurora_htree_entry_t *entries = (aurora_htree_entry_t *)(hdr + 1);
+    rabbitbone_htree_header_t *hdr = (rabbitbone_htree_header_t *)block;
+    rabbitbone_htree_entry_t *entries = (rabbitbone_htree_entry_t *)(hdr + 1);
     hdr->checksum = htree_checksum(mnt, hdr, entries);
     return write_block(mnt, le32(dir->i_file_acl_lo), block);
 }
 
-static bool htree_entry_name_matches(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const aurora_htree_entry_t *he, const char *name, usize name_len) {
+static bool htree_entry_name_matches(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const rabbitbone_htree_entry_t *he, const char *name, usize name_len) {
     if (he->name_len != name_len) return false;
     u64 phys = 0;
     if (inode_block_for_write(mnt, (ext4_inode_disk_t *)dir, le16(he->logical_block), &phys, false, false, false) != EXT4_OK) return false;
@@ -101,8 +101,8 @@ static __attribute__((noinline)) ext4_status_t htree_lookup(ext4_mount_t *mnt, c
     u32 h = htree_hash_name(name, name_len);
     u8 *index_block = ext4_tmp_block(mnt);
     if (!index_block) return EXT4_ERR_NO_MEMORY;
-    aurora_htree_header_t *hdr = 0;
-    aurora_htree_entry_t *entries = 0;
+    rabbitbone_htree_header_t *hdr = 0;
+    rabbitbone_htree_entry_t *entries = 0;
     ext4_status_t result = htree_load(mnt, dir, index_block, &hdr, &entries);
     if (result != EXT4_OK) goto out;
     result = EXT4_ERR_NOT_FOUND;
@@ -119,7 +119,7 @@ out:
     return result;
 }
 
-static void htree_insert_sorted(aurora_htree_entry_t *entries, u16 *count, aurora_htree_entry_t e) {
+static void htree_insert_sorted(rabbitbone_htree_entry_t *entries, u16 *count, rabbitbone_htree_entry_t e) {
     u16 pos = 0;
     while (pos < *count && (le32(entries[pos].hash) < e.hash || (le32(entries[pos].hash) == e.hash && le16(entries[pos].offset) < e.offset))) ++pos;
     for (u16 i = *count; i > pos; --i) entries[i] = entries[i - 1u];
@@ -131,13 +131,13 @@ static __attribute__((noinline)) ext4_status_t htree_append_record(ext4_mount_t 
     if (logical > 0xffffu || offset > 0xffffu) return EXT4_ERR_UNSUPPORTED;
     u8 *index_block = ext4_tmp_block(mnt);
     if (!index_block) return EXT4_ERR_NO_MEMORY;
-    aurora_htree_header_t *hdr = 0;
-    aurora_htree_entry_t *entries = 0;
+    rabbitbone_htree_header_t *hdr = 0;
+    rabbitbone_htree_entry_t *entries = 0;
     ext4_status_t result = htree_load(mnt, dir, index_block, &hdr, &entries);
     if (result != EXT4_OK) goto out;
     u16 count = le16(hdr->entries);
     if (count >= le16(hdr->max_entries)) { result = EXT4_ERR_UNSUPPORTED; goto out; }
-    aurora_htree_entry_t e;
+    rabbitbone_htree_entry_t e;
     memset(&e, 0, sizeof(e));
     e.hash = htree_hash_name(name, strlen(name));
     e.inode = child_ino;
@@ -172,11 +172,11 @@ static __attribute__((noinline)) ext4_status_t htree_build(ext4_mount_t *mnt, u3
     }
     ext4_status_t result = EXT4_OK;
     memset(index_block, 0, (usize)mnt->block_size);
-    aurora_htree_header_t *hdr = (aurora_htree_header_t *)index_block;
-    aurora_htree_entry_t *entries = (aurora_htree_entry_t *)(hdr + 1);
-    hdr->magic = AURORA_EXT4_HTREE_MAGIC;
-    hdr->version = AURORA_EXT4_HTREE_VERSION;
-    hdr->entry_size = sizeof(aurora_htree_entry_t);
+    rabbitbone_htree_header_t *hdr = (rabbitbone_htree_header_t *)index_block;
+    rabbitbone_htree_entry_t *entries = (rabbitbone_htree_entry_t *)(hdr + 1);
+    hdr->magic = RABBITBONE_EXT4_HTREE_MAGIC;
+    hdr->version = RABBITBONE_EXT4_HTREE_VERSION;
+    hdr->entry_size = sizeof(rabbitbone_htree_entry_t);
     hdr->max_entries = cap;
     hdr->dir_ino = dir_ino;
     u16 count = 0;
@@ -196,7 +196,7 @@ static __attribute__((noinline)) ext4_status_t htree_build(ext4_mount_t *mnt, u3
             if (rec_len < 8u || p + rec_len > mnt->block_size) { result = EXT4_ERR_CORRUPT; goto fail; }
             if (de->inode && de->name_len && !(de->name_len == 1u && de->name[0] == '.') && !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) {
                 if (count >= cap) { result = EXT4_ERR_UNSUPPORTED; goto fail; }
-                aurora_htree_entry_t e;
+                rabbitbone_htree_entry_t e;
                 memset(&e, 0, sizeof(e));
                 e.hash = htree_hash_name(de->name, de->name_len);
                 e.inode = le32(de->inode);
@@ -260,7 +260,7 @@ static ext4_status_t htree_note_add(ext4_mount_t *mnt, u32 dir_ino, ext4_inode_d
             }
         }
         ext4_tmp_block_free(block);
-        if (count < AURORA_EXT4_HTREE_MIN_ENTRIES) return EXT4_OK;
+        if (count < RABBITBONE_EXT4_HTREE_MIN_ENTRIES) return EXT4_OK;
         ext4_status_t st = htree_build(mnt, dir_ino, dir);
         if (st != EXT4_OK) return st == EXT4_ERR_UNSUPPORTED ? EXT4_OK : st;
         return EXT4_OK;
@@ -273,8 +273,8 @@ static ext4_status_t htree_remove_name(ext4_mount_t *mnt, ext4_inode_disk_t *dir
     if (logical > 0xffffu || offset > 0xffffu) return EXT4_ERR_UNSUPPORTED;
     u8 *index_block = ext4_tmp_block(mnt);
     if (!index_block) return EXT4_ERR_NO_MEMORY;
-    aurora_htree_header_t *hdr = 0;
-    aurora_htree_entry_t *entries = 0;
+    rabbitbone_htree_header_t *hdr = 0;
+    rabbitbone_htree_entry_t *entries = 0;
     ext4_status_t result = EXT4_OK;
     ext4_status_t st = htree_load(mnt, dir, index_block, &hdr, &entries);
     if (st != EXT4_OK) { result = st == EXT4_ERR_NOT_FOUND ? EXT4_OK : st; goto out; }
@@ -352,13 +352,13 @@ static ext4_status_t htree_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inode
     ext4_status_t st = htree_count_live_entries(mnt, dir, &live);
     if (st != EXT4_OK) return st;
     bool had_index = (le32(dir->i_flags) & EXT4_INDEX_FL) != 0;
-    bool rebuild = had_index || live >= AURORA_EXT4_HTREE_MIN_ENTRIES;
+    bool rebuild = had_index || live >= RABBITBONE_EXT4_HTREE_MIN_ENTRIES;
     if (!rebuild) return EXT4_OK;
     if (had_index) {
         st = htree_drop_index(mnt, dir_ino, dir);
         if (st != EXT4_OK) return st;
     }
-    if (live >= AURORA_EXT4_HTREE_MIN_ENTRIES) {
+    if (live >= RABBITBONE_EXT4_HTREE_MIN_ENTRIES) {
         st = htree_build(mnt, dir_ino, dir);
         if (st == EXT4_ERR_UNSUPPORTED) st = EXT4_OK;
         if (st != EXT4_OK) return st;

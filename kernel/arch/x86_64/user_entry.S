@@ -115,13 +115,15 @@ arch_user_resume:
     mov fs, ax
     mov gs, ax
 
-    push qword ptr [r10 + 168]
+    # Never trust saved user frames for privilege selectors.  arch_user_resume
+    # is only for ring3 execution, including sigreturn-restored frames.
+    push 0x1b
     push qword ptr [r10 + 160]
     mov rax, [r10 + 152]
     or rax, 0x200
     and rax, 0x0000000000240fd7
     push rax
-    push qword ptr [r10 + 144]
+    push 0x23
     push qword ptr [r10 + 136]
 
     mov r15, [r10 + 0]

@@ -1,14 +1,14 @@
 #pragma once
 
-#include <aurora/kmem.h>
-#include <aurora/memory.h>
-#include <aurora/libc.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/panic.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/spinlock.h>
 
-#if defined(AURORA_HOST_TEST)
+#if defined(RABBITBONE_HOST_TEST)
 #include <stdlib.h>
 #undef PANIC
 #define PANIC(...) abort()

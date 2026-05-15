@@ -96,7 +96,7 @@ static process_status_t read_shebang_for_path(const active_process_t *proc, cons
     process_status_t ps = shebang_copy_token(raw_interpreter, sizeof(raw_interpreter), buf + interp_start, interp_len);
     if (ps != PROC_OK) return ps;
     if (!path_normalize(raw_interpreter, out->interpreter, sizeof(out->interpreter))) return PROC_ERR_FORMAT;
-    if (!aurora_rust_path_policy_check((const u8 *)out->interpreter, VFS_PATH_MAX)) return PROC_ERR_FORMAT;
+    if (!rabbitbone_rust_path_policy_check((const u8 *)out->interpreter, VFS_PATH_MAX)) return PROC_ERR_FORMAT;
     if (strnlen(out->interpreter, USER_ARG_STRING_MAX) >= USER_ARG_STRING_MAX) return PROC_ERR_RANGE;
 
     while (pos < end && shebang_is_space(buf[pos])) ++pos;

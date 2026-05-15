@@ -44,6 +44,20 @@ static void test_ext4_corrupt_inputs() {
     require(mount_mem_ext4(data) == EXT4_ERR_UNSUPPORTED, "ext4 rejects unaligned group desc size");
 
     make_ext4_base(data);
+    put32(data, 1024 + offsetof(ext4_superblock_disk_t, s_blocks_count_lo), 64);
+    put32(data, 1024 + offsetof(ext4_superblock_disk_t, s_blocks_count_hi), 64);
+    MemDisk huge_disk{data};
+    block_device_t huge_dev{};
+    strncpy(huge_dev.name, "huge", sizeof(huge_dev.name) - 1);
+    huge_dev.sector_count = (1ull << 39) + 128ull;
+    huge_dev.sector_size = 512;
+    huge_dev.ctx = &huge_disk;
+    huge_dev.read = mem_read;
+    huge_dev.write = mem_write;
+    ext4_mount_t huge_mnt;
+    require(ext4_mount_bounded(&huge_dev, 0, huge_dev.sector_count, &huge_mnt) == EXT4_ERR_CORRUPT, "ext4 rejects group count beyond u32 range");
+
+    make_ext4_base(data);
     MemDisk disk{data};
     block_device_t dev{};
     strncpy(dev.name, "memx", sizeof(dev.name) - 1);

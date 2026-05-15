@@ -1,5 +1,6 @@
 Args parse(int argc, char **argv) {
     Args a;
+    std::set<std::string> install_dests;
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
         auto need = [&](const char *name) -> std::string {
@@ -11,12 +12,20 @@ Args parse(int argc, char **argv) {
         else if (k == "--stage1") a.stage1 = need("--stage1");
         else if (k == "--stage2") a.stage2 = need("--stage2");
         else if (k == "--kernel") a.kernel = need("--kernel");
-        else if (k == "--install") a.install_files.push_back(parse_install_spec(need("--install")));
+        else if (k == "--install") {
+            InstallFile install = parse_install_spec(need("--install"));
+            if (!install_dests.insert(install.dest).second) throw std::runtime_error("duplicate --install destination: " + install.dest);
+            a.install_files.push_back(std::move(install));
+        }
         else if (k == "--size-mib") a.size_mib = parse_u64_strict(need("--size-mib"), "size-mib");
+        else if (k == "--root-only") a.root_only = true;
         else if (k == "--force") a.force = true;
         else usage();
     }
-    if (a.out.empty() || a.stage1.empty() || a.stage2.empty() || a.kernel.empty()) usage();
+    if (a.out.empty()) usage();
+    if (a.root_only) {
+        if (!a.stage1.empty() || !a.stage2.empty() || !a.kernel.empty()) usage();
+    } else if (a.stage1.empty() || a.stage2.empty() || a.kernel.empty()) usage();
     if (a.size_mib < 16 || a.size_mib > 4096) throw std::runtime_error("size-mib must be 16..4096");
     return a;
 }
@@ -26,30 +35,40 @@ Args parse(int argc, char **argv) {
 int main(int argc, char **argv) {
     try {
         Args args = parse(argc, argv);
-        auto stage1 = read_file(args.stage1);
-        auto stage2 = read_file(args.stage2);
-        auto kernel = read_file(args.kernel);
+        std::vector<std::uint8_t> stage1;
+        std::vector<std::uint8_t> stage2;
+        std::vector<std::uint8_t> kernel;
+        if (!args.root_only) {
+            stage1 = read_file(args.stage1, 512, "stage1");
+            stage2 = read_file(args.stage2, kMaxStage2Bytes, "stage2");
+            kernel = read_file(args.kernel, kMaxKernelImageBytes, "kernel");
+        }
         std::vector<SeedFile> userland_files;
         userland_files.reserve(args.install_files.size());
         for (const auto &install : args.install_files) {
             SeedFile f;
             f.path = install.dest;
-            f.data = read_file(install.source.string());
+            f.data = read_file(install.source.string(), kMaxSeedFileBytes, "userland file");
             if (f.data.empty()) throw std::runtime_error("refusing to install empty userland file " + install.source.string());
             f.mode = 0100755;
             userland_files.push_back(std::move(f));
         }
-        if (stage1.size() != 512) throw std::runtime_error("stage1 must be 512 bytes");
-        if (stage1[510] != 0x55 || stage1[511] != 0xaa) throw std::runtime_error("stage1 missing boot signature");
-        if (stage2.size() > static_cast<std::uint64_t>(kStage2ReservedSectors) * kSectorSize) throw std::runtime_error("stage2 exceeds reserved sectors");
-        const std::uint64_t kernel_sectors = ceil_div_u64(kernel.size(), kSectorSize);
-        if (kernel_sectors == 0) throw std::runtime_error("kernel image is empty");
-        if (kernel_sectors > kKernelLoadMaxSectors) {
-            throw std::runtime_error("kernel exceeds stage2 low-memory load window: " + std::to_string(kernel.size()) +
-                                     " bytes need " + std::to_string(kernel_sectors) + " sectors, max " +
-                                     std::to_string(kKernelLoadMaxSectors));
+        std::uint64_t kernel_sectors = 0;
+        if (!args.root_only) {
+            if (stage1.size() != 512) throw std::runtime_error("stage1 must be 512 bytes");
+            if (stage1[510] != 0x55 || stage1[511] != 0xaa) throw std::runtime_error("stage1 missing boot signature");
+            if (stage2.size() > static_cast<std::uint64_t>(kStage2ReservedSectors) * kSectorSize) throw std::runtime_error("stage2 exceeds reserved sectors");
+            kernel_sectors = ceil_div_u64(kernel.size(), kSectorSize);
+            if (kernel_sectors == 0) throw std::runtime_error("kernel image is empty");
+            if (kernel_sectors > kKernelLoadMaxSectors) {
+                throw std::runtime_error("kernel exceeds stage2 low-memory load window: " + std::to_string(kernel.size()) +
+                                         " bytes need " + std::to_string(kernel_sectors) + " sectors, max " +
+                                         std::to_string(kKernelLoadMaxSectors));
+            }
+            if (kernel_sectors > kKernelBootAreaSectors) throw std::runtime_error("kernel boot area overlaps partition");
+        } else {
+            stage1.assign(512, 0);
         }
-        if (kernel_sectors > kKernelBootAreaSectors) throw std::runtime_error("kernel boot area overlaps partition");
 
         const std::uint64_t image_size = args.size_mib * 1024ull * 1024ull;
         const std::uint64_t total_sectors = image_size / 512ull;
@@ -78,8 +97,10 @@ int main(int argc, char **argv) {
         OwnedTempFile tmp = OwnedTempFile::create_for(out_path);
         size_fd(tmp.fd(), image_size);
         write_at_fd(tmp.fd(), 0, stage1);
-        write_at_fd(tmp.fd(), static_cast<std::uint64_t>(kStage2Lba) * kSectorSize, stage2);
-        write_at_fd(tmp.fd(), static_cast<std::uint64_t>(kKernelLba) * kSectorSize, kernel);
+        if (!args.root_only) {
+            write_at_fd(tmp.fd(), static_cast<std::uint64_t>(kStage2Lba) * kSectorSize, stage2);
+            write_at_fd(tmp.fd(), static_cast<std::uint64_t>(kKernelLba) * kSectorSize, kernel);
+        }
         write_at_fd(tmp.fd(), static_cast<std::uint64_t>(kPartitionLba) * 512ull, seed_fs);
         flush_fd(tmp.fd());
         tmp.close_checked();
@@ -93,11 +114,12 @@ int main(int argc, char **argv) {
         std::filesystem::rename(tmp.path(), out_path);
         tmp.disown();
         std::cout << "created " << args.out << " size=" << args.size_mib << "MiB partition_lba=" << kPartitionLba
+                  << " mode=" << (args.root_only ? "live-root" : "legacy-disk")
                   << " kernel_sectors=" << kernel_sectors
                   << " ext4_seed_blocks=" << kFsBlocks << "\n";
         return 0;
     } catch (const std::exception &e) {
-        std::cerr << "aurora-install: " << e.what() << "\n";
+        std::cerr << "rabbitbone-install: " << e.what() << "\n";
         return 1;
     }
 }

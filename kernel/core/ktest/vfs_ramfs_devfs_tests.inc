@@ -2,7 +2,7 @@ static void test_vfs_ramfs_devfs(void) {
     suite_begin("vfs/ramfs/devfs");
     vfs_stat_t st;
     check(vfs_rust_route_selftest(), "Rust VFS route selftest");
-    check(aurora_rust_path_policy_selftest(), "Rust VFS path policy selftest");
+    check(rabbitbone_rust_path_policy_selftest(), "Rust VFS path policy selftest");
     check(vfs_stat("/", &st) == VFS_OK && st.type == VFS_NODE_DIR, "vfs stat root");
     check(vfs_stat("/etc/motd", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 0u, "vfs stat /etc/motd");
     check(vfs_stat("relative/path", &st) == VFS_ERR_INVAL, "vfs rejects relative path before routing");
@@ -10,7 +10,7 @@ static void test_vfs_ramfs_devfs(void) {
     char buf[128];
     usize got = 0;
     memset(buf, 0, sizeof(buf));
-    check(vfs_read("/etc/motd", 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && got > 0u && strstr(buf, "AuroraOS") != 0, "vfs read /etc/motd");
+    check(vfs_read("/etc/motd", 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && got > 0u && strstr(buf, "Rabbitbone") != 0, "vfs read /etc/motd");
     seen_name_ctx_t motd = { "motd", false };
     check(vfs_list("/etc", list_seen_name, &motd) == VFS_OK && motd.seen, "vfs list /etc finds motd");
     u32 count = 0;

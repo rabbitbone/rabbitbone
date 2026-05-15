@@ -9,9 +9,10 @@ void vfs_init(void) {
 
 vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops, void *ctx, bool writable) {
     if (!ready) vfs_init();
-    if (!path || !name || !ops) return VFS_ERR_INVAL;
-    if (strnlen(name, VFS_NAME_MAX) >= VFS_NAME_MAX) return VFS_ERR_INVAL;
-    if (!aurora_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
+    if (!path || !name || !ops || !ops->stat) return VFS_ERR_INVAL;
+    usize name_len = strnlen(name, VFS_NAME_MAX);
+    if (name_len == 0 || name_len >= VFS_NAME_MAX) return VFS_ERR_INVAL;
+    if (!rabbitbone_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
     char norm[VFS_PATH_MAX];
     if (!path_normalize(path, norm, sizeof(norm))) return VFS_ERR_INVAL;
 
@@ -48,7 +49,7 @@ vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops,
 
 vfs_status_t vfs_unmount(const char *path) {
     if (!path) return VFS_ERR_INVAL;
-    if (!aurora_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
+    if (!rabbitbone_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
     char norm[VFS_PATH_MAX];
     if (!path_normalize(path, norm, sizeof(norm))) return VFS_ERR_INVAL;
     if (strcmp(norm, "/") == 0) return VFS_ERR_PERM;
@@ -58,14 +59,25 @@ vfs_status_t vfs_unmount(const char *path) {
     u64 flags = spin_lock_irqsave(&mounts_lock);
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
         if (mounts[i].ops && !mounts[i].unmounting && strcmp(mounts[i].path, norm) == 0) {
-            mounts[i].unmounting = true;
             idx = i;
             generation = mounts[i].generation;
             break;
         }
     }
+    if (idx >= VFS_MAX_MOUNTS) {
+        spin_unlock_irqrestore(&mounts_lock, flags);
+        return VFS_ERR_NOENT;
+    }
+    usize norm_len = strlen(norm);
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
+        if (i == idx || !mounts[i].ops || mounts[i].unmounting) continue;
+        if (strncmp(mounts[i].path, norm, norm_len) == 0 && mounts[i].path[norm_len] == '/') {
+            spin_unlock_irqrestore(&mounts_lock, flags);
+            return VFS_ERR_NOTEMPTY;
+        }
+    }
+    mounts[idx].unmounting = true;
     spin_unlock_irqrestore(&mounts_lock, flags);
-    if (idx >= VFS_MAX_MOUNTS) return VFS_ERR_NOENT;
 
     for (;;) {
         flags = spin_lock_irqsave(&mounts_lock);
@@ -89,8 +101,11 @@ vfs_status_t vfs_stat(const char *path, vfs_stat_t *out) {
     if (strcmp(route.normalized, "/") == 0) {
         memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_DIR;
+        out->mode = 0755u;
         out->inode = 1u;
         out->nlink = 1u;
+        out->uid = 0u;
+        out->gid = 0u;
         return VFS_OK;
     }
     vfs_mount_t *mnt = route_mount(&route);
@@ -109,8 +124,11 @@ vfs_status_t vfs_lstat(const char *path, vfs_stat_t *out) {
     if (strcmp(route.normalized, "/") == 0) {
         memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_DIR;
+        out->mode = 0755u;
         out->inode = 1u;
         out->nlink = 1u;
+        out->uid = 0u;
+        out->gid = 0u;
         return VFS_OK;
     }
     vfs_mount_t *mnt = route_mount(&route);
@@ -129,7 +147,7 @@ vfs_status_t vfs_readlink(const char *path, char *buffer, usize size, usize *rea
     vfs_status_t rs = resolve_route(path, &route);
     if (rs != VFS_OK) return rs;
     vfs_mount_t *mnt = route_mount(&route);
-    if (!mnt) return VFS_ERR_UNSUPPORTED;
+    if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->ops->readlink) { mount_release(mnt); return VFS_ERR_UNSUPPORTED; }
     rs = mnt->ops->readlink(mnt, route.relative, buffer, size, read_out);
     mount_release(mnt);
@@ -139,6 +157,7 @@ vfs_status_t vfs_readlink(const char *path, char *buffer, usize size, usize *rea
 vfs_status_t vfs_symlink(const char *target, const char *link_path) {
     if (!target || !link_path || target[0] == 0) return VFS_ERR_INVAL;
     if (strnlen(target, VFS_PATH_MAX) >= VFS_PATH_MAX) return VFS_ERR_INVAL;
+    if (!rabbitbone_rust_path_no_traversal_check((const u8 *)target, VFS_PATH_MAX, true)) return VFS_ERR_INVAL;
     vfs_route_t route;
     vfs_status_t rs = resolve_route(link_path, &route);
     if (rs != VFS_OK) return rs;
@@ -181,8 +200,12 @@ vfs_status_t vfs_get_ref(const char *path, vfs_node_ref_t *out) {
         strncpy(out->path, "/", sizeof(out->path) - 1u);
         return VFS_OK;
     }
+    vfs_mount_t *mnt = route_mount(&route);
+    if (!mnt) return VFS_ERR_NOENT;
+    if (!mnt->ops->stat) { mount_release(mnt); return VFS_ERR_NOENT; }
     vfs_stat_t st;
-    rs = vfs_stat(path, &st);
+    rs = mnt->ops->stat(mnt, route.relative, &st);
+    mount_release(mnt);
     if (rs != VFS_OK) return rs;
     fill_ref_from_stat(out, route.normalized, &st, &route);
     return VFS_OK;
@@ -193,8 +216,11 @@ vfs_status_t vfs_stat_ref(const vfs_node_ref_t *ref, vfs_stat_t *out) {
     if (ref->fs_id == 0 && strcmp(ref->path, "/") == 0) {
         memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_DIR;
+        out->mode = 0755u;
         out->inode = ref->inode;
         out->nlink = 1u;
+        out->uid = 0u;
+        out->gid = 0u;
         return VFS_OK;
     }
     if (ref->fs_id == 0 || ref->mount_generation == 0) return VFS_ERR_INVAL;

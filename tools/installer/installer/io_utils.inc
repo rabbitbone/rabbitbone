@@ -1,13 +1,30 @@
-std::vector<std::uint8_t> read_file(const std::string &path) {
+std::vector<std::uint8_t> read_file(const std::string &path, std::uint64_t max_size, const char *what) {
+    const std::filesystem::path fs_path(path);
+    std::error_code ec;
+    const auto lst = std::filesystem::symlink_status(fs_path, ec);
+    if (ec) throw std::runtime_error("cannot stat " + std::string(what) + " " + path + ": " + ec.message());
+    if (std::filesystem::is_symlink(lst)) throw std::runtime_error("refusing to read symlink " + std::string(what) + " " + path);
+    if (!std::filesystem::is_regular_file(lst)) throw std::runtime_error(std::string(what) + " is not a regular file: " + path);
+    const auto size = std::filesystem::file_size(fs_path, ec);
+    if (ec) throw std::runtime_error("cannot size " + std::string(what) + " " + path + ": " + ec.message());
+    if (size > max_size) {
+        throw std::runtime_error(std::string(what) + " is too large: " + path + " has " + std::to_string(size) +
+                                 " bytes, limit is " + std::to_string(max_size));
+    }
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error(std::string(what) + " exceeds host addressable size: " + path);
+    }
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max())) {
+        throw std::runtime_error(std::string(what) + " exceeds host stream size: " + path);
+    }
+
     std::ifstream in(path, std::ios::binary);
-    if (!in) throw std::runtime_error("cannot open " + path);
-    in.seekg(0, std::ios::end);
-    auto size = in.tellg();
-    if (size < 0) throw std::runtime_error("cannot size " + path);
-    in.seekg(0, std::ios::beg);
+    if (!in) throw std::runtime_error("cannot open " + std::string(what) + " " + path);
     std::vector<std::uint8_t> data(static_cast<std::size_t>(size));
     if (!data.empty()) in.read(reinterpret_cast<char *>(data.data()), static_cast<std::streamsize>(data.size()));
-    if (!in && !data.empty()) throw std::runtime_error("cannot read " + path);
+    if (!in && !data.empty()) throw std::runtime_error("cannot read " + std::string(what) + " " + path);
+    char extra = 0;
+    if (in.read(&extra, 1)) throw std::runtime_error(std::string(what) + " changed while being read: " + path);
     return data;
 }
 

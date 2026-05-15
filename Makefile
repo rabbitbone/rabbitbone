@@ -2,6 +2,7 @@ ROOT := $(CURDIR)
 BUILD := $(ROOT)/build
 CLANG := clang
 LD := ld.lld
+EFI_LD := lld-link
 OBJCOPY := llvm-objcopy
 HOSTCXX := c++
 HOSTCC := cc
@@ -15,24 +16,25 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno
 USER_ASMFLAGS := --target=x86_64-unknown-none -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 --gc-sections -s -T user/user.ld
 
-USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck aursh init
+USER_C_PROGS := hello fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck rbsh init
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)
 USER_C_OBJS := $(USER_C_PROGS:%=$(BUILD)/user/%.o)
 USER_ASM_OBJS := $(USER_ASM_PROGS:%=$(BUILD)/user/%.asm.o)
-USER_SUPPORT_OBJS := $(BUILD)/user/crt/start.o $(BUILD)/user/lib/aurora.o
+USER_SUPPORT_OBJS := $(BUILD)/user/crt/start.o $(BUILD)/user/lib/rabbitbone.o
 USER_OBJS := $(USER_C_OBJS) $(USER_ASM_OBJS) $(USER_SUPPORT_OBJS)
 USER_DEPS := $(patsubst %.o,%.d,$(USER_OBJS))
-USER_DEFAULT_INSTALL_PROGS := $(filter-out aursh init,$(USER_PROGS))
+USER_DEFAULT_INSTALL_PROGS := $(filter-out rbsh init,$(USER_PROGS))
 USER_DEFAULT_INSTALLS := $(foreach p,$(USER_DEFAULT_INSTALL_PROGS),$(BUILD)/user/$(p).elf:/bin/$(p))
-USER_INSTALL_ALIASES := aursh:/bin/sh aursh:/bin/aursh init:/sbin/init
+USER_INSTALL_ALIASES := rbsh:/bin/sh rbsh:/bin/rbsh init:/sbin/init
 USER_ALIAS_INSTALLS := $(foreach m,$(USER_INSTALL_ALIASES),$(BUILD)/user/$(firstword $(subst :, ,$(m))).elf:$(word 2,$(subst :, ,$(m))))
 USER_BIN_INSTALLS := $(USER_DEFAULT_INSTALLS) $(USER_ALIAS_INSTALLS)
 INSTALLER_USER_ARGS := $(foreach f,$(USER_BIN_INSTALLS),--install $(f))
-AURORA_EMBED_USERLAND ?= 0
+RABBITBONE_EMBED_USERLAND ?= 0
+ISO_VOLUME_ID ?= RABBITBONE_00215
 
-K_CFLAGS := -DAURORA_EMBED_USERLAND=$(AURORA_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CFLAGS := -DRABBITBONE_EMBED_USERLAND=$(RABBITBONE_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T scripts/kernel.ld -Map=$(BUILD)/kernel.map
@@ -80,6 +82,7 @@ K_C_SRCS := \
   kernel/drivers/ahci.c \
   kernel/drivers/ata_pio.c \
   kernel/drivers/block.c \
+  kernel/drivers/bootramdisk.c \
   kernel/drivers/keyboard.c \
   kernel/drivers/mbr.c \
   kernel/drivers/pic.c \
@@ -116,14 +119,14 @@ K_RUST_SRCS := \
   kernel/rust/vfs_route.rs \
   kernel/rust/usercopy.rs \
   kernel/rust/path_policy.rs \
-  include/aurora/abi.h
+  include/rabbitbone/abi.h
 K_RUST_OBJ := $(BUILD)/kernel/rust/lib.o
 K_RUST_ABI := $(BUILD)/kernel/rust/abi_generated.rs
 
-K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(if $(filter 1,$(AURORA_EMBED_USERLAND)),$(BUILD)/user_bins.o,)
+K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(if $(filter 1,$(RABBITBONE_EMBED_USERLAND)),$(BUILD)/user_bins.o,)
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
 
-.PHONY: all clean test image bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck
+.PHONY: all clean test image live-iso legacy-image bootcheck ueficheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck
 all: image
 
 $(BUILD):
@@ -159,16 +162,16 @@ $(BUILD)/user/crt/start.o: user/crt/start.S
 	mkdir -p $(dir $@)
 	"$(CLANG)" $(USER_ASMFLAGS) -c $< -o $@
 
-USER_LIB_SRCS := user/lib/aurora.c $(wildcard user/lib/aurora/*.inc user/lib/aurora/*.h)
-AURSH_SPLIT_SRCS := $(wildcard user/bin/aursh/*.inc)
+USER_LIB_SRCS := user/lib/rabbitbone.c $(wildcard user/lib/rabbitbone/*.inc user/lib/rabbitbone/*.h)
+RBSH_SPLIT_SRCS := $(wildcard user/bin/rbsh/*.inc)
 
-$(BUILD)/user/lib/aurora.o: $(USER_LIB_SRCS) userlib/include/aurora_sys.h
+$(BUILD)/user/lib/rabbitbone.o: $(USER_LIB_SRCS) userlib/include/rabbitbone_sys.h
 	mkdir -p $(dir $@)
 	"$(CLANG)" $(USER_CFLAGS) -c $< -o $@
 
-$(BUILD)/user/aursh.o: $(AURSH_SPLIT_SRCS)
+$(BUILD)/user/rbsh.o: $(RBSH_SPLIT_SRCS)
 
-$(BUILD)/user/%.o: user/bin/%.c userlib/include/aurora_sys.h
+$(BUILD)/user/%.o: user/bin/%.c userlib/include/rabbitbone_sys.h
 	mkdir -p $(dir $@)
 	"$(CLANG)" $(USER_CFLAGS) -c $< -o $@
 
@@ -176,9 +179,9 @@ $(BUILD)/user/%.asm.o: user/bin/%.S
 	mkdir -p $(dir $@)
 	"$(CLANG)" $(USER_ASMFLAGS) -c $< -o $@
 
-$(BUILD)/user/%.elf: $(BUILD)/user/crt/start.o $(BUILD)/user/lib/aurora.o $(BUILD)/user/%.o user/user.ld
+$(BUILD)/user/%.elf: $(BUILD)/user/crt/start.o $(BUILD)/user/lib/rabbitbone.o $(BUILD)/user/%.o user/user.ld
 	mkdir -p $(dir $@)
-	"$(LD)" $(USER_LDFLAGS) -o $@ $(BUILD)/user/crt/start.o $(BUILD)/user/lib/aurora.o $(BUILD)/user/$*.o
+	"$(LD)" $(USER_LDFLAGS) -o $@ $(BUILD)/user/crt/start.o $(BUILD)/user/lib/rabbitbone.o $(BUILD)/user/$*.o
 
 $(BUILD)/user/regtrash.elf: $(BUILD)/user/regtrash.asm.o user/user.ld
 	mkdir -p $(dir $@)
@@ -220,12 +223,12 @@ $(BUILD)/%.o: %.S
 
 rusttoolcheck:
 	@if ! command -v "$(RUSTC)" >/dev/null 2>&1 && [ ! -x "$(RUSTC)" ]; then \
-		echo "error: rustc is required for AuroraOS kernel Rust boundary modules" >&2; \
+		echo "error: rustc is required for Rabbitbone kernel Rust boundary modules" >&2; \
 		echo "hint: install Rust 1.94.1 or run scripts/build_with_uploaded_rust.sh /path/to/rust_toolchain <target>" >&2; \
 		exit 127; \
 	fi
 
-$(K_RUST_ABI): include/aurora/abi.h scripts/gen_rust_abi.py | $(BUILD)
+$(K_RUST_ABI): include/rabbitbone/abi.h scripts/gen_rust_abi.py | $(BUILD)
 	python3 scripts/gen_rust_abi.py $@
 
 $(K_RUST_OBJ): $(K_RUST_SRCS) $(K_RUST_ABI) | rusttoolcheck
@@ -241,15 +244,38 @@ $(BUILD)/kernel.bin: $(BUILD)/kernel.elf scripts/pad_file.py Makefile
 
 INSTALLER_SRCS := tools/installer/main.cpp $(wildcard tools/installer/installer/*.inc tools/installer/installer/*.h)
 
-$(BUILD)/tools/installer/aurora-install: $(INSTALLER_SRCS)
+$(BUILD)/tools/installer/rabbitbone-install: $(INSTALLER_SRCS)
 	mkdir -p $(dir $@)
 	"$(HOSTCXX)" -std=c++17 -O2 -Wall -Wextra -Werror $< -o $@
 
-image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(USER_ELFS) $(BUILD)/tools/installer/aurora-install
-	"$(BUILD)/tools/installer/aurora-install" --out "$(BUILD)/aurora.img" --stage1 "$(BUILD)/stage1.bin" --stage2 "$(BUILD)/stage2.bin" --kernel "$(BUILD)/kernel.bin" $(INSTALLER_USER_ARGS) --size-mib 64 --force
+$(BUILD)/boot/uefi/bootx64.obj: boot/uefi/bootx64.c kernel/include/rabbitbone/bootinfo.h kernel/include/rabbitbone/types.h | $(BUILD)
+	mkdir -p $(dir $@)
+	"$(CLANG)" -target x86_64-pc-win32 -ffreestanding -fshort-wchar -mno-red-zone -mno-stack-arg-probe -fno-stack-protector -fno-builtin -Oz -Wall -Wextra -Werror -Ikernel/include -c $< -o $@
+
+$(BUILD)/BOOTX64.EFI: $(BUILD)/boot/uefi/bootx64.obj
+	"$(EFI_LD)" /subsystem:efi_application /entry:EfiMain /nodefaultlib /out:$@ $<
+
+$(BUILD)/rabbitbone-root.img: $(USER_ELFS) $(BUILD)/tools/installer/rabbitbone-install
+	"$(BUILD)/tools/installer/rabbitbone-install" --out "$@" --root-only $(INSTALLER_USER_ARGS) --size-mib 64 --force
+
+$(BUILD)/rabbitbone-live.iso: kernellayoutcheck $(BUILD)/BOOTX64.EFI $(BUILD)/kernel.bin $(BUILD)/rabbitbone-root.img scripts/make_live_iso.py
+	python3 scripts/make_live_iso.py --out "$@" --efi "$(BUILD)/BOOTX64.EFI" --kernel "$(BUILD)/kernel.bin" --root "$(BUILD)/rabbitbone-root.img" --volume-id "$(ISO_VOLUME_ID)"
+
+image: live-iso
+
+live-iso: $(BUILD)/rabbitbone-live.iso
+
+legacy-image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(USER_ELFS) $(BUILD)/tools/installer/rabbitbone-install
+	"$(BUILD)/tools/installer/rabbitbone-install" --out "$(BUILD)/rabbitbone-legacy.img" --stage1 "$(BUILD)/stage1.bin" --stage2 "$(BUILD)/stage2.bin" --kernel "$(BUILD)/kernel.bin" $(INSTALLER_USER_ARGS) --size-mib 64 --force
 
 bootcheck:
 	python3 scripts/check_boot_sources.py boot/stage1.S boot/stage2.S
+
+ueficheck: $(BUILD)/BOOTX64.EFI scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py vmware/rabbitbone-uefi-live.vmx.example vmware/rabbitbone-uefi-live.vmx
+	@test -s "$(BUILD)/BOOTX64.EFI"
+	python3 -m py_compile scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py
+	python3 scripts/check_uefi_boot_contract.py
+	python3 scripts/check_vmware_configs.py vmware/rabbitbone-uefi-live.vmx.example vmware/rabbitbone-uefi-live.vmx
 
 splitintegritycheck:
 	python3 scripts/check_split_integrity.py
@@ -269,7 +295,7 @@ rustpaniccheck: $(K_RUST_OBJ)
 usercheck: $(USER_ELFS)
 	python3 scripts/check_userland.py $(USER_ELFS)
 
-test: splitintegritycheck bootcheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
+test: splitintegritycheck ueficheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
 	$(BUILD)/host-tests
 
 HOST_C_SRCS := kernel/lib/bitmap.c kernel/lib/string.c kernel/lib/ringbuf.c kernel/lib/crc32.c kernel/core/printf.c kernel/drivers/block.c kernel/drivers/mbr.c kernel/fs/ext4.c kernel/mm/kmem.c kernel/vfs/path.c kernel/vfs/tarfs.c
@@ -279,11 +305,11 @@ HOST_TEST_SRCS := tests/test_main.cpp $(wildcard tests/main/*.inc tests/main/*.h
 
 $(BUILD)/host/%.o: %.c
 	mkdir -p $(dir $@)
-	"$(HOSTCC)" -std=c11 -fno-builtin -DAURORA_HOST_TEST=1 -Iinclude -Ikernel/include -Wall -Wextra -Werror -MMD -MP -c $< -o $@
+	"$(HOSTCC)" -std=c11 -fno-builtin -DRABBITBONE_HOST_TEST=1 -Iinclude -Ikernel/include -Wall -Wextra -Werror -MMD -MP -c $< -o $@
 
 $(BUILD)/host-tests: $(HOST_TEST_SRCS) $(HOST_C_OBJS)
 	mkdir -p $(dir $@)
-	"$(HOSTCXX)" -std=c++17 -DAURORA_HOST_TEST=1 -Iinclude -Ikernel/include -Wall -Wextra -Werror tests/test_main.cpp $(HOST_C_OBJS) -o $@
+	"$(HOSTCXX)" -std=c++17 -DRABBITBONE_HOST_TEST=1 -Iinclude -Ikernel/include -Wall -Wextra -Werror tests/test_main.cpp $(HOST_C_OBJS) -o $@
 
 clean:
 	rm -rf $(BUILD)

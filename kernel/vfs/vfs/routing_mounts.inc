@@ -27,7 +27,7 @@ typedef struct vfs_route {
     char relative[VFS_PATH_MAX];
 } vfs_route_t;
 
-static bool vfs_disk0_mount_present(const aurora_rust_mount_view_t *view) {
+static bool vfs_disk0_mount_present(const rabbitbone_rust_mount_view_t *view) {
     if (!view) return false;
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
         if (view[i].active && strcmp(view[i].path, "/disk0") == 0) return true;
@@ -35,7 +35,7 @@ static bool vfs_disk0_mount_present(const aurora_rust_mount_view_t *view) {
     return false;
 }
 
-static bool vfs_rewrite_disk_userland_alias(const char *path, const aurora_rust_mount_view_t *view, char *out, usize out_size) {
+static bool vfs_rewrite_disk_userland_alias(const char *path, const rabbitbone_rust_mount_view_t *view, char *out, usize out_size) {
     if (!path || !out || out_size == 0 || !vfs_disk0_mount_present(view)) return false;
     const char *suffix = 0;
     if (strcmp(path, "/bin") == 0) {
@@ -56,11 +56,11 @@ static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
     if (!path || !route) return VFS_ERR_INVAL;
     memset(route, 0, sizeof(*route));
 
-    if (!aurora_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
+    if (!rabbitbone_rust_path_policy_check((const u8 *)path, VFS_PATH_MAX)) return VFS_ERR_INVAL;
     usize len = strnlen(path, VFS_PATH_MAX);
     if (len == 0 || len >= VFS_PATH_MAX || path[0] != '/') return VFS_ERR_INVAL;
 
-    aurora_rust_mount_view_t view[VFS_MAX_MOUNTS];
+    rabbitbone_rust_mount_view_t view[VFS_MAX_MOUNTS];
     u32 generations[VFS_MAX_MOUNTS];
     memset(view, 0, sizeof(view));
     memset(generations, 0, sizeof(generations));
@@ -81,9 +81,9 @@ static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
         route_len = strlen(alias_path);
     }
 
-    aurora_rust_route_out_t out;
+    rabbitbone_rust_route_out_t out;
     memset(&out, 0, sizeof(out));
-    i32 rc = aurora_rust_vfs_route(view, (const u8 *)route_path, route_len + 1u, &out);
+    i32 rc = rabbitbone_rust_vfs_route(view, (const u8 *)route_path, route_len + 1u, &out);
     if (rc == VFS_ERR_NOENT) return VFS_ERR_NOENT;
     if (rc != VFS_OK) return VFS_ERR_INVAL;
     if (!out.found || out.mount_index >= VFS_MAX_MOUNTS || generations[out.mount_index] == 0) return VFS_ERR_NOENT;

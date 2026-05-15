@@ -2,90 +2,121 @@
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ABI = ROOT / 'include' / 'aurora' / 'abi.h'
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'build' / 'kernel' / 'rust' / 'abi_generated.rs'
+ABI = ROOT / 'include' / 'rabbitbone' / 'abi.h'
 WANTED = {
-    'AURORA_SYS_MAX',
-    'AURORA_KCTL_OUT_MAX',
-    'AURORA_KCTL_OP_MAX',
-    'AURORA_PROCESS_HANDLE_CAP',
-    'AURORA_ENV_MAX',
-    'AURORA_FD_CLOEXEC',
-    'AURORA_FDCTL_GET',
-    'AURORA_FDCTL_SET',
-    'AURORA_PROT_READ',
-    'AURORA_PROT_WRITE',
-    'AURORA_PROT_EXEC',
-    'AURORA_MAP_ANON',
-    'AURORA_MAP_PRIVATE',
-    'AURORA_MAP_FIXED',
-    'AURORA_MAP_SHARED',
-    'AURORA_NSIG',
-    'AURORA_SIGUSR1',
-    'AURORA_SIGTERM',
-    'AURORA_SIG_SETMASK',
-    'AURORA_O_RDONLY',
-    'AURORA_O_WRONLY',
-    'AURORA_O_RDWR',
-    'AURORA_O_ACCMODE',
-    'AURORA_O_CREAT',
-    'AURORA_O_EXCL',
-    'AURORA_O_TRUNC',
-    'AURORA_O_APPEND',
-    'AURORA_O_DIRECTORY',
-    'AURORA_O_CLOEXEC',
-    'AURORA_SEEK_SET',
-    'AURORA_SEEK_CUR',
-    'AURORA_SEEK_END',
-    'AURORA_POLL_READ',
-    'AURORA_POLL_WRITE',
-    'AURORA_POLL_HUP',
-    'AURORA_TTY_MODE_RAW',
-    'AURORA_TTY_MODE_ECHO',
-    'AURORA_TTY_MODE_CANON',
-    'AURORA_TTY_READ_NONBLOCK',
-    'AURORA_THEME_OP_GET',
-    'AURORA_THEME_OP_SET',
-    'AURORA_THEME_MAX',
-    'AURORA_SUDO_MAX_TTL_TICKS',
-    'AURORA_SUDO_DEFAULT_TTL_TICKS',
-    'AURORA_SUDO_FLAG_PERSIST',
-    'AURORA_SUDO_FLAG_ACTIVATE',
-    'AURORA_SUDO_OP_SET_TIMEOUT',
-    'AURORA_SUDO_OP_INVALIDATE',
-    'AURORA_SUDO_OP_DROP',
-    'AURORA_SUDO_OP_VALIDATE',
-    'AURORA_SUDO_OP_STATUS',
-    'AURORA_CRED_OP_USERINFO',
-    'AURORA_CRED_OP_SET_EUID',
-    'AURORA_CRED_OP_SET_USER',
-    'AURORA_CRED_OP_LOGIN',
-    'AURORA_CRED_OP_GET',
-    'AURORA_GID_ROOT',
-    'AURORA_UID_ROOT',
+    'RABBITBONE_SYS_MAX',
+    'RABBITBONE_KCTL_OUT_MAX',
+    'RABBITBONE_KCTL_OP_MAX',
+    'RABBITBONE_PROCESS_HANDLE_CAP',
+    'RABBITBONE_ENV_MAX',
+    'RABBITBONE_FD_CLOEXEC',
+    'RABBITBONE_FDCTL_GET',
+    'RABBITBONE_FDCTL_SET',
+    'RABBITBONE_PROT_READ',
+    'RABBITBONE_PROT_WRITE',
+    'RABBITBONE_PROT_EXEC',
+    'RABBITBONE_MAP_ANON',
+    'RABBITBONE_MAP_PRIVATE',
+    'RABBITBONE_MAP_FIXED',
+    'RABBITBONE_MAP_SHARED',
+    'RABBITBONE_NSIG',
+    'RABBITBONE_SIGUSR1',
+    'RABBITBONE_SIGTERM',
+    'RABBITBONE_SIG_SETMASK',
+    'RABBITBONE_O_RDONLY',
+    'RABBITBONE_O_WRONLY',
+    'RABBITBONE_O_RDWR',
+    'RABBITBONE_O_ACCMODE',
+    'RABBITBONE_O_CREAT',
+    'RABBITBONE_O_EXCL',
+    'RABBITBONE_O_TRUNC',
+    'RABBITBONE_O_APPEND',
+    'RABBITBONE_O_DIRECTORY',
+    'RABBITBONE_O_CLOEXEC',
+    'RABBITBONE_SEEK_SET',
+    'RABBITBONE_SEEK_CUR',
+    'RABBITBONE_SEEK_END',
+    'RABBITBONE_POLL_READ',
+    'RABBITBONE_POLL_WRITE',
+    'RABBITBONE_POLL_HUP',
+    'RABBITBONE_TTY_MODE_RAW',
+    'RABBITBONE_TTY_MODE_ECHO',
+    'RABBITBONE_TTY_MODE_CANON',
+    'RABBITBONE_TTY_READ_NONBLOCK',
+    'RABBITBONE_THEME_OP_GET',
+    'RABBITBONE_THEME_OP_SET',
+    'RABBITBONE_THEME_MAX',
+    'RABBITBONE_SUDO_MAX_TTL_TICKS',
+    'RABBITBONE_SUDO_DEFAULT_TTL_TICKS',
+    'RABBITBONE_SUDO_FLAG_PERSIST',
+    'RABBITBONE_SUDO_FLAG_ACTIVATE',
+    'RABBITBONE_SUDO_OP_SET_TIMEOUT',
+    'RABBITBONE_SUDO_OP_INVALIDATE',
+    'RABBITBONE_SUDO_OP_DROP',
+    'RABBITBONE_SUDO_OP_VALIDATE',
+    'RABBITBONE_SUDO_OP_STATUS',
+    'RABBITBONE_CRED_OP_USERINFO',
+    'RABBITBONE_CRED_OP_SET_EUID',
+    'RABBITBONE_CRED_OP_SET_USER',
+    'RABBITBONE_CRED_OP_LOGIN',
+    'RABBITBONE_CRED_OP_GET',
+    'RABBITBONE_GID_ROOT',
+    'RABBITBONE_UID_ROOT',
 }
 IDENT_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
-text = ABI.read_text(encoding='utf-8')
-values = {}
-for m in re.finditer(r'^#define\s+(AURORA_[A-Z0-9_]+)\s+((?:0x[0-9a-fA-F]+|[0-9]+)u?)$', text, re.MULTILINE):
-    name, raw = m.group(1), m.group(2)
-    if name in WANTED:
-        if not IDENT_RE.match(name):
-            raise SystemExit(f'invalid ABI identifier: {name}')
-        values[name] = int(raw.rstrip('u'), 0)
-missing = sorted(WANTED - values.keys())
-if missing:
-    raise SystemExit('missing ABI defines: ' + ', '.join(missing))
-OUT.parent.mkdir(parents=True, exist_ok=True)
-body = ['// Generated from include/aurora/abi.h by scripts/gen_rust_abi.py.', '// Do not edit by hand.']
-for name in sorted(values):
-    body.append(f'pub const {name}: u64 = {values[name]};')
-generated = '\n'.join(body) + '\n'
-if not re.fullmatch(r'(//[^\n]*\n|pub const AURORA_[A-Z0-9_]+: u64 = [0-9]+;\n)+', generated):
-    raise SystemExit('generated Rust ABI failed syntax whitelist')
-tmp = OUT.with_suffix(OUT.suffix + '.tmp')
-tmp.write_text(generated, encoding='utf-8')
-os.replace(tmp, OUT)
+DEFINE_RE = re.compile(r'^#define\s+(RABBITBONE_[A-Z0-9_]+)\s+((?:0x[0-9a-fA-F]+|[0-9]+)u?)$', re.MULTILINE)
+GENERATED_RE = re.compile(r'(//[^\n]*\n|pub const RABBITBONE_[A-Z0-9_]+: u64 = [0-9]+;\n)+')
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
+            tmp.write(text)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 2:
+        print(f'usage: {argv[0]} [OUT]', file=sys.stderr)
+        return 2
+    out = Path(argv[1]) if len(argv) == 2 else ROOT / 'build' / 'kernel' / 'rust' / 'abi_generated.rs'
+    text = ABI.read_text(encoding='utf-8')
+    values = {}
+    for m in DEFINE_RE.finditer(text):
+        name, raw = m.group(1), m.group(2)
+        if name in WANTED:
+            if not IDENT_RE.match(name):
+                raise SystemExit(f'invalid ABI identifier: {name}')
+            value = int(raw.rstrip('u'), 0)
+            if value < 0:
+                raise SystemExit(f'invalid negative ABI value: {name}')
+            values[name] = value
+    missing = sorted(WANTED - values.keys())
+    if missing:
+        raise SystemExit('missing ABI defines: ' + ', '.join(missing))
+
+    body = ['// Generated from include/rabbitbone/abi.h by scripts/gen_rust_abi.py.', '// Do not edit by hand.']
+    for name in sorted(values):
+        body.append(f'pub const {name}: u64 = {values[name]};')
+    generated = '\n'.join(body) + '\n'
+    if not GENERATED_RE.fullmatch(generated):
+        raise SystemExit('generated Rust ABI failed syntax whitelist')
+    atomic_write_text(out, generated)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv))

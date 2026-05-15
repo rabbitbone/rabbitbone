@@ -1,4 +1,4 @@
-static AURORA_NORETURN void leave_user_scheduler(void) {
+static RABBITBONE_NORETURN void leave_user_scheduler(void) {
     vmm_switch_kernel();
     arch_user_return_from_interrupt();
 }
@@ -116,7 +116,7 @@ bool process_after_syscall(cpu_regs_t *regs) {
 }
 
 
-AURORA_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 code) {
+RABBITBONE_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 code) {
     if (current_proc.active && async_scheduler_active) {
         (void)resolve_current_async_slot();
         current_proc.result.exit_code = code;
@@ -135,7 +135,7 @@ AURORA_NORETURN void process_exit_current_from_syscall(cpu_regs_t *regs, i32 cod
     arch_user_return_from_interrupt();
 }
 
-AURORA_NORETURN void process_exit_from_interrupt(i32 code) {
+RABBITBONE_NORETURN void process_exit_from_interrupt(i32 code) {
     if (current_proc.active) {
         current_proc.result.exit_code = code;
         current_proc.returned = true;
@@ -144,7 +144,7 @@ AURORA_NORETURN void process_exit_from_interrupt(i32 code) {
     arch_user_return_from_interrupt();
 }
 
-AURORA_NORETURN void process_fault_from_interrupt(u64 vector, u64 rip, u64 cr2) {
+RABBITBONE_NORETURN void process_fault_from_interrupt(u64 vector, u64 rip, u64 cr2) {
     if (current_proc.active) {
         current_proc.result.exit_code = -128 - (i32)vector;
         current_proc.result.faulted = true;

@@ -104,7 +104,7 @@ static void enter_ready_slot(usize idx) {
     cpu_sti();
 }
 
-AURORA_NORETURN void process_scheduler_loop(void) {
+RABBITBONE_NORETURN void process_scheduler_loop(void) {
     if (!async_slots) PANIC("user scheduler loop started before process_init");
     async_scheduler_active = true;
     reschedule_requested = false;

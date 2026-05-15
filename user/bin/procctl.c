@@ -1,18 +1,18 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static volatile int sig_seen;
-static void on_sigusr1(int sig) { if (sig == (int)AURORA_SIGUSR1) ++sig_seen; }
+static void on_sigusr1(int sig) { if (sig == (int)RABBITBONE_SIGUSR1) ++sig_seen; }
 static int fail(int code) { return code; }
 
 static int signal_job_tests(void) {
-    if (au_signal(AURORA_SIGUSR1, on_sigusr1) == (au_sighandler_t)(unsigned long)AURORA_SIG_ERR) return fail(110);
-    if (au_raise(AURORA_SIGUSR1) != 0 || sig_seen != 1) return fail(111);
-    au_u64 mask = 1ull << AURORA_SIGUSR1;
-    if (au_sigprocmask(AURORA_SIG_BLOCK, &mask, 0) != 0) return fail(112);
-    if (au_raise(AURORA_SIGUSR1) != 0 || sig_seen != 1) return fail(113);
+    if (au_signal(RABBITBONE_SIGUSR1, on_sigusr1) == (au_sighandler_t)(unsigned long)RABBITBONE_SIG_ERR) return fail(110);
+    if (au_raise(RABBITBONE_SIGUSR1) != 0 || sig_seen != 1) return fail(111);
+    au_u64 mask = 1ull << RABBITBONE_SIGUSR1;
+    if (au_sigprocmask(RABBITBONE_SIG_BLOCK, &mask, 0) != 0) return fail(112);
+    if (au_raise(RABBITBONE_SIGUSR1) != 0 || sig_seen != 1) return fail(113);
     au_u64 pending = 0;
     if (au_sigpending(&pending) != 0 || (pending & mask) == 0) return fail(114);
-    if (au_sigprocmask(AURORA_SIG_UNBLOCK, &mask, 0) != 0 || sig_seen != 2) return fail(115);
+    if (au_sigprocmask(RABBITBONE_SIG_UNBLOCK, &mask, 0) != 0 || sig_seen != 2) return fail(115);
 
     au_i64 self = au_getpid();
     au_i64 pg = au_getpgrp();
@@ -27,14 +27,14 @@ static int signal_job_tests(void) {
     if (au_setpgid((unsigned int)child, (unsigned int)child) != 0) return fail(120);
     if (au_getpgid((unsigned int)child) != child) return fail(121);
     if (au_tcsetpgrp((unsigned int)child) != 0 || au_tcgetpgrp() != child) return fail(122);
-    if (au_kill((unsigned int)child, AURORA_SIGTERM) != 0) return fail(123);
+    if (au_kill((unsigned int)child, RABBITBONE_SIGTERM) != 0) return fail(123);
     au_procinfo_t info;
     au_memset(&info, 0, sizeof(info));
     if (au_wait((unsigned int)child, &info) != 0) return fail(124);
-    if (info.exit_code != 128 + (int)AURORA_SIGTERM || info.pgrp != (unsigned int)child) return fail(125);
+    if (info.exit_code != 128 + (int)RABBITBONE_SIGTERM || info.pgrp != (unsigned int)child) return fail(125);
     if (au_tcsetpgrp((unsigned int)pg) != 0) return fail(126);
-    if (au_signal(AURORA_SIGKILL, on_sigusr1) != (au_sighandler_t)(unsigned long)AURORA_SIG_ERR) return fail(127);
-    if (au_kill(0x7ffffffeu, AURORA_SIGTERM) >= 0) return fail(128);
+    if (au_signal(RABBITBONE_SIGKILL, on_sigusr1) != (au_sighandler_t)(unsigned long)RABBITBONE_SIG_ERR) return fail(127);
+    if (au_kill(0x7ffffffeu, RABBITBONE_SIGTERM) >= 0) return fail(128);
     return 0;
 }
 

@@ -86,8 +86,10 @@ void *krealloc(void *ptr, usize new_size) {
         return ptr;
     }
     if (b->next && b->next->free && blocks_physically_adjacent(b, b->next)) {
-        usize combined = b->size + sizeof(kmem_block_t) + b->next->size;
-        if (combined >= new_size) {
+        usize combined = 0;
+        bool combined_ok = !__builtin_add_overflow(b->size, sizeof(kmem_block_t), &combined) &&
+                           !__builtin_add_overflow(combined, b->next->size, &combined);
+        if (combined_ok && combined >= new_size) {
             kmem_block_t *n = b->next;
             stats.free_bytes -= n->size;
             stats.used_bytes += sizeof(kmem_block_t) + n->size;

@@ -9,7 +9,9 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     if (st != EXT4_OK) return st;
     if (!ext4_inode_is_dir(&parent)) return EXT4_ERR_NOT_DIR;
     u32 tmp_ino = 0;
-    if (ext4_find_in_dir(mnt, &parent, name, &tmp_ino, 0) == EXT4_OK) return EXT4_ERR_EXIST;
+    st = ext4_find_in_dir(mnt, &parent, name, &tmp_ino, 0);
+    if (st == EXT4_OK) return EXT4_ERR_EXIST;
+    if (st != EXT4_ERR_NOT_FOUND) return st;
     u32 ino = 0;
     st = alloc_inode(mnt, dir, &ino);
     if (st != EXT4_OK) return st;
@@ -41,6 +43,7 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     if (st != EXT4_OK) goto fail_blocks;
     linked = true;
     if (dir) {
+        if (parent_links_before == 0xffffu) { st = EXT4_ERR_RANGE; goto fail_linked; }
         parent.i_links_count = (u16)(parent_links_before + 1u);
         st = write_inode(mnt, parent_ino, &parent);
         if (st != EXT4_OK) {

@@ -1,12 +1,12 @@
-#include <aurora/ahci.h>
-#include <aurora/pci.h>
-#include <aurora/block.h>
-#include <aurora/memory.h>
-#include <aurora/vmm.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/console.h>
+#include <rabbitbone/ahci.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/console.h>
 
 #define AHCI_MAX_CONTROLLERS 2u
 #define AHCI_MAX_DEVS 4u
@@ -69,21 +69,21 @@ typedef volatile struct ahci_hba_regs {
     ahci_port_regs_t ports[32];
 } ahci_hba_regs_t;
 
-typedef struct AURORA_PACKED ahci_prdt_entry {
+typedef struct RABBITBONE_PACKED ahci_prdt_entry {
     u32 dba;
     u32 dbau;
     u32 rsv0;
     u32 dbc_i;
 } ahci_prdt_entry_t;
 
-typedef struct AURORA_PACKED ahci_cmd_table {
+typedef struct RABBITBONE_PACKED ahci_cmd_table {
     u8 cfis[64];
     u8 acmd[16];
     u8 rsv[48];
     ahci_prdt_entry_t prdt[1];
 } ahci_cmd_table_t;
 
-typedef struct AURORA_PACKED ahci_cmd_header {
+typedef struct RABBITBONE_PACKED ahci_cmd_header {
     u16 flags;
     u16 prdtl;
     u32 prdbc;
@@ -114,17 +114,35 @@ static bool ahci_wait_clear(volatile u32 *reg, u32 mask) {
     return false;
 }
 
-static void ahci_map_abar(u64 base, u64 size) {
+static bool ahci_map_abar(u64 base, u64 size) {
     if (size == 0) size = 0x2000;
-    u64 start = AURORA_ALIGN_DOWN(base, PAGE_SIZE);
-    u64 end = AURORA_ALIGN_UP(base + size, PAGE_SIZE);
+    if (base == 0 || base >= MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    u64 raw_end = 0;
+    if (__builtin_add_overflow(base, size, &raw_end)) return false;
+    if (raw_end > MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    u64 start = RABBITBONE_ALIGN_DOWN(base, PAGE_SIZE);
+    u64 end = 0;
+    if (!rabbitbone_align_up_u64_checked(raw_end, PAGE_SIZE, &end)) return false;
     for (u64 p = start; p < end; p += PAGE_SIZE) {
         uptr phys = 0;
         u64 flags = 0;
         if (!vmm_translate((uptr)p, &phys, &flags)) {
-            (void)vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_WRITETHR | VMM_GLOBAL);
+            if (!vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_WRITETHR | VMM_GLOBAL)) return false;
         }
     }
+    return true;
+}
+
+static void ahci_free_port_allocations(ahci_disk_t *d) {
+    if (!d) return;
+    if (d->cmd_list) memory_free_page(d->cmd_list);
+    if (d->fis) memory_free_page(d->fis);
+    if (d->cmd_table) memory_free_page(d->cmd_table);
+    if (d->bounce) memory_free_page(d->bounce);
+    d->cmd_list = 0;
+    d->fis = 0;
+    d->cmd_table = 0;
+    d->bounce = 0;
 }
 
 static bool ahci_stop_port(ahci_port_regs_t *p) {
@@ -146,7 +164,10 @@ static bool ahci_prepare_port(ahci_disk_t *d) {
     d->fis = memory_alloc_page_below(MEMORY_KERNEL_DIRECT_LIMIT);
     d->cmd_table = (ahci_cmd_table_t *)memory_alloc_page_below(MEMORY_KERNEL_DIRECT_LIMIT);
     d->bounce = memory_alloc_page_below(MEMORY_KERNEL_DIRECT_LIMIT);
-    if (!d->cmd_list || !d->fis || !d->cmd_table || !d->bounce) return false;
+    if (!d->cmd_list || !d->fis || !d->cmd_table || !d->bounce) {
+        ahci_free_port_allocations(d);
+        return false;
+    }
     memset(d->cmd_list, 0, PAGE_SIZE);
     memset(d->fis, 0, PAGE_SIZE);
     memset(d->cmd_table, 0, PAGE_SIZE);
@@ -230,6 +251,11 @@ static block_status_t ahci_issue_nodata(ahci_disk_t *d, u8 cmd) {
 }
 
 static block_status_t ahci_read(block_device_t *bd, u64 lba, u32 count, void *buffer) {
+    if (!bd || !bd->ctx || !buffer || count == 0) return BLOCK_ERR_INVALID;
+    if (bd->sector_count && (lba >= bd->sector_count || (u64)count > bd->sector_count - lba)) return BLOCK_ERR_RANGE;
+    usize total = 0;
+    if (__builtin_mul_overflow((usize)count, (usize)AHCI_SECTOR_SIZE, &total)) return BLOCK_ERR_RANGE;
+    (void)total;
     ahci_disk_t *d = (ahci_disk_t *)bd->ctx;
     u8 *out = (u8 *)buffer;
     for (u32 i = 0; i < count; ++i) {
@@ -241,6 +267,11 @@ static block_status_t ahci_read(block_device_t *bd, u64 lba, u32 count, void *bu
 }
 
 static block_status_t ahci_write(block_device_t *bd, u64 lba, u32 count, const void *buffer) {
+    if (!bd || !bd->ctx || !buffer || count == 0) return BLOCK_ERR_INVALID;
+    if (bd->sector_count && (lba >= bd->sector_count || (u64)count > bd->sector_count - lba)) return BLOCK_ERR_RANGE;
+    usize total = 0;
+    if (__builtin_mul_overflow((usize)count, (usize)AHCI_SECTOR_SIZE, &total)) return BLOCK_ERR_RANGE;
+    (void)total;
     ahci_disk_t *d = (ahci_disk_t *)bd->ctx;
     const u8 *in = (const u8 *)buffer;
     for (u32 i = 0; i < count; ++i) {
@@ -248,13 +279,13 @@ static block_status_t ahci_write(block_device_t *bd, u64 lba, u32 count, const v
         block_status_t st = ahci_issue_one(d, ATA_CMD_WRITE_DMA_EXT, lba + i, true, d->bounce);
         if (st != BLOCK_OK) return st;
     }
-    (void)ahci_issue_nodata(d, ATA_CMD_FLUSH_CACHE_EXT);
-    return BLOCK_OK;
+    block_status_t fl = ahci_issue_nodata(d, ATA_CMD_FLUSH_CACHE_EXT);
+    return fl == BLOCK_OK ? BLOCK_OK : fl;
 }
 
 static block_status_t ahci_flush(block_device_t *bd) {
+    if (!bd || !bd->ctx) return BLOCK_ERR_INVALID;
     ahci_disk_t *d = (ahci_disk_t *)bd->ctx;
-    if (!d) return BLOCK_ERR_INVALID;
     return ahci_issue_nodata(d, ATA_CMD_FLUSH_CACHE_EXT);
 }
 
@@ -283,14 +314,18 @@ static bool ahci_probe_port(ahci_hba_regs_t *hba, const pci_device_t *pd, u8 por
     d->pci_func = pd->function;
     d->port_no = port_no;
     d->disk_no = (u8)ahci_disk_count;
-    if (!ahci_prepare_port(d)) return false;
+    if (!ahci_prepare_port(d)) {
+        ahci_free_port_allocations(d);
+        return false;
+    }
     block_status_t st = ahci_issue_one(d, ATA_CMD_IDENTIFY_DEVICE, 0, false, d->bounce);
     if (st != BLOCK_OK) {
         KLOG(LOG_WARN, "ahci", "port %u identify failed: %s", port_no, block_status_name(st));
+        ahci_free_port_allocations(d);
         return false;
     }
     d->sectors = ahci_identify_sectors((const u16 *)d->bounce);
-    if (!d->sectors) return false;
+    if (!d->sectors) { ahci_free_port_allocations(d); return false; }
     block_device_t *bd = &d->block;
     ksnprintf(bd->name, sizeof(bd->name), "ahci%u", d->disk_no);
     bd->driver = "ahci";
@@ -303,7 +338,7 @@ static bool ahci_probe_port(ahci_hba_regs_t *hba, const pci_device_t *pd, u8 por
     bd->read = ahci_read;
     bd->write = ahci_write;
     bd->flush = ahci_flush;
-    if (!block_register(bd)) return false;
+    if (!block_register(bd)) { ahci_free_port_allocations(d); return false; }
     KLOG(LOG_INFO, "ahci", "registered %s pci=%02x:%02x.%u port=%u sectors=%llu", bd->name, pd->bus, pd->device, pd->function, port_no, (unsigned long long)d->sectors);
     ++ahci_disk_count;
     return true;
@@ -319,7 +354,11 @@ void ahci_init(void) {
             KLOG(LOG_WARN, "ahci", "controller %02x:%02x.%u missing ABAR", pd->bus, pd->device, pd->function);
             continue;
         }
-        ahci_map_abar(abar->base, abar->size ? abar->size : 0x2000);
+        if (!ahci_map_abar(abar->base, abar->size ? abar->size : 0x2000)) {
+            KLOG(LOG_WARN, "ahci", "controller %02x:%02x.%u ABAR 0x%llx size=0x%llx is invalid or unmappable",
+                 pd->bus, pd->device, pd->function, (unsigned long long)abar->base, (unsigned long long)abar->size);
+            continue;
+        }
         pci_config_write16(pd->bus, pd->device, pd->function, 0x04, pci_config_read16(pd->bus, pd->device, pd->function, 0x04) | 0x0006u);
         ahci_hba_regs_t *hba = (ahci_hba_regs_t *)(uptr)abar->base;
         hba->ghc |= AHCI_GHC_AE;

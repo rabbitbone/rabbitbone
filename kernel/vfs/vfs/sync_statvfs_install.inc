@@ -121,7 +121,7 @@ void vfs_dump_mounts(void) {
 }
 
 bool vfs_rust_route_selftest(void) {
-    return aurora_rust_vfs_route_selftest();
+    return rabbitbone_rust_vfs_route_selftest();
 }
 
 const char *vfs_status_name(vfs_status_t st) {
