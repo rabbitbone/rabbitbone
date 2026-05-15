@@ -1,26 +1,28 @@
 #pragma once
 
-#include <aurora/process.h>
-#include <aurora/elf64.h>
-#include <aurora/vfs.h>
-#include <aurora/vmm.h>
-#include <aurora/memory.h>
-#include <aurora/console.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/arch/io.h>
-#include <aurora/syscall.h>
-#include <aurora/scheduler.h>
-#include <aurora/task.h>
-#include <aurora/timer.h>
-#include <aurora/drivers.h>
-#include <aurora/rust.h>
-#include <aurora/panic.h>
-#include <aurora/path.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/elf64.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/arch/gdt.h>
+#include <rabbitbone/syscall.h>
+#include <rabbitbone/scheduler.h>
+#include <rabbitbone/task.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/rust.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/tty.h>
 
-#define USER_IMAGE_BASE      ELF64_AURORA_USER_IMAGE_BASE
-#define USER_SPACE_LIMIT     ELF64_AURORA_USER_SPACE_LIMIT
+#define USER_IMAGE_BASE      ELF64_RABBITBONE_USER_IMAGE_BASE
+#define USER_SPACE_LIMIT     ELF64_RABBITBONE_USER_SPACE_LIMIT
 #define USER_STACK_TOP       0x0000010100000000ull
 #define USER_STACK_PAGES     8u
 #define USER_STACK_GUARD_PAGES 1u
@@ -127,16 +129,16 @@ typedef struct active_process {
     uptr heap_limit;
     u8 fd_snapshot[SYSCALL_USER_HANDLE_SNAPSHOT_BYTES];
     char cwd[VFS_PATH_MAX];
-    aurora_credinfo_t cred;
+    rabbitbone_credinfo_t cred;
     u64 signal_pending;
     u64 signal_blocked;
     bool signal_in_handler;
-    process_signal_action_t signal_actions[AURORA_NSIG];
+    process_signal_action_t signal_actions[RABBITBONE_NSIG];
 } active_process_t;
 
 extern void arch_user_enter(u64 entry, u64 user_rsp, u64 argc, u64 argv, u64 aux);
 extern void arch_user_resume(const cpu_regs_t *regs);
-extern void arch_user_return_from_interrupt(void) AURORA_NORETURN;
+extern void arch_user_return_from_interrupt(void) RABBITBONE_NORETURN;
 
 extern u64 arch_user_saved_rsp;
 extern u64 arch_user_saved_rbp;

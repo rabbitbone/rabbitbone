@@ -1,13 +1,13 @@
 #pragma once
 
-#include <aurora/ext4_vfs.h>
-#include <aurora/ext4.h>
-#include <aurora/block.h>
-#include <aurora/mbr.h>
-#include <aurora/kmem.h>
-#include <aurora/path.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
+#include <rabbitbone/ext4_vfs.h>
+#include <rabbitbone/ext4.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/mbr.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
 
 typedef struct ext4_vfs_ctx {
     ext4_mount_t mount;

@@ -1,7 +1,7 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static void put(const char *s) {
-    if (s) (void)au_write((au_i64)AURORA_STDOUT, s, au_strlen(s));
+    if (s) (void)au_write((au_i64)RABBITBONE_STDOUT, s, au_strlen(s));
 }
 
 static void put_u64(au_u64 v) {
@@ -29,40 +29,30 @@ static void put_i64(au_i64 v) {
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    put("init: pid=");
-    put_i64(au_getpid());
-    put(" starting /disk0/bin/sh\n");
 
     for (;;) {
-        const char *sh_argv[] = { "/disk0/bin/sh", "--login", "aurora" };
+        const char *sh_argv[] = { "/disk0/bin/sh", "--login", "rabbitbone" };
         au_i64 pid = au_spawnv("/disk0/bin/sh", 3, sh_argv);
         if (pid < 0) {
-            put("init: cannot spawn /disk0/bin/sh, retrying\n");
+            put("init: shell unavailable\n");
             (void)au_sleep(100);
             continue;
         }
-        put("init: /disk0/bin/sh pid=");
-        put_i64(pid);
-        put("\n");
 
         au_procinfo_t info;
         au_memset(&info, 0, sizeof(info));
         au_i64 waited = au_wait((unsigned int)pid, &info);
         if (waited < 0) {
-            put("init: wait failed for shell pid=");
-            put_i64(pid);
-            put("\n");
+            put("init: wait failed\n");
             (void)au_sleep(25);
             continue;
         }
-        put("init: /disk0/bin/sh exited pid=");
-        put_u64(info.pid);
-        put(" exit=");
-        put_i64(info.exit_code);
-        put(" state=");
-        put_u64(info.state);
-        if (info.faulted) put(" faulted=1");
-        put(", restarting\n");
+        if (info.faulted || info.exit_code != 0) {
+            put("init: shell stopped exit=");
+            put_i64(info.exit_code);
+            if (info.faulted) put(" faulted");
+            put("\n");
+        }
         (void)au_sleep(10);
     }
 }

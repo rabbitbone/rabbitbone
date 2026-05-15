@@ -1,13 +1,14 @@
 #pragma once
 
-#include <aurora/ramfs.h>
-#include <aurora/version.h>
-#include <aurora/kmem.h>
-#include <aurora/path.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/spinlock.h>
-#include <aurora/abi.h>
+#include <rabbitbone/ramfs.h>
+#include <rabbitbone/version.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/spinlock.h>
+#include <rabbitbone/abi.h>
+#include <rabbitbone/rust.h>
 
 #define RAMFS_MAX_FILE_SIZE (16ull * 1024ull * 1024ull)
 #define RAMFS_MAX_TOTAL_BYTES (64ull * 1024ull * 1024ull)

@@ -1,7 +1,7 @@
-    check(ktest_cleanup_disk_prefix("aurora-dirent-repair"), "cleanup old aurora-dirent-repair artifacts");
+    check(ktest_cleanup_disk_prefix("rabbitbone-dirent-repair"), "cleanup old rabbitbone-dirent-repair artifacts");
     char dirent_dir[96];
     char dirent_child[128];
-    ksnprintf(dirent_dir, sizeof(dirent_dir), "/disk0/aurora-dirent-repair");
+    ksnprintf(dirent_dir, sizeof(dirent_dir), "/disk0/rabbitbone-dirent-repair");
     ksnprintf(dirent_child, sizeof(dirent_child), "%s/file.txt", dirent_dir);
     const char *dirent_raw = ktest_disk_raw_path(dirent_dir);
     (void)vfs_unlink(dirent_child);

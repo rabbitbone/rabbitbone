@@ -1,13 +1,28 @@
-#include <aurora/bitmap.h>
-#include <aurora/libc.h>
+#include <rabbitbone/bitmap.h>
+#include <rabbitbone/libc.h>
 
-static usize word_count(usize bits) { return (bits + 63u) / 64u; }
+static bool word_count_checked(usize bits, usize *out) {
+    if (!out) return false;
+    if (bits > ((usize)-1) - 63u) return false;
+    usize words = (bits + 63u) / 64u;
+    if (words > ((usize)-1) / sizeof(u64)) return false;
+    *out = words;
+    return true;
+}
 
 void bitmap_init(bitmap_t *bm, u64 *storage, usize bits) {
     if (!bm) return;
+    bm->words = 0;
+    bm->bit_count = 0;
+    if (!storage || !bits) {
+        bm->words = storage;
+        return;
+    }
+    usize words = 0;
+    if (!word_count_checked(bits, &words)) return;
     bm->words = storage;
-    bm->bit_count = storage ? bits : 0u;
-    if (storage && bits) memset(storage, 0, word_count(bits) * sizeof(u64));
+    bm->bit_count = bits;
+    memset(storage, 0, words * sizeof(u64));
 }
 
 void bitmap_set(bitmap_t *bm, usize bit) {
@@ -27,7 +42,8 @@ bool bitmap_test(const bitmap_t *bm, usize bit) {
 
 bool bitmap_find_first_set(const bitmap_t *bm, usize *out) {
     if (!bm || !bm->words) return false;
-    usize words = word_count(bm->bit_count);
+    usize words = 0;
+    if (!word_count_checked(bm->bit_count, &words)) return false;
     for (usize i = 0; i < words; ++i) {
         u64 w = bm->words[i];
         if (!w) continue;
@@ -45,7 +61,8 @@ bool bitmap_find_first_set(const bitmap_t *bm, usize *out) {
 
 bool bitmap_find_first_clear(const bitmap_t *bm, usize *out) {
     if (!bm || !bm->words) return false;
-    usize words = word_count(bm->bit_count);
+    usize words = 0;
+    if (!word_count_checked(bm->bit_count, &words)) return false;
     for (usize i = 0; i < words; ++i) {
         u64 w = ~bm->words[i];
         if (!w) continue;
@@ -64,7 +81,8 @@ bool bitmap_find_first_clear(const bitmap_t *bm, usize *out) {
 usize bitmap_count_set(const bitmap_t *bm) {
     if (!bm || !bm->words) return 0;
     usize total = 0;
-    usize words = word_count(bm->bit_count);
+    usize words = 0;
+    if (!word_count_checked(bm->bit_count, &words)) return 0;
     for (usize i = 0; i < words; ++i) {
         u64 w = bm->words[i];
         if (i + 1u == words && (bm->bit_count % 64u) != 0) {

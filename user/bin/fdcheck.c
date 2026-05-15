@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 int main(void) {
     au_i64 h = au_open("/etc/motd");
@@ -31,18 +31,18 @@ int main(void) {
 
     const char *p = "/tmp/fdcheck-openflags.txt";
     au_unlink(p);
-    au_i64 fh = au_open2(p, AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR | AURORA_O_CLOEXEC);
+    au_i64 fh = au_open2(p, RABBITBONE_O_CREAT | RABBITBONE_O_EXCL | RABBITBONE_O_RDWR | RABBITBONE_O_CLOEXEC);
     if (fh < 0) return 18;
-    if (au_fdinfo(fh, &fi) != 0 || !(fi.flags & AURORA_FD_CLOEXEC) || (fi.open_flags & (AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR)) != (AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDWR)) return 19;
+    if (au_fdinfo(fh, &fi) != 0 || !(fi.flags & RABBITBONE_FD_CLOEXEC) || (fi.open_flags & (RABBITBONE_O_CREAT | RABBITBONE_O_EXCL | RABBITBONE_O_RDWR)) != (RABBITBONE_O_CREAT | RABBITBONE_O_EXCL | RABBITBONE_O_RDWR)) return 19;
     if (au_write(fh, "123", 3) != 3) return 20;
-    if (au_seek_ex(fh, -1, AURORA_SEEK_CUR) != 2) return 21;
-    if (au_seek_ex(fh, 0, AURORA_SEEK_END) != 3) return 22;
-    if (au_open2(p, AURORA_O_CREAT | AURORA_O_EXCL | AURORA_O_RDONLY) >= 0) return 23;
-    au_i64 ro = au_open2(p, AURORA_O_RDONLY);
+    if (au_seek_ex(fh, -1, RABBITBONE_SEEK_CUR) != 2) return 21;
+    if (au_seek_ex(fh, 0, RABBITBONE_SEEK_END) != 3) return 22;
+    if (au_open2(p, RABBITBONE_O_CREAT | RABBITBONE_O_EXCL | RABBITBONE_O_RDONLY) >= 0) return 23;
+    au_i64 ro = au_open2(p, RABBITBONE_O_RDONLY);
     if (ro < 0) return 24;
     if (au_write(ro, "x", 1) >= 0) return 25;
     if (au_close(ro) != 0) return 26;
-    au_i64 ah = au_open2(p, AURORA_O_WRONLY | AURORA_O_APPEND);
+    au_i64 ah = au_open2(p, RABBITBONE_O_WRONLY | RABBITBONE_O_APPEND);
     if (ah < 0) return 27;
     if (au_write(ah, "A", 1) != 1) return 28;
     if (au_close(ah) != 0) return 29;
@@ -53,19 +53,19 @@ int main(void) {
     if (au_ftruncate(fh, 2) != 0) return 32;
     if (au_fstat(fh, &st) != 0 || st.size != 2) return 33;
     if (au_close(fh) != 0) return 34;
-    au_i64 th = au_open2(p, AURORA_O_TRUNC | AURORA_O_RDWR);
+    au_i64 th = au_open2(p, RABBITBONE_O_TRUNC | RABBITBONE_O_RDWR);
     if (th < 0) return 35;
     if (au_fstat(th, &st) != 0 || st.size != 0) return 36;
     if (au_close(th) != 0) return 37;
-    if (au_open2(p, AURORA_O_DIRECTORY) >= 0) return 38;
+    if (au_open2(p, RABBITBONE_O_DIRECTORY) >= 0) return 38;
     if (au_unlink(p) != 0) return 39;
-    dh = au_open2("/", AURORA_O_DIRECTORY);
+    dh = au_open2("/", RABBITBONE_O_DIRECTORY);
     if (dh <= 0) return 40;
     if (au_close(dh) != 0) return 41;
 
     const char *pre = "/disk0/fdcheck-prealloc.bin";
     au_unlink(pre);
-    au_i64 ph = au_open2(pre, AURORA_O_CREAT | AURORA_O_RDWR);
+    au_i64 ph = au_open2(pre, RABBITBONE_O_CREAT | RABBITBONE_O_RDWR);
     if (ph < 0) return 42;
     if (au_fpreallocate(ph, 8192) != 0) return 43;
     if (au_fstat(ph, &st) != 0 || st.size != 8192) return 44;

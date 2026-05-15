@@ -5,6 +5,7 @@ static block_status_t mem_read(block_device_t *dev, u64 lba, u32 count, void *bu
     const u64 len = static_cast<u64>(count) * 512ull;
     if (off > disk->data.size() || len > disk->data.size() - off) return BLOCK_ERR_RANGE;
     memcpy(buffer, disk->data.data() + off, static_cast<std::size_t>(len));
+    ++disk->reads;
     return BLOCK_OK;
 }
 
@@ -15,6 +16,7 @@ static block_status_t mem_write(block_device_t *dev, u64 lba, u32 count, const v
     const u64 len = static_cast<u64>(count) * 512ull;
     if (off > disk->data.size() || len > disk->data.size() - off) return BLOCK_ERR_RANGE;
     memcpy(disk->data.data() + off, buffer, static_cast<std::size_t>(len));
+    ++disk->writes;
     return BLOCK_OK;
 }
 
@@ -30,6 +32,18 @@ static void test_block_ranges() {
     u8 sector[512]{};
     require(block_read(&dev, 15, 2, sector) == BLOCK_ERR_RANGE, "block range end overflow rejected");
     require(block_read(&dev, UINT64_MAX, 2, sector) == BLOCK_ERR_RANGE, "block lba overflow rejected");
+    block_device_t reg{};
+    strncpy(reg.name, "blkdup", sizeof(reg.name) - 1);
+    reg.sector_count = 16;
+    reg.sector_size = 512;
+    reg.read = fail_read;
+    require(block_register(&reg), "block register accepts valid named device");
+    require(!block_register(&reg), "block register rejects duplicate device pointer");
+    block_device_t reg2 = reg;
+    require(!block_register(&reg2), "block register rejects duplicate device name");
+    block_device_t unnamed = reg;
+    memset(unnamed.name, 0, sizeof(unnamed.name));
+    require(!block_register(&unnamed), "block register rejects unnamed device");
     mbr_partition_t part{};
     part.type = 0x83;
     part.lba_first = 15;

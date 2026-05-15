@@ -1,4 +1,4 @@
-    const char *sparse_path = "/disk0/aurora-sparse.bin";
+    const char *sparse_path = "/disk0/rabbitbone-sparse.bin";
     (void)vfs_unlink(sparse_path);
     check(vfs_create(sparse_path, 0, 0) == VFS_OK, "VFS create empty ext4 extent file");
     const char tail[] = "tail";
@@ -18,7 +18,7 @@
     check(vfs_truncate(sparse_path, 1u) == VFS_OK && vfs_stat(sparse_path, &sparse_st) == VFS_OK && sparse_st.size == 1u, "EXT4 sparse extent file truncates smaller");
     check(vfs_unlink(sparse_path) == VFS_OK, "VFS unlink ext4 sparse extent file");
 
-    const char *perf_path = "/disk0/aurora-fullblock-perf.bin";
+    const char *perf_path = "/disk0/rabbitbone-fullblock-perf.bin";
     (void)vfs_unlink(perf_path);
     if (part) {
         ext4_mount_t perf_mnt_before;
@@ -42,7 +42,7 @@
         check(perf_ok, "EXT4 full-block data allocation skips eager zero-write safely");
         check(vfs_unlink(perf_path) == VFS_OK, "VFS unlink ext4 full-block perf file");
 
-        const char *buffered_path = "/disk0/aurora-buffered-data.bin";
+        const char *buffered_path = "/disk0/rabbitbone-buffered-data.bin";
         (void)vfs_unlink(buffered_path);
         ext4_mount_t buffered_mnt;
         ext4_perf_stats_t buffered_before;
@@ -71,7 +71,7 @@
         check(buffered_ok, "EXT4 buffered data cache serves immediate readback before sync");
         check(vfs_unlink(buffered_path) == VFS_OK, "VFS unlink ext4 buffered-data file");
 
-        const char *readahead_path = "/disk0/aurora-readahead-data.bin";
+        const char *readahead_path = "/disk0/rabbitbone-readahead-data.bin";
         (void)vfs_unlink(readahead_path);
         ext4_perf_stats_t read_policy_before;
         ext4_perf_stats_t read_policy_after;
@@ -97,7 +97,7 @@
         check(read_policy_ok, "EXT4 data cache read miss installs clean page and read-ahead");
         check(vfs_unlink(readahead_path) == VFS_OK, "VFS unlink ext4 readahead-data file");
 
-        const char *pressure_path = "/disk0/aurora-cache-pressure.bin";
+        const char *pressure_path = "/disk0/rabbitbone-cache-pressure.bin";
         (void)vfs_unlink(pressure_path);
         ext4_perf_stats_t pressure_before;
         ext4_perf_stats_t pressure_after;
@@ -121,7 +121,7 @@
         if (buffered_write) kfree(buffered_write);
         if (buffered_read) kfree(buffered_read);
 
-        const char *unwritten_path = "/disk0/aurora-unwritten.bin";
+        const char *unwritten_path = "/disk0/rabbitbone-unwritten.bin";
         (void)vfs_unlink(unwritten_path);
         ext4_mount_t unw_mnt;
         ext4_inode_disk_t unw_inode;
@@ -134,8 +134,8 @@
                       ext4_get_perf_stats(&unw_mnt, &unw_before) == EXT4_OK &&
                       unw_mnt.block_size * 3u <= 16384u &&
                       vfs_create(unwritten_path, 0, 0) == VFS_OK &&
-                      ext4_preallocate_file_path(&unw_mnt, "/aurora-unwritten.bin", unw_mnt.block_size * 3u) == EXT4_OK &&
-                      ext4_lookup_path(&unw_mnt, "/aurora-unwritten.bin", &unw_inode, &unw_ino) == EXT4_OK &&
+                      ext4_preallocate_file_path(&unw_mnt, "/rabbitbone-unwritten.bin", unw_mnt.block_size * 3u) == EXT4_OK &&
+                      ext4_lookup_path(&unw_mnt, "/rabbitbone-unwritten.bin", &unw_inode, &unw_ino) == EXT4_OK &&
                       ext4_inspect_inode_extents(&unw_mnt, &unw_inode, &unw_report) == EXT4_OK &&
                       unw_report.unwritten_blocks == 3u && unw_report.unwritten_extents == 1u &&
                       vfs_read(unwritten_path, 0, unw_read, sizeof(unw_read), &got) == VFS_OK && got == sizeof(unw_read);
@@ -146,7 +146,7 @@
         wrote = 0;
         bool unw_convert_ok = unw_ok &&
                               vfs_write(unwritten_path, unw_mnt.block_size + 17u, &uw, 1u, &wrote) == VFS_OK && wrote == 1u &&
-                              ext4_lookup_path(&unw_mnt, "/aurora-unwritten.bin", &unw_inode, &unw_ino) == EXT4_OK &&
+                              ext4_lookup_path(&unw_mnt, "/rabbitbone-unwritten.bin", &unw_inode, &unw_ino) == EXT4_OK &&
                               ext4_inspect_inode_extents(&unw_mnt, &unw_inode, &unw_report) == EXT4_OK &&
                               unw_report.unwritten_blocks == 2u && unw_report.data_blocks == 3u &&
                               ext4_get_perf_stats(&unw_mnt, &unw_after) == EXT4_OK &&
@@ -160,7 +160,7 @@
         check(unw_convert_ok, "EXT4 converts a written unwritten extent block without leaking stale data");
         check(vfs_truncate(unwritten_path, 0) == VFS_OK && vfs_unlink(unwritten_path) == VFS_OK, "VFS truncate/unlink ext4 unwritten preallocation file");
 
-        const char *vfs_prealloc_path = "/disk0/aurora-vfs-prealloc.bin";
+        const char *vfs_prealloc_path = "/disk0/rabbitbone-vfs-prealloc.bin";
         (void)vfs_unlink(vfs_prealloc_path);
         bool vfs_prealloc_ok = vfs_create(vfs_prealloc_path, 0, 0) == VFS_OK &&
                                vfs_preallocate(vfs_prealloc_path, unw_mnt.block_size * 5u + 19u) == VFS_OK;

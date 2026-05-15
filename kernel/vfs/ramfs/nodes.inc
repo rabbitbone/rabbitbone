@@ -56,8 +56,8 @@ static ramfs_object_t *object_create(ramfs_t *fs, vfs_node_type_t type) {
     if (o->inode == 0) { kfree(o); return 0; }
     o->mode = type == VFS_NODE_DIR ? 0755u : (type == VFS_NODE_SYMLINK ? 0777u : 0644u);
     o->nlink = type == VFS_NODE_DIR ? 2u : 1u;
-    o->uid = AURORA_UID_ROOT;
-    o->gid = AURORA_GID_ROOT;
+    o->uid = RABBITBONE_UID_ROOT;
+    o->gid = RABBITBONE_GID_ROOT;
     return o;
 }
 

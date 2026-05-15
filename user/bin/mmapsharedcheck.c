@@ -1,8 +1,8 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 #define PAGE 4096ul
-#define SHARED_FLAGS (AURORA_MAP_ANON | AURORA_MAP_SHARED)
-#define PRIVATE_FLAGS (AURORA_MAP_ANON | AURORA_MAP_PRIVATE)
+#define SHARED_FLAGS (RABBITBONE_MAP_ANON | RABBITBONE_MAP_SHARED)
+#define PRIVATE_FLAGS (RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE)
 #define PATH "/tmp/mmapsharedcheck.dat"
 
 static int wait_exit(unsigned int pid, unsigned int state, int exit_code, int faulted, unsigned long long vector) {
@@ -27,7 +27,7 @@ static int current_mapped_pages(unsigned long long *out) {
 }
 
 static int check_materialized_shared_fork(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, SHARED_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, SHARED_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 10;
     p[0] = 0x11u;
     p[PAGE] = 0x22u;
@@ -49,7 +49,7 @@ static int check_materialized_shared_fork(void) {
 static int check_unmaterialized_shared_fork(void) {
     unsigned long long before = 0, after_map = 0;
     if (current_mapped_pages(&before) != 0) return 40;
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, SHARED_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, SHARED_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 41;
     if (current_mapped_pages(&after_map) != 0) return 42;
     if (after_map != before) return 43;
@@ -68,7 +68,7 @@ static int check_unmaterialized_shared_fork(void) {
 }
 
 static int check_parent_write_seen_by_child(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, SHARED_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, SHARED_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 70;
     p[7] = 1u;
     au_i64 child = au_fork();
@@ -87,7 +87,7 @@ static int check_parent_write_seen_by_child(void) {
 }
 
 static int check_child_unmap_and_exec_release(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, SHARED_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, SHARED_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 100;
     p[0] = 0xa1u;
     au_i64 child = au_fork();
@@ -117,22 +117,22 @@ static int check_child_unmap_and_exec_release(void) {
 }
 
 static int check_rejects(void) {
-    if (mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, AURORA_MAP_ANON | AURORA_MAP_PRIVATE | AURORA_MAP_SHARED, -1, 0) != (void *)-1) return 150;
-    if (mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, AURORA_MAP_SHARED, -1, 0) != (void *)-1) return 151;
-    if (mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, SHARED_FLAGS, 0, 0) != (void *)-1) return 152;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE | RABBITBONE_MAP_SHARED, -1, 0) != (void *)-1) return 150;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, RABBITBONE_MAP_SHARED, -1, 0) != (void *)-1) return 151;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, SHARED_FLAGS, 0, 0) != (void *)-1) return 152;
     (void)au_unlink(PATH);
     if (au_create(PATH, "abc", 3) < 0) return 153;
-    au_i64 fd = au_open2(PATH, AURORA_O_RDONLY);
+    au_i64 fd = au_open2(PATH, RABBITBONE_O_RDONLY);
     if (fd < 0) return 154;
-    if (mmap(0, PAGE, AURORA_PROT_READ, AURORA_MAP_SHARED, fd, 0) != (void *)-1) return 155;
-    if (mmap(0, PAGE, AURORA_PROT_READ, AURORA_MAP_ANON | AURORA_MAP_SHARED, -1, PAGE) != (void *)-1) return 156;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ, RABBITBONE_MAP_SHARED, fd, 0) != (void *)-1) return 155;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ, RABBITBONE_MAP_ANON | RABBITBONE_MAP_SHARED, -1, PAGE) != (void *)-1) return 156;
     if (au_close(fd) != 0) return 157;
     (void)au_unlink(PATH);
     return 0;
 }
 
 static int check_private_still_cow(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, PRIVATE_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, PRIVATE_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 170;
     p[0] = 1u;
     au_i64 child = au_fork();

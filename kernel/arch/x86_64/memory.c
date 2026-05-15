@@ -1,10 +1,10 @@
-#include <aurora/memory.h>
-#include <aurora/bitmap.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/libc.h>
-#include <aurora/panic.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/bitmap.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/spinlock.h>
 
 extern char __kernel_start[];
 extern char __kernel_end[];
@@ -48,9 +48,9 @@ static void mark_range(u64 base, u64 length, bool free) {
     u64 end_addr = 0;
     u64 start_addr = 0;
     if (!range_end_checked(base, length, &end_addr)) return;
-    if (!aurora_align_up_u64_checked(base, PAGE_SIZE, &start_addr)) return;
+    if (!rabbitbone_align_up_u64_checked(base, PAGE_SIZE, &start_addr)) return;
     u64 start = start_addr / PAGE_SIZE;
-    u64 end = AURORA_ALIGN_DOWN(end_addr, PAGE_SIZE) / PAGE_SIZE;
+    u64 end = RABBITBONE_ALIGN_DOWN(end_addr, PAGE_SIZE) / PAGE_SIZE;
     if (start >= frame_count || end <= start) return;
     if (end > frame_count) end = frame_count;
     for (u64 f = start; f < end; ++f) {
@@ -59,17 +59,17 @@ static void mark_range(u64 base, u64 length, bool free) {
     }
 }
 
-void memory_init(const aurora_bootinfo_t *bootinfo) {
+void memory_init(const rabbitbone_bootinfo_t *bootinfo) {
     u64 flags = spin_lock_irqsave(&memory_lock);
     u64 max_addr = 0;
     total_usable = 0;
     if (bootinfo_validate(bootinfo)) {
         for (u16 i = 0; i < bootinfo->e820_count; ++i) {
-            const aurora_e820_entry_t *e = bootinfo_e820(bootinfo, i);
+            const rabbitbone_e820_entry_t *e = bootinfo_e820(bootinfo, i);
             if (!e || e->length == 0) continue;
             u64 end_addr = saturating_add_u64(e->base, e->length);
             if (end_addr > max_addr) max_addr = end_addr;
-            if (e->type == AURORA_E820_USABLE) total_usable = saturating_add_u64(total_usable, e->length);
+            if (e->type == RABBITBONE_E820_USABLE) total_usable = saturating_add_u64(total_usable, e->length);
         }
     }
     if (max_addr < 32ull * 1024ull * 1024ull) max_addr = 32ull * 1024ull * 1024ull;
@@ -82,8 +82,8 @@ void memory_init(const aurora_bootinfo_t *bootinfo) {
 
     if (bootinfo_validate(bootinfo)) {
         for (u16 i = 0; i < bootinfo->e820_count; ++i) {
-            const aurora_e820_entry_t *e = bootinfo_e820(bootinfo, i);
-            if (e && e->type == AURORA_E820_USABLE) mark_range(e->base, e->length, true);
+            const rabbitbone_e820_entry_t *e = bootinfo_e820(bootinfo, i);
+            if (e && e->type == RABBITBONE_E820_USABLE) mark_range(e->base, e->length, true);
         }
     } else {
         mark_range(0x200000, max_addr - 0x200000, true);
@@ -91,6 +91,12 @@ void memory_init(const aurora_bootinfo_t *bootinfo) {
 
     mark_range(0, 0x200000, false);
     mark_range((u64)(uptr)__kernel_start, (u64)(uptr)__kernel_end - (u64)(uptr)__kernel_start, false);
+    if (bootinfo_validate(bootinfo) && bootinfo->module_count != 0 && bootinfo->modules_addr != 0) {
+        const rabbitbone_boot_module_t *mods = (const rabbitbone_boot_module_t *)(uptr)bootinfo->modules_addr;
+        for (u16 i = 0; i < bootinfo->module_count; ++i) {
+            if (mods[i].base != 0 && mods[i].size != 0) mark_range(mods[i].base, mods[i].size, false);
+        }
+    }
     mark_range(FRAME_BITMAP_PHYS, FRAME_BITMAP_BYTES, false);
     mark_range(FRAME_REFCOUNT_PHYS, FRAME_REFCOUNT_BYTES, false);
     u16 *refs = FRAME_REFCOUNTS;

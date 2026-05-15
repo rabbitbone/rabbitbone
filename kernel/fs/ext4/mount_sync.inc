@@ -47,8 +47,9 @@ ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 par
     if (first_data > out->blocks_count) return EXT4_ERR_CORRUPT;
     if (out->inode_size < 128u || out->inode_size > block_size) return EXT4_ERR_UNSUPPORTED;
     if (out->group_desc_size < 32 || out->group_desc_size > sizeof(ext4_group_desc_disk_t) || (out->group_desc_size % 8u) != 0) return EXT4_ERR_UNSUPPORTED;
-    out->group_count = (u32)div_round_up_u64(out->blocks_count - first_data, out->blocks_per_group);
-    if (out->group_count == 0) return EXT4_ERR_CORRUPT;
+    u64 group_count64 = div_round_up_u64(out->blocks_count - first_data, out->blocks_per_group);
+    if (group_count64 == 0 || group_count64 > 0xffffffffull) return EXT4_ERR_CORRUPT;
+    out->group_count = (u32)group_count64;
     out->sb = sb;
     out->allocator_next_block = first_data;
     st = ext4_flush_data_cache_for_mount(out);
@@ -99,7 +100,7 @@ ext4_status_t ext4_sync_file(ext4_mount_t *mnt, u32 ino, bool data_only) {
     ext4_status_t st = ext4_read_inode(mnt, ino, &inode);
     if (st != EXT4_OK) return st;
     if (!ext4_inode_is_regular(&inode) && !ext4_inode_is_dir(&inode)) return EXT4_ERR_UNSUPPORTED;
-    st = ext4_flush_data_cache_for_mount(mnt);
+    st = ext4_flush_data_cache_for_inode(mnt, &inode);
     if (st != EXT4_OK) return st;
     st = ext4_flush_write_cache_for_mount(mnt);
     if (st != EXT4_OK) return st;

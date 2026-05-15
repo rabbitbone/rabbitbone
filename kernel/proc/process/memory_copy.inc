@@ -4,7 +4,7 @@ static bool process_vma_allows_write_at(const active_process_t *p, uptr page_vir
     for (usize i = 0; i < p->vma_count; ++i) {
         const user_vma_t *v = &p->vmas[i];
         if (v->start <= page_virt && v->end >= page_end) {
-            return (v->prot & AURORA_PROT_WRITE) != 0;
+            return (v->prot & RABBITBONE_PROT_WRITE) != 0;
         }
     }
     return false;
@@ -12,14 +12,14 @@ static bool process_vma_allows_write_at(const active_process_t *p, uptr page_vir
 
 static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr) {
     if (!p || !p->active || !user_addr_range_valid(fault_addr, 1u)) return false;
-    uptr page_virt = AURORA_ALIGN_DOWN(fault_addr, PAGE_SIZE);
+    uptr page_virt = RABBITBONE_ALIGN_DOWN(fault_addr, PAGE_SIZE);
     user_mapping_t *m = find_mapping(p, page_virt);
     if (!m || !(m->final_flags & VMM_COW) || (m->final_flags & VMM_WRITE)) return false;
     if (!process_vma_allows_write_at(p, page_virt)) return false;
     uptr phys = 0;
     u64 flags = 0;
     if (!vmm_space_translate(&p->space, page_virt, &phys, &flags)) return false;
-    phys = AURORA_ALIGN_DOWN(phys, PAGE_SIZE);
+    phys = RABBITBONE_ALIGN_DOWN(phys, PAGE_SIZE);
     if (phys != m->phys || !(flags & VMM_USER) || !(flags & VMM_COW) || (flags & VMM_WRITE)) return false;
     u32 refs = memory_page_refcount((void *)phys);
     if (refs == 0u) return false;
@@ -73,8 +73,8 @@ static bool copy_to_process_user_space(active_process_t *p, uptr user, const voi
         uptr phys = 0;
         u64 flags = 0;
         if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return false;
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         usize n = step_info.chunk;
         memcpy((void *)phys, s + done, n);
         done += n;
@@ -100,8 +100,8 @@ bool process_copy_string_from_user(uptr user, char *out, usize out_size) {
 
 
 static bool process_vma_is_shared_anon(const user_vma_t *v) {
-    return v && v->kind == USER_VMA_MMAP && (v->flags & AURORA_MAP_ANON) != 0 &&
-           (v->flags & AURORA_MAP_SHARED) != 0 && v->file_id != USER_SHARED_ANON_INVALID;
+    return v && v->kind == USER_VMA_MMAP && (v->flags & RABBITBONE_MAP_ANON) != 0 &&
+           (v->flags & RABBITBONE_MAP_SHARED) != 0 && v->file_id != USER_SHARED_ANON_INVALID;
 }
 
 static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt) {
@@ -213,32 +213,32 @@ static bool process_vma_ranges_overlap(uptr a0, uptr a1, uptr b0, uptr b1) {
 }
 
 static bool process_prot_valid(u32 prot) {
-    if ((prot & ~AURORA_PROT_SUPPORTED) != 0) return false;
-    if ((prot & AURORA_PROT_WRITE) && (prot & AURORA_PROT_EXEC)) return false;
+    if ((prot & ~RABBITBONE_PROT_SUPPORTED) != 0) return false;
+    if ((prot & RABBITBONE_PROT_WRITE) && (prot & RABBITBONE_PROT_EXEC)) return false;
     return prot != 0;
 }
 
 static bool process_mmap_flags_valid(u32 flags) {
-    if ((flags & ~AURORA_MAP_SUPPORTED) != 0) return false;
-    u32 sharing = flags & (AURORA_MAP_PRIVATE | AURORA_MAP_SHARED);
-    return sharing == AURORA_MAP_PRIVATE || sharing == AURORA_MAP_SHARED;
+    if ((flags & ~RABBITBONE_MAP_SUPPORTED) != 0) return false;
+    u32 sharing = flags & (RABBITBONE_MAP_PRIVATE | RABBITBONE_MAP_SHARED);
+    return sharing == RABBITBONE_MAP_PRIVATE || sharing == RABBITBONE_MAP_SHARED;
 }
 
 static bool process_mmap_is_anon(u32 flags) {
-    return (flags & AURORA_MAP_ANON) != 0;
+    return (flags & RABBITBONE_MAP_ANON) != 0;
 }
 
 static u64 process_flags_from_prot(u32 prot) {
     u64 flags = VMM_USER;
-    if (prot & AURORA_PROT_WRITE) flags |= VMM_WRITE;
-    if ((prot & AURORA_PROT_EXEC) == 0) flags |= VMM_NX;
+    if (prot & RABBITBONE_PROT_WRITE) flags |= VMM_WRITE;
+    if ((prot & RABBITBONE_PROT_EXEC) == 0) flags |= VMM_NX;
     return flags;
 }
 
 static u32 process_prot_from_flags(u64 flags) {
-    u32 prot = AURORA_PROT_READ;
-    if (flags & VMM_WRITE) prot |= AURORA_PROT_WRITE;
-    if ((flags & VMM_NX) == 0) prot |= AURORA_PROT_EXEC;
+    u32 prot = RABBITBONE_PROT_READ;
+    if (flags & VMM_WRITE) prot |= RABBITBONE_PROT_WRITE;
+    if ((flags & VMM_NX) == 0) prot |= RABBITBONE_PROT_EXEC;
     return prot;
 }
 
@@ -256,8 +256,8 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
     if (!process_prot_valid(prot)) return PROC_ERR_INVAL;
     if (p->vma_count >= USER_MAX_VMAS) return PROC_ERR_NOMEM;
     if (!process_range_free(p, start, end)) return PROC_ERR_RANGE;
-    bool file_backed = kind == USER_VMA_MMAP && (flags & AURORA_MAP_ANON) == 0;
-    bool shared_anon = kind == USER_VMA_MMAP && (flags & AURORA_MAP_ANON) != 0 && (flags & AURORA_MAP_SHARED) != 0;
+    bool file_backed = kind == USER_VMA_MMAP && (flags & RABBITBONE_MAP_ANON) == 0;
+    bool shared_anon = kind == USER_VMA_MMAP && (flags & RABBITBONE_MAP_ANON) != 0 && (flags & RABBITBONE_MAP_SHARED) != 0;
     if (file_backed && !file_ref) return PROC_ERR_INVAL;
     if (shared_anon && file_id >= USER_SHARED_ANON_OBJECTS) return PROC_ERR_INVAL;
     user_vma_t v;
@@ -311,7 +311,7 @@ static process_status_t process_split_vma_at(active_process_t *p, usize idx, upt
     user_vma_t right = *v;
     uptr old_start = v->start;
     right.start = cut;
-    if (right.kind == USER_VMA_MMAP && ((right.flags & AURORA_MAP_ANON) == 0 || (right.flags & AURORA_MAP_SHARED) != 0)) {
+    if (right.kind == USER_VMA_MMAP && ((right.flags & RABBITBONE_MAP_ANON) == 0 || (right.flags & RABBITBONE_MAP_SHARED) != 0)) {
         u64 delta = (u64)(cut - old_start);
         if (__builtin_add_overflow(right.file_offset, delta, &right.file_offset)) return PROC_ERR_RANGE;
     }
@@ -389,7 +389,7 @@ static process_status_t process_init_heap_for(active_process_t *p, usize first_m
     uptr heap_base = 0;
     uptr heap_limit = 0;
     if (__builtin_add_overflow(image_end, (uptr)(USER_HEAP_GAP_PAGES * PAGE_SIZE), &heap_base)) return PROC_ERR_RANGE;
-    heap_base = AURORA_ALIGN_UP(heap_base, PAGE_SIZE);
+    heap_base = RABBITBONE_ALIGN_UP(heap_base, PAGE_SIZE);
     if (__builtin_add_overflow(heap_base, (uptr)(USER_HEAP_MAX_PAGES * PAGE_SIZE), &heap_limit)) return PROC_ERR_RANGE;
     if (!user_addr_range_valid(heap_base, 0) || !user_addr_range_valid(heap_limit - 1u, 1u)) return PROC_ERR_RANGE;
     uptr lowest_stack_base = USER_STACK_TOP - ((uptr)USER_STACK_ASLR_PAGES + USER_STACK_PAGES + USER_STACK_GUARD_PAGES) * PAGE_SIZE;
@@ -398,7 +398,7 @@ static process_status_t process_init_heap_for(active_process_t *p, usize first_m
     p->heap_break = heap_base;
     p->heap_limit = heap_limit;
     p->mmap_cursor = USER_MMAP_BASE;
-    return process_add_vma(p, heap_base, heap_limit, AURORA_PROT_READ | AURORA_PROT_WRITE, AURORA_MAP_ANON | AURORA_MAP_PRIVATE, USER_VMA_HEAP);
+    return process_add_vma(p, heap_base, heap_limit, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE, USER_VMA_HEAP);
 }
 
 static process_status_t map_user_page(active_process_t *p, uptr virt, u64 flags) {
@@ -453,8 +453,8 @@ static process_status_t process_set_brk_for(active_process_t *p, uptr new_break,
         return PROC_OK;
     }
     if (new_break < p->heap_base || new_break > p->heap_limit) return PROC_ERR_RANGE;
-    uptr old_end = AURORA_ALIGN_UP(p->heap_break, PAGE_SIZE);
-    uptr new_end = AURORA_ALIGN_UP(new_break, PAGE_SIZE);
+    uptr old_end = RABBITBONE_ALIGN_UP(p->heap_break, PAGE_SIZE);
+    uptr new_end = RABBITBONE_ALIGN_UP(new_break, PAGE_SIZE);
     if (new_end > old_end) {
         uptr v = old_end;
         for (; v < new_end; v += PAGE_SIZE) {
@@ -512,10 +512,10 @@ static uptr process_mmap_arena_end(void) {
 
 static bool process_normalize_user_len(uptr addr, usize length, uptr *start_out, uptr *end_out) {
     if (length == 0) return false;
-    uptr start = AURORA_ALIGN_DOWN(addr, PAGE_SIZE);
+    uptr start = RABBITBONE_ALIGN_DOWN(addr, PAGE_SIZE);
     uptr raw_end = 0;
     if (__builtin_add_overflow(addr, (uptr)length, &raw_end)) return false;
-    uptr end = AURORA_ALIGN_UP(raw_end, PAGE_SIZE);
+    uptr end = RABBITBONE_ALIGN_UP(raw_end, PAGE_SIZE);
     if (end <= start || !user_addr_range_valid(start, (usize)(end - start))) return false;
     if (start_out) *start_out = start;
     if (end_out) *end_out = end;
@@ -537,7 +537,7 @@ static uptr process_find_free_mmap_range(active_process_t *p, usize size) {
                 const user_vma_t *v = &p->vmas[i];
                 if (process_vma_ranges_overlap(candidate, end, v->start, v->end)) {
                     conflict = true;
-                    next = AURORA_ALIGN_UP(v->end, PAGE_SIZE);
+                    next = RABBITBONE_ALIGN_UP(v->end, PAGE_SIZE);
                     break;
                 }
             }
@@ -571,9 +571,9 @@ static const user_vma_t *process_find_vma_for_page_const(const active_process_t 
 
 static bool process_vma_access_allowed(const user_vma_t *v, bool write, bool instruction_fetch) {
     if (!v || v->kind != USER_VMA_MMAP) return false;
-    if (instruction_fetch) return (v->prot & AURORA_PROT_EXEC) != 0;
-    if (write) return (v->prot & AURORA_PROT_WRITE) != 0;
-    return (v->prot & (AURORA_PROT_READ | AURORA_PROT_WRITE)) != 0;
+    if (instruction_fetch) return (v->prot & RABBITBONE_PROT_EXEC) != 0;
+    if (write) return (v->prot & RABBITBONE_PROT_WRITE) != 0;
+    return (v->prot & (RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE)) != 0;
 }
 
 static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 flags, const vfs_node_ref_t *file_ref, u64 file_size, u64 file_offset) {
@@ -615,14 +615,14 @@ static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 f
 
 static bool process_resolve_vma_fault(active_process_t *p, uptr fault_addr, bool write, bool instruction_fetch) {
     if (!p || !p->active || !user_addr_range_valid(fault_addr, 1u)) return false;
-    uptr page_virt = AURORA_ALIGN_DOWN(fault_addr, PAGE_SIZE);
+    uptr page_virt = RABBITBONE_ALIGN_DOWN(fault_addr, PAGE_SIZE);
     if (find_mapping(p, page_virt)) return false;
     const user_vma_t *v = process_find_vma_for_page_const(p, page_virt);
     if (!process_vma_access_allowed(v, write, instruction_fetch)) return false;
     u64 pte_flags = process_flags_from_prot(v->prot) & ~VMM_USER;
     process_status_t st;
-    if (v->flags & AURORA_MAP_ANON) {
-        if (v->flags & AURORA_MAP_SHARED) {
+    if (v->flags & RABBITBONE_MAP_ANON) {
+        if (v->flags & RABBITBONE_MAP_SHARED) {
             u64 delta = (u64)(page_virt - v->start);
             u64 shared_offset = 0;
             if (!process_vma_is_shared_anon(v) || __builtin_add_overflow(v->file_offset, delta, &shared_offset)) return false;
@@ -643,7 +643,7 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
     if (!current_proc.active || !addr_out) return PROC_ERR_INVAL;
     if (!process_prot_valid(prot) || !process_mmap_flags_valid(flags)) return PROC_ERR_INVAL;
     bool is_anon = process_mmap_is_anon(flags);
-    bool is_shared = (flags & AURORA_MAP_SHARED) != 0;
+    bool is_shared = (flags & RABBITBONE_MAP_SHARED) != 0;
     if (is_anon) {
         if (fd != 0xffffffffffffffffull || file_offset != 0 || file_ref) return PROC_ERR_INVAL;
     } else {
@@ -651,14 +651,14 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
         if (!file_ref || fd > 0xffffffffull || (file_offset & (PAGE_SIZE - 1u)) != 0) return PROC_ERR_INVAL;
     }
     usize size = 0;
-    if (!aurora_align_up_usize_checked(length, PAGE_SIZE, &size) || size == 0) return PROC_ERR_RANGE;
+    if (!rabbitbone_align_up_usize_checked(length, PAGE_SIZE, &size) || size == 0) return PROC_ERR_RANGE;
     if (!is_anon) {
         u64 file_end = 0;
         if (__builtin_add_overflow(file_offset, (u64)size, &file_end)) return PROC_ERR_RANGE;
     }
     uptr arena_end = process_mmap_arena_end();
     uptr start = 0;
-    if (flags & AURORA_MAP_FIXED) {
+    if (flags & RABBITBONE_MAP_FIXED) {
         if (!requested || !user_page_aligned(requested)) return PROC_ERR_INVAL;
         start = requested;
         uptr end = 0;
@@ -784,8 +784,8 @@ static process_status_t copy_to_user_space(active_process_t *p, uptr user, const
         uptr phys = 0;
         u64 flags = 0;
         if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return PROC_ERR_RANGE;
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
         usize n = step_info.chunk;
         memcpy((void *)phys, s + done, n);
         done += n;
@@ -813,8 +813,8 @@ static process_status_t read_vfs_to_user(active_process_t *p, const char *path, 
         uptr phys = 0;
         u64 flags = 0;
         if (!ensure_process_user_page_writable(p, addr, &phys, &flags)) return PROC_ERR_RANGE;
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return PROC_ERR_RANGE;
         usize n = step_info.chunk;
         u64 disk_off = 0;
         if (__builtin_add_overflow(file_off, (u64)done, &disk_off)) return PROC_ERR_RANGE;

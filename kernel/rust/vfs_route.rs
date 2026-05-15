@@ -197,7 +197,7 @@ fn route(mounts: &[MountView; VFS_MAX_MOUNTS], input: &[u8]) -> Result<RouteOut,
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_vfs_route(mounts: *const MountView, input: *const u8, input_len: usize, out: *mut RouteOut) -> i32 {
+pub extern "C" fn rabbitbone_rust_vfs_route(mounts: *const MountView, input: *const u8, input_len: usize, out: *mut RouteOut) -> i32 {
     if mounts.is_null() || input.is_null() || out.is_null() || input_len == 0 || input_len > VFS_PATH_MAX { return -3; }
     let mounts_ref = unsafe { &*(mounts as *const [MountView; VFS_MAX_MOUNTS]) };
     let input_ref = unsafe { core::slice::from_raw_parts(input, input_len) };
@@ -209,7 +209,7 @@ pub extern "C" fn aurora_rust_vfs_route(mounts: *const MountView, input: *const 
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_vfs_route_selftest() -> bool {
+pub extern "C" fn rabbitbone_rust_vfs_route_selftest() -> bool {
     let mut mounts = [MountView { active: 0, _pad: [0; 7], path: [0; VFS_PATH_MAX] }; VFS_MAX_MOUNTS];
     unsafe {
         let m0 = mounts.as_mut_ptr().add(0);
@@ -226,14 +226,14 @@ pub extern "C" fn aurora_rust_vfs_route_selftest() -> bool {
     }
     let mut out = RouteOut { status: 99, found: 0, _pad: [0; 7], mount_index: 99, normalized: [0; VFS_PATH_MAX], relative: [0; VFS_PATH_MAX] };
     let path = b"/disk0/../disk0/hello.txt\0";
-    let rc = aurora_rust_vfs_route(mounts.as_ptr(), path.as_ptr(), path.len(), &mut out as *mut RouteOut);
+    let rc = rabbitbone_rust_vfs_route(mounts.as_ptr(), path.as_ptr(), path.len(), &mut out as *mut RouteOut);
     if rc != 0 || out.found != 1 || out.mount_index != 1 { return false; }
     if (unsafe { arr_get(&out.normalized, 0) }) != b'/' || (unsafe { arr_get(&out.normalized, 1) }) != b'd' || (unsafe { arr_get(&out.relative, 0) }) != b'/' || (unsafe { arr_get(&out.relative, 1) }) != b'h' { return false; }
     let disk_root = b"/disk0\0";
-    let rc_root = aurora_rust_vfs_route(mounts.as_ptr(), disk_root.as_ptr(), disk_root.len(), &mut out as *mut RouteOut);
+    let rc_root = rabbitbone_rust_vfs_route(mounts.as_ptr(), disk_root.as_ptr(), disk_root.len(), &mut out as *mut RouteOut);
     if rc_root != 0 || out.mount_index != 1 || (unsafe { arr_get(&out.relative, 0) }) != b'/' || (unsafe { arr_get(&out.relative, 1) }) != 0 { return false; }
     let rel = b"relative/path\0";
-    if aurora_rust_vfs_route(mounts.as_ptr(), rel.as_ptr(), rel.len(), &mut out as *mut RouteOut) != -3 { return false; }
+    if rabbitbone_rust_vfs_route(mounts.as_ptr(), rel.as_ptr(), rel.len(), &mut out as *mut RouteOut) != -3 { return false; }
     let bad = b"\0";
-    aurora_rust_vfs_route(mounts.as_ptr(), bad.as_ptr(), bad.len(), &mut out as *mut RouteOut) == -3
+    rabbitbone_rust_vfs_route(mounts.as_ptr(), bad.as_ptr(), bad.len(), &mut out as *mut RouteOut) == -3
 }

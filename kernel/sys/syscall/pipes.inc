@@ -68,7 +68,7 @@ static usize pipe_read_bytes(sys_pipe_t *p, u8 *dst, usize len) {
     return len;
 }
 
-static void pipe_snapshot(sys_pipe_t *p, aurora_pipeinfo_t *info) {
+static void pipe_snapshot(sys_pipe_t *p, rabbitbone_pipeinfo_t *info) {
     if (!p || !info) return;
     u64 flags = spin_lock_irqsave(&p->lock);
     info->pipe_id = p->id;

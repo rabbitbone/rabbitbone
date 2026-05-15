@@ -1,6 +1,6 @@
-#include <aurora/path.h>
-#include <aurora/vfs.h>
-#include <aurora/libc.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/libc.h>
 
 bool path_is_absolute(const char *path) { return path && path[0] == '/'; }
 

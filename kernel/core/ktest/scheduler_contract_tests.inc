@@ -26,7 +26,7 @@ static void test_scheduler_contracts(void) {
     tick_regs.cs = 0x08;
     tick_regs.rip = 0xffffffff80002000ull;
     scheduler_tick(&tick_regs);
-    aurora_preemptinfo_t pi;
+    rabbitbone_preemptinfo_t pi;
     check(scheduler_preempt_info(&pi) && pi.enabled == 1u && pi.quantum_ticks == SCHED_DEFAULT_QUANTUM_TICKS, "scheduler exposes preemption telemetry");
     scheduler_stats(&stats);
     check(stats.total_yields >= before_yields + 1 && stats.total_sleeps >= 1 && stats.total_timer_ticks >= 1, "scheduler accounting tracks yield sleep and timer tick calls");

@@ -1,6 +1,6 @@
-    check(ktest_cleanup_disk_prefix("aurora-extent-split"), "cleanup old aurora-extent-split artifacts");
+    check(ktest_cleanup_disk_prefix("rabbitbone-extent-split"), "cleanup old rabbitbone-extent-split artifacts");
     char split_path[96];
-    ksnprintf(split_path, sizeof(split_path), "/disk0/aurora-extent-split.bin");
+    ksnprintf(split_path, sizeof(split_path), "/disk0/rabbitbone-extent-split.bin");
     const char *split_raw = ktest_disk_raw_path(split_path);
     (void)vfs_unlink(split_path);
     u64 split_free_before = 0;
@@ -90,9 +90,9 @@
         skip("EXT4 multi-leaf indexed extent stress frees data and leaf metadata blocks");
     }
 
-    check(ktest_cleanup_disk_prefix("aurora-depth2-extents"), "cleanup old aurora-depth2-extents artifacts");
+    check(ktest_cleanup_disk_prefix("rabbitbone-depth2-extents"), "cleanup old rabbitbone-depth2-extents artifacts");
     char deep_path[96];
-    ksnprintf(deep_path, sizeof(deep_path), "/disk0/aurora-depth2-extents.bin");
+    ksnprintf(deep_path, sizeof(deep_path), "/disk0/rabbitbone-depth2-extents.bin");
     const char *deep_raw = ktest_disk_raw_path(deep_path);
     (void)vfs_unlink(deep_path);
     check(vfs_create(deep_path, 0, 0) == VFS_OK, "VFS create ext4 depth-2 extent stress file");

@@ -1,12 +1,12 @@
 #pragma once
 
-#include <aurora/vmm.h>
-#include <aurora/memory.h>
-#include <aurora/libc.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/panic.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/spinlock.h>
 
 #define PT_ENTRIES 512u
 #define PTE_ADDR_MASK 0x000ffffffffff000ull
@@ -31,7 +31,6 @@ static spinlock_t vmm_lock;
 static bool vmm_is_canonical(uptr virt) {
     return virt < VMM_CANONICAL_LOW_TOP || virt >= VMM_CANONICAL_HIGH_BASE;
 }
-
 static bool vmm_is_user_range(uptr virt, usize bytes) {
     if (bytes == 0 || virt < VMM_USER_MIN || virt >= VMM_USER_TOP) return false;
     uptr end = 0;
@@ -52,6 +51,12 @@ static bool vmm_range_overlaps_kernel_image(uptr virt, usize bytes) {
 
 static bool vmm_leaf_flags_valid_for_space(const vmm_space_t *space, uptr virt, u64 flags) {
     if (!space || (flags & ~VMM_ALLOWED_LEAF_FLAGS) || !vmm_is_canonical(virt)) return false;
-    if (flags & VMM_USER) return space->user_space && vmm_is_user_range(virt, PAGE_SIZE) && !vmm_range_overlaps_kernel_image(virt, PAGE_SIZE);
+    if ((flags & VMM_COW) && (flags & VMM_WRITE)) return false;
+    if ((flags & VMM_GLOBAL) && (flags & VMM_USER)) return false;
+    if (space->user_space) {
+        if ((flags & VMM_USER) == 0) return false;
+        return vmm_is_user_range(virt, PAGE_SIZE) && !vmm_range_overlaps_kernel_image(virt, PAGE_SIZE);
+    }
+    if (flags & VMM_USER) return false;
     return true;
 }

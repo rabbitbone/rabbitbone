@@ -1,5 +1,5 @@
 #[no_mangle]
-pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
+pub extern "C" fn rabbitbone_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(0) != Ok(SyscallNo::Version) { return false; }
     if SyscallNo::decode(14) != Ok(SyscallNo::Ticks) { return false; }
     if SyscallNo::decode(15) != Ok(SyscallNo::GetPid) { return false; }
@@ -69,12 +69,12 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if SyscallNo::decode(84) != Ok(SyscallNo::Tcgetpgrp) { return false; }
     if SyscallNo::decode(85) != Ok(SyscallNo::Tcsetpgrp) { return false; }
     if SyscallNo::decode(86) != Ok(SyscallNo::Sigreturn) { return false; }
-    if SyscallNo::decode(crate::abi::AURORA_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
-    if validate_args(SyscallNo::Raise, SysArgs { a0: crate::abi::AURORA_SIGUSR1 as u64, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if SyscallNo::decode(crate::abi::RABBITBONE_SYS_MAX) != Err(DecodeError::Unsupported) { return false; }
+    if validate_args(SyscallNo::Raise, SysArgs { a0: crate::abi::RABBITBONE_SIGUSR1 as u64, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Raise, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
-    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::AURORA_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
-    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::AURORA_NSIG as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
-    if validate_args(SyscallNo::Sigprocmask, SysArgs { a0: crate::abi::AURORA_SIG_SETMASK as u64, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::RABBITBONE_NSIG as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Sigprocmask, SysArgs { a0: crate::abi::RABBITBONE_SIG_SETMASK as u64, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Sigpending, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Tcsetpgrp, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::WriteConsole, SysArgs { a0: 0, a1: 1, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
@@ -152,6 +152,8 @@ pub extern "C" fn aurora_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::TtyGetInfo, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::TtySetMode, SysArgs { a0: TTY_MODE_RAW | TTY_MODE_CANON, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::TtyReadKey, SysArgs { a0: 0x10000, a1: TTY_READ_NONBLOCK, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::TtySetCursor, SysArgs { a0: 127, a1: 47, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::TtySetCursor, SysArgs { a0: (u32::MAX as u64) + 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Truncate, SysArgs { a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Truncate, SysArgs { a0: 0x10000, a1: 7, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Rename, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }

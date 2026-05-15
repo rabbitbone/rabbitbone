@@ -20,7 +20,7 @@
     bool have_storage = false;
     for (usize bi = 0; bi < n; ++bi) {
         block_device_t *bd = block_get(bi);
-        if (bd && bd->driver && (strcmp(bd->driver, "ata_pio") == 0 || strcmp(bd->driver, "ahci") == 0)) have_storage = true;
+        if (bd && bd->driver && (strcmp(bd->driver, "ata_pio") == 0 || strcmp(bd->driver, "ahci") == 0 || strcmp(bd->driver, "bootramdisk") == 0)) have_storage = true;
     }
     check(have_storage, "block registry exposes storage driver identity");
     mbr_table_t mbr;
@@ -38,11 +38,11 @@
     check(dev->sector_size == BLOCKDEV_SECTOR_SIZE && dev->sector_count > 0u && dev->read != 0, "selected block device geometry sane");
     u8 sector[512];
     block_status_t br = block_read(dev, 0, 1, sector);
-    if (br != BLOCK_OK) kprintf("[ detail] block_read(%s,lba=0,count=1)=%s\n", dev->name, block_status_name(br));
-    else if (sector[510] != 0x55 || sector[511] != 0xaa) kprintf("[ detail] MBR signature bytes=%02x %02x\n", sector[510], sector[511]);
+    if (br != BLOCK_OK) { kprintf("[ detail] block_read(%s,lba=0,count=1)=%s\n", dev->name, block_status_name(br)); ktest_log_line(LOG_ERROR, "[ detail] block_read(%s,lba=0,count=1)=%s", dev->name, block_status_name(br)); }
+    else if (sector[510] != 0x55 || sector[511] != 0xaa) { kprintf("[ detail] MBR signature bytes=%02x %02x\n", sector[510], sector[511]); ktest_log_line(LOG_ERROR, "[ detail] MBR signature bytes=%02x %02x", sector[510], sector[511]); }
     check(br == BLOCK_OK && sector[510] == 0x55 && sector[511] == 0xaa, "block read MBR sector");
     bool mbr_ok = mbr_read(dev, &mbr);
-    if (!mbr_ok) kprintf("[ detail] mbr_read(%s) failed after direct read status=%s\n", dev->name, block_status_name(br));
+    if (!mbr_ok) { kprintf("[ detail] mbr_read(%s) failed after direct read status=%s\n", dev->name, block_status_name(br)); ktest_log_line(LOG_ERROR, "[ detail] mbr_read(%s) failed after direct read status=%s", dev->name, block_status_name(br)); }
     check(mbr_ok, "MBR parser accepts boot disk");
     part = mbr_ok ? mbr_find_linux_on_device(dev, &mbr) : 0;
     check(part && part->lba_first >= 2048u && part->sector_count > 4096u, "MBR has Linux EXT partition on selected block device");
@@ -63,15 +63,15 @@
             char text[96];
             usize rd = 0;
             memset(text, 0, sizeof(text));
-            check(ext4_read_file(&mnt, &hello, 0, text, sizeof(text) - 1u, &rd) == EXT4_OK && rd > 0u && strstr(text, "AuroraOS") != 0, "EXT4 read regular file");
+            check(ext4_read_file(&mnt, &hello, 0, text, sizeof(text) - 1u, &rd) == EXT4_OK && rd > 0u && strstr(text, "Rabbitbone") != 0, "EXT4 read regular file");
         }
     }
     char text[96];
     memset(text, 0, sizeof(text));
     usize got = 0;
-    check(vfs_read("/disk0/hello.txt", 0, text, sizeof(text) - 1u, &got) == VFS_OK && got > 0u && strstr(text, "AuroraOS") != 0, "VFS read /disk0/hello.txt through ext4 adapter");
+    check(vfs_read("/disk0/hello.txt", 0, text, sizeof(text) - 1u, &got) == VFS_OK && got > 0u && strstr(text, "Rabbitbone") != 0, "VFS read /disk0/hello.txt through ext4 adapter");
     vfs_statvfs_t sv;
     memset(&sv, 0, sizeof(sv));
     check(vfs_statvfs("/disk0", &sv) == VFS_OK && sv.block_size >= 1024u && sv.total_blocks > 0u && sv.free_blocks <= sv.total_blocks && (sv.flags & VFS_STATVFS_FLAG_PERSISTENT) != 0, "VFS statvfs exposes EXT4 capacity and persistence flags");
     check(vfs_sync_path("/disk0") == VFS_OK && vfs_sync_all() == VFS_OK, "VFS sync flushes EXT4 writeback state");
-    check(ktest_cleanup_disk_prefix("aurora-"), "cleanup old aurora artifacts");
+    check(ktest_cleanup_disk_prefix("rabbitbone-"), "cleanup old rabbitbone artifacts");

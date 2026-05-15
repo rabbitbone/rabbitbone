@@ -28,7 +28,10 @@ static bool blocks_physically_adjacent(kmem_block_t *left, kmem_block_t *right) 
 static void merge_forward(kmem_block_t *b) {
     while (b && b->next && b->free && b->next->free && blocks_physically_adjacent(b, b->next)) {
         kmem_block_t *n = b->next;
-        b->size += sizeof(kmem_block_t) + n->size;
+        usize merged = 0;
+        if (__builtin_add_overflow(b->size, sizeof(kmem_block_t), &merged) ||
+            __builtin_add_overflow(merged, n->size, &merged)) PANIC("heap block size overflow at %p", b);
+        b->size = merged;
         stats.free_bytes += sizeof(kmem_block_t);
         b->next = n->next;
         if (n->next) n->next->prev = b;
@@ -86,7 +89,7 @@ static bool add_heap_pages(usize pages) {
     if (pages == 0 || pages > ((usize)-1) / PAGE_SIZE) return false;
     usize bytes = pages * PAGE_SIZE;
     if (bytes <= sizeof(kmem_block_t)) return false;
-#if defined(AURORA_HOST_TEST)
+#if defined(RABBITBONE_HOST_TEST)
     void *mem = malloc(bytes);
     if (!mem) return false;
 #else

@@ -1,40 +1,40 @@
 #pragma once
 
-#include <aurora/syscall.h>
-#include <aurora/vfs.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/libc.h>
-#include <aurora/drivers.h>
-#include <aurora/process.h>
-#include <aurora/kmem.h>
-#include <aurora/rust.h>
-#include <aurora/version.h>
-#include <aurora/scheduler.h>
-#include <aurora/timer.h>
-#include <aurora/arch/io.h>
-#include <aurora/spinlock.h>
-#include <aurora/panic.h>
-#include <aurora/tty.h>
-#include <aurora/path.h>
-#include <aurora/arch/cpu.h>
-#include <aurora/ktest.h>
-#include <aurora/block.h>
-#include <aurora/bootinfo.h>
-#include <aurora/pci.h>
-#include <aurora/acpi.h>
-#include <aurora/apic.h>
-#include <aurora/hpet.h>
-#include <aurora/smp.h>
-#include <aurora/vmm.h>
-#include <aurora/memory.h>
+#include <rabbitbone/syscall.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/rust.h>
+#include <rabbitbone/version.h>
+#include <rabbitbone/scheduler.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/spinlock.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/tty.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/arch/cpu.h>
+#include <rabbitbone/ktest.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/bootinfo.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/hpet.h>
+#include <rabbitbone/smp.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/memory.h>
 
-#define SYSCALL_MAX_HANDLES AURORA_PROCESS_HANDLE_CAP
+#define SYSCALL_MAX_HANDLES RABBITBONE_PROCESS_HANDLE_CAP
 #define SYSCALL_PATH_MAX VFS_PATH_MAX
 #define SYSCALL_IO_CHUNK 4096u
 #define SYSCALL_MAX_IO_BYTES (1024u * 1024u)
 #define SYSCALL_MMAP_MAX_BYTES (64ull * 4096ull)
-#define SYSCALL_VERSION_VALUE AURORA_SYSCALL_ABI_VERSION
+#define SYSCALL_VERSION_VALUE RABBITBONE_SYSCALL_ABI_VERSION
 
 typedef enum sys_handle_kind {
     SYS_HANDLE_EMPTY = 0,
@@ -61,7 +61,7 @@ typedef struct sys_handle {
 } sys_handle_t;
 
 #define SYSCALL_PIPE_CAP 32u
-#define SYSCALL_PIPE_BUFFER AURORA_PIPE_BUF
+#define SYSCALL_PIPE_BUFFER RABBITBONE_PIPE_BUF
 #define SYSCALL_FILE_CAP 64u
 #define SYSCALL_FILE_PER_PROCESS_CAP (SYSCALL_FILE_CAP / 2u)
 #define SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP (SYSCALL_PIPE_CAP / 2u)
@@ -123,36 +123,36 @@ static bool initialized;
 static char kernel_cwd[SYSCALL_PATH_MAX] = "/";
 #define SYSCALL_HANDLE_TABLE_BYTES (sizeof(sys_handle_t) * SYSCALL_MAX_HANDLES)
 #define SYSCALL_PIPE_TABLE_BYTES (sizeof(sys_pipe_t) * SYSCALL_PIPE_CAP)
-AURORA_STATIC_ASSERT(user_handle_snapshot_fits, SYSCALL_HANDLE_TABLE_BYTES <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+RABBITBONE_STATIC_ASSERT(user_handle_snapshot_fits, SYSCALL_HANDLE_TABLE_BYTES <= SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
 
 static syscall_result_t ok(i64 v) { syscall_result_t r = { v, 0 }; return r; }
 static syscall_result_t err(i64 e) { syscall_result_t r = { -1, e }; return r; }
 static sys_handle_t *active_handles(void) { return process_user_active() ? user_handles : kernel_handles; }
 static bool add_user_ptr(u64 base, usize off, u64 *out) { return !__builtin_add_overflow(base, (u64)off, out); }
 
-static bool sys_current_cred(aurora_credinfo_t *out) {
+static bool sys_current_cred(rabbitbone_credinfo_t *out) {
     if (process_user_active()) return process_current_credentials(out);
     if (!out) return false;
     memset(out, 0, sizeof(*out));
-    out->uid = AURORA_UID_ROOT;
-    out->euid = AURORA_UID_ROOT;
-    out->gid = AURORA_GID_ROOT;
-    out->egid = AURORA_GID_ROOT;
+    out->uid = RABBITBONE_UID_ROOT;
+    out->euid = RABBITBONE_UID_ROOT;
+    out->gid = RABBITBONE_GID_ROOT;
+    out->egid = RABBITBONE_GID_ROOT;
     out->is_admin = 1u;
-    out->sudo_ttl = AURORA_SUDO_DEFAULT_TTL_TICKS;
+    out->sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
     strncpy(out->user, "root", sizeof(out->user) - 1u);
     return true;
 }
 
 static bool sys_cred_root(void) {
-    aurora_credinfo_t c;
-    return sys_current_cred(&c) && c.euid == AURORA_UID_ROOT;
+    rabbitbone_credinfo_t c;
+    return sys_current_cred(&c) && c.euid == RABBITBONE_UID_ROOT;
 }
 
 static bool sys_cred_can_access_stat(const vfs_stat_t *st, u32 need) {
-    aurora_credinfo_t c;
+    rabbitbone_credinfo_t c;
     if (!st || !sys_current_cred(&c)) return false;
-    if (c.euid == AURORA_UID_ROOT) return true;
+    if (c.euid == RABBITBONE_UID_ROOT) return true;
     u32 mode = st->mode & 0777u;
     u32 bits = mode & 0007u;
     if (c.euid == st->uid) bits = (mode >> 6) & 0007u;
@@ -185,52 +185,52 @@ static bool sys_can_modify_parent(const char *path) {
 }
 
 static bool open_flags_valid(u32 flags) {
-    if (flags & ~AURORA_O_SUPPORTED) return false;
-    u32 acc = flags & AURORA_O_ACCMODE;
-    if (acc == AURORA_O_ACCMODE) return false;
-    if ((flags & AURORA_O_EXCL) && !(flags & AURORA_O_CREAT)) return false;
-    if ((flags & AURORA_O_TRUNC) && acc == AURORA_O_RDONLY) return false;
+    if (flags & ~RABBITBONE_O_SUPPORTED) return false;
+    u32 acc = flags & RABBITBONE_O_ACCMODE;
+    if (acc == RABBITBONE_O_ACCMODE) return false;
+    if ((flags & RABBITBONE_O_EXCL) && !(flags & RABBITBONE_O_CREAT)) return false;
+    if ((flags & RABBITBONE_O_TRUNC) && acc == RABBITBONE_O_RDONLY) return false;
     return true;
 }
 
 static bool open_flags_can_read(u32 flags) {
-    u32 acc = flags & AURORA_O_ACCMODE;
-    return acc == AURORA_O_RDONLY || acc == AURORA_O_RDWR;
+    u32 acc = flags & RABBITBONE_O_ACCMODE;
+    return acc == RABBITBONE_O_RDONLY || acc == RABBITBONE_O_RDWR;
 }
 
 static bool open_flags_can_write(u32 flags) {
-    u32 acc = flags & AURORA_O_ACCMODE;
-    return acc == AURORA_O_WRONLY || acc == AURORA_O_RDWR;
+    u32 acc = flags & RABBITBONE_O_ACCMODE;
+    return acc == RABBITBONE_O_WRONLY || acc == RABBITBONE_O_RDWR;
 }
 
 static u32 open_flags_to_fd_flags(u32 flags) {
-    return (flags & AURORA_O_CLOEXEC) ? AURORA_FD_CLOEXEC : 0u;
+    return (flags & RABBITBONE_O_CLOEXEC) ? RABBITBONE_FD_CLOEXEC : 0u;
 }
 
 static void init_stdio_handles(sys_handle_t *handles) {
     if (!handles) return;
-    memset(&handles[AURORA_STDIN], 0, sizeof(handles[AURORA_STDIN]));
-    handles[AURORA_STDIN].used = true;
-    handles[AURORA_STDIN].kind = SYS_HANDLE_CONSOLE_IN;
-    handles[AURORA_STDIN].type = VFS_NODE_DEV;
-    handles[AURORA_STDIN].fs_id = 0x434F4E53u;
-    handles[AURORA_STDIN].inode = AURORA_STDIN;
-    strncpy(handles[AURORA_STDIN].path, "console:[stdin]", sizeof(handles[AURORA_STDIN].path) - 1u);
+    memset(&handles[RABBITBONE_STDIN], 0, sizeof(handles[RABBITBONE_STDIN]));
+    handles[RABBITBONE_STDIN].used = true;
+    handles[RABBITBONE_STDIN].kind = SYS_HANDLE_CONSOLE_IN;
+    handles[RABBITBONE_STDIN].type = VFS_NODE_DEV;
+    handles[RABBITBONE_STDIN].fs_id = 0x434F4E53u;
+    handles[RABBITBONE_STDIN].inode = RABBITBONE_STDIN;
+    strncpy(handles[RABBITBONE_STDIN].path, "console:[stdin]", sizeof(handles[RABBITBONE_STDIN].path) - 1u);
 
-    memset(&handles[AURORA_STDOUT], 0, sizeof(handles[AURORA_STDOUT]));
-    handles[AURORA_STDOUT].used = true;
-    handles[AURORA_STDOUT].kind = SYS_HANDLE_CONSOLE_OUT;
-    handles[AURORA_STDOUT].type = VFS_NODE_DEV;
-    handles[AURORA_STDOUT].fs_id = 0x434F4E53u;
-    handles[AURORA_STDOUT].inode = AURORA_STDOUT;
-    strncpy(handles[AURORA_STDOUT].path, "console:[stdout]", sizeof(handles[AURORA_STDOUT].path) - 1u);
+    memset(&handles[RABBITBONE_STDOUT], 0, sizeof(handles[RABBITBONE_STDOUT]));
+    handles[RABBITBONE_STDOUT].used = true;
+    handles[RABBITBONE_STDOUT].kind = SYS_HANDLE_CONSOLE_OUT;
+    handles[RABBITBONE_STDOUT].type = VFS_NODE_DEV;
+    handles[RABBITBONE_STDOUT].fs_id = 0x434F4E53u;
+    handles[RABBITBONE_STDOUT].inode = RABBITBONE_STDOUT;
+    strncpy(handles[RABBITBONE_STDOUT].path, "console:[stdout]", sizeof(handles[RABBITBONE_STDOUT].path) - 1u);
 
-    memset(&handles[AURORA_STDERR], 0, sizeof(handles[AURORA_STDERR]));
-    handles[AURORA_STDERR].used = true;
-    handles[AURORA_STDERR].kind = SYS_HANDLE_CONSOLE_ERR;
-    handles[AURORA_STDERR].type = VFS_NODE_DEV;
-    handles[AURORA_STDERR].fs_id = 0x434F4E53u;
-    handles[AURORA_STDERR].inode = AURORA_STDERR;
-    strncpy(handles[AURORA_STDERR].path, "console:[stderr]", sizeof(handles[AURORA_STDERR].path) - 1u);
+    memset(&handles[RABBITBONE_STDERR], 0, sizeof(handles[RABBITBONE_STDERR]));
+    handles[RABBITBONE_STDERR].used = true;
+    handles[RABBITBONE_STDERR].kind = SYS_HANDLE_CONSOLE_ERR;
+    handles[RABBITBONE_STDERR].type = VFS_NODE_DEV;
+    handles[RABBITBONE_STDERR].fs_id = 0x434F4E53u;
+    handles[RABBITBONE_STDERR].inode = RABBITBONE_STDERR;
+    strncpy(handles[RABBITBONE_STDERR].path, "console:[stderr]", sizeof(handles[RABBITBONE_STDERR].path) - 1u);
 }
 

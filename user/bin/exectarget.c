@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static au_i64 parse_i64(const char *s) {
     au_i64 v = 0;
@@ -11,8 +11,8 @@ static au_i64 parse_i64(const char *s) {
     return v;
 }
 
-static int contains_aurora(const char *buf, au_usize n) {
-    const char needle[] = "AuroraOS";
+static int contains_rabbitbone(const char *buf, au_usize n) {
+    const char needle[] = "Rabbitbone";
     for (au_usize i = 0; i + sizeof(needle) - 1 <= n; ++i) {
         au_usize j = 0;
         while (j < sizeof(needle) - 1 && buf[i + j] == needle[j]) ++j;
@@ -34,7 +34,7 @@ int main(int argc, char **argv, char **envp) {
     if (au_strcmp(argv[1], "env") == 0) {
         if (argc != 4) return 11;
         if (au_strcmp(argv[2], "alpha") != 0 || au_strcmp(argv[3], "beta") != 0) return 12;
-        if (!has_env(envp, "AURORA_STAGE=10")) return 13;
+        if (!has_env(envp, "RABBITBONE_EXEC_PHASE=10")) return 13;
         if (!has_env(envp, "EXECVE=ok")) return 14;
         return 0;
     }
@@ -72,7 +72,7 @@ int main(int argc, char **argv, char **envp) {
         au_memset(buf, 0, sizeof(buf));
         au_i64 got = au_read(fd, buf, sizeof(buf) - 1);
         if (got <= 0) return 23;
-        if (!contains_aurora(buf, (au_usize)got)) return 24;
+        if (!contains_rabbitbone(buf, (au_usize)got)) return 24;
         au_close(fd);
         return 0;
     }

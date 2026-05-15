@@ -15,8 +15,17 @@ static uptr align_down_uptr(uptr value, uptr align) {
     return value & ~(align - 1u);
 }
 
+static bool align_up_uptr_checked(uptr value, uptr align, uptr *out) {
+    uptr tmp = 0;
+    if (!out || align == 0 || (align & (align - 1u)) != 0) return false;
+    if (__builtin_add_overflow(value, align - 1u, &tmp)) return false;
+    *out = tmp & ~(align - 1u);
+    return true;
+}
+
 static uptr align_up_uptr(uptr value, uptr align) {
-    return (value + align - 1u) & ~(align - 1u);
+    uptr out = 0;
+    return align_up_uptr_checked(value, align, &out) ? out : 0;
 }
 
 static u64 identity_4k_flags(uptr addr) {
@@ -87,8 +96,10 @@ void vmm_init(u64 identity_bytes) {
     current_space_obj = &kernel_space_obj;
     if (identity_bytes < 64ull * 1024ull * 1024ull) identity_bytes = 64ull * 1024ull * 1024ull;
     if (identity_bytes < (u64)(uptr)__kernel_end) identity_bytes = (u64)(uptr)__kernel_end;
-    identity_bytes = (identity_bytes + (2ull * 1024ull * 1024ull - 1u)) & ~((2ull * 1024ull * 1024ull) - 1u);
     const u64 huge_size = 2ull * 1024ull * 1024ull;
+    u64 aligned_identity = 0;
+    if (!rabbitbone_align_up_u64_checked(identity_bytes, huge_size, &aligned_identity)) PANIC("vmm: identity window overflow");
+    identity_bytes = aligned_identity;
     for (u64 addr = 0; addr < identity_bytes; addr += huge_size) {
         if (identity_2m_window_overlaps_kernel((uptr)addr)) {
             for (u64 page = addr; page < addr + huge_size && page < identity_bytes; page += PAGE_SIZE) {
@@ -177,6 +188,11 @@ bool vmm_selftest(void) {
     uptr uphys = (uptr)memory_alloc_page_below(VMM_KERNEL_DIRECT_LIMIT);
     if (!uphys) { vmm_space_destroy(&space); return false; }
     uptr uvirt = 0x0000010000200000ull;
+    if (vmm_space_map_4k(&space, PAGE_SIZE, uphys, VMM_USER | VMM_WRITE | VMM_NX)) good = false;
+    if (vmm_space_unmap_4k(&space, 0)) good = false;
+    if (vmm_space_protect_4k(&space, 0, VMM_USER | VMM_NX)) good = false;
+    if (vmm_space_map_4k(&space, uvirt, uphys, VMM_USER | VMM_WRITE | VMM_GLOBAL | VMM_NX)) good = false;
+    if (vmm_space_map_4k(&space, uvirt, uphys, VMM_USER | VMM_WRITE | VMM_COW | VMM_NX)) good = false;
     if (!vmm_space_map_4k(&space, uvirt, uphys, VMM_USER | VMM_WRITE | VMM_NX)) good = false;
     if (vmm_space_map_4k(&space, uvirt, uphys, VMM_USER | VMM_WRITE | VMM_NX)) good = false;
     uptr got = 0;

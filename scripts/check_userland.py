@@ -26,6 +26,7 @@ def check(path: Path) -> None:
     if e_ehsize != 64 or e_phentsize != 56 or e_phnum == 0:
         raise SystemExit(f'{path}: invalid phdr table')
     loads = 0
+    entry_in_executable_load = False
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
         if off + 56 > len(data):
@@ -38,16 +39,23 @@ def check(path: Path) -> None:
             raise SystemExit(f'{path}: writable+executable PT_LOAD segment is forbidden')
         if p_filesz > p_memsz:
             raise SystemExit(f'{path}: filesz > memsz')
-        if p_vaddr < 0x0000010000000000 or p_vaddr + p_memsz >= 0x0000800000000000:
+        seg_end = p_vaddr + p_memsz
+        if p_vaddr < 0x0000010000000000 or seg_end >= 0x0000800000000000:
             raise SystemExit(f'{path}: LOAD outside accepted isolated high user range')
         if p_offset + p_filesz > len(data):
             raise SystemExit(f'{path}: LOAD file range outside file')
         if p_align not in (0, 0x1000):
             raise SystemExit(f'{path}: unexpected p_align {p_align}')
+        if p_align and (p_vaddr % p_align) != (p_offset % p_align):
+            raise SystemExit(f'{path}: LOAD vaddr/offset alignment mismatch')
+        if (p_flags & PF_X) and p_vaddr <= e_entry < seg_end:
+            entry_in_executable_load = True
     if loads == 0:
         raise SystemExit(f'{path}: no PT_LOAD segment')
+    if not entry_in_executable_load:
+        raise SystemExit(f'{path}: entry point is not inside an executable PT_LOAD segment')
     if b'\x0f\x05' in data:
-        raise SystemExit(f'{path}: contains syscall instruction; Aurora Stage 3 ABI must use int 0x80')
+        raise SystemExit(f'{path}: contains syscall instruction; Rabbitbone Stage 3 ABI must use int 0x80')
     if b'\xcd\x80' not in data:
         raise SystemExit(f'{path}: no int 0x80 syscall entry found')
     print(f'{path}: ok entry=0x{e_entry:x} load_segments={loads} bytes={len(data)}')

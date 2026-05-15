@@ -1,3 +1,52 @@
+
+static bool process_elf_phdr_type_supported(u32 type) {
+    switch (type) {
+        case ELF64_PT_NULL:
+        case ELF64_PT_LOAD:
+        case ELF64_PT_NOTE:
+        case ELF64_PT_GNU_STACK:
+            return true;
+        case ELF64_PT_DYNAMIC:
+        case ELF64_PT_INTERP:
+        default:
+            return false;
+    }
+}
+
+static process_status_t process_segment_page_span(const elf64_phdr_t *ph, uptr *start_out, uptr *end_out, usize *pages_out) {
+    if (!ph || !start_out || !end_out || !pages_out) return PROC_ERR_INVAL;
+    u64 seg_end64 = 0;
+    if (__builtin_add_overflow(ph->p_vaddr, ph->p_memsz, &seg_end64)) return PROC_ERR_RANGE;
+    uptr start = RABBITBONE_ALIGN_DOWN((uptr)ph->p_vaddr, PAGE_SIZE);
+    uptr end = RABBITBONE_ALIGN_UP((uptr)seg_end64, PAGE_SIZE);
+    if (end <= start || !user_addr_range_valid(start, (usize)(end - start))) return PROC_ERR_RANGE;
+    usize pages = (usize)((end - start) / PAGE_SIZE);
+    if (pages == 0 || pages > USER_MAX_MAPPINGS) return PROC_ERR_RANGE;
+    *start_out = start;
+    *end_out = end;
+    *pages_out = pages;
+    return PROC_OK;
+}
+
+static bool user_stack_reserve(uptr stack_base, uptr *sp, usize size, uptr *addr_out) {
+    if (!sp) return false;
+    uptr cur = *sp;
+    if (cur < stack_base) return false;
+    if (size > (usize)(cur - stack_base)) return false;
+    cur -= (uptr)size;
+    *sp = cur;
+    if (addr_out) *addr_out = cur;
+    return true;
+}
+
+static bool user_stack_align_down(uptr stack_base, uptr *sp, uptr align) {
+    if (!sp || align == 0 || (align & (align - 1u)) != 0) return false;
+    uptr cur = *sp & ~(align - 1u);
+    if (cur < stack_base) return false;
+    *sp = cur;
+    return true;
+}
+
 static process_status_t load_elf_image(active_process_t *p, const char *path, u64 *entry_out) {
     vfs_stat_t st;
     if (vfs_stat(path, &st) != VFS_OK || st.type != VFS_NODE_FILE) return PROC_ERR_IO;
@@ -7,6 +56,7 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
     if (vfs_read(path, 0, &eh, sizeof(eh), &got) != VFS_OK || got != sizeof(eh)) return PROC_ERR_IO;
     elf_status_t ev = elf64_validate_header(&eh, st.size);
     if (ev != ELF_OK || eh.e_phnum == 0) return PROC_ERR_FORMAT;
+    if (eh.e_type != ELF64_ET_EXEC) return PROC_ERR_FORMAT;
     if (eh.e_entry < USER_IMAGE_BASE || eh.e_entry >= USER_SPACE_LIMIT) return PROC_ERR_RANGE;
     if (eh.e_phnum > 32u) return PROC_ERR_RANGE;
 
@@ -25,13 +75,15 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
         if (__builtin_mul_overflow((u64)i, (u64)eh.e_phentsize, &ph_index_off) ||
             __builtin_add_overflow(eh.e_phoff, ph_index_off, &phoff)) return PROC_ERR_RANGE;
         if (vfs_read(path, phoff, &ph, sizeof(ph), &got) != VFS_OK || got != sizeof(ph)) return PROC_ERR_IO;
+        if (!process_elf_phdr_type_supported(ph.p_type)) return PROC_ERR_FORMAT;
         if (ph.p_type != ELF64_PT_LOAD) continue;
         elf_status_t sv = elf64_validate_load_segment(&ph, st.size, USER_IMAGE_BASE, USER_SPACE_LIMIT);
         if (sv == ELF_ERR_UNSUPPORTED) return PROC_ERR_FORMAT;
         if (sv == ELF_ERR_RANGE) return PROC_ERR_RANGE;
         if (sv != ELF_OK) return PROC_ERR_FORMAT;
         if (ph.p_memsz == 0) continue;
-        u64 seg_end = ph.p_vaddr + ph.p_memsz;
+        u64 seg_end = 0;
+        if (__builtin_add_overflow(ph.p_vaddr, ph.p_memsz, &seg_end)) return PROC_ERR_RANGE;
         for (u16 j = 0; j < loaded_count; ++j) {
             if (elf64_ranges_overlap(ph.p_vaddr, seg_end, loaded_starts[j], loaded_ends[j])) return PROC_ERR_FORMAT;
         }
@@ -40,8 +92,12 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
         ++loaded_count;
         if ((ph.p_flags & ELF64_PF_X) && eh.e_entry >= ph.p_vaddr && eh.e_entry < seg_end) entry_in_exec_segment = true;
 
-        uptr start = AURORA_ALIGN_DOWN((uptr)ph.p_vaddr, PAGE_SIZE);
-        uptr end = AURORA_ALIGN_UP((uptr)(ph.p_vaddr + ph.p_memsz), PAGE_SIZE);
+        uptr start = 0;
+        uptr end = 0;
+        usize pages = 0;
+        process_status_t span_status = process_segment_page_span(&ph, &start, &end, &pages);
+        if (span_status != PROC_OK) return span_status;
+        if (pages > USER_MAX_MAPPINGS - p->mapping_count) return PROC_ERR_NOMEM;
         u64 final_flags = elf_segment_page_flags(&ph);
         for (uptr v = start; v < end; v += PAGE_SIZE) {
             process_status_t ms = ensure_image_page(p, v, final_flags);
@@ -90,6 +146,7 @@ static uptr process_stack_top_for(const active_process_t *p) {
 
 static process_status_t build_user_stack(active_process_t *p, int argc, const char *const *argv, int envc, const char *const *envp, u64 *rsp_out, u64 *argv_out, u64 *envp_out) {
     if (argc < 0 || argc > (int)PROCESS_ARG_MAX || envc < 0 || envc > (int)PROCESS_ENV_MAX) return PROC_ERR_INVAL;
+    if ((argc > 0 && !argv) || (envc > 0 && !envp) || !rsp_out || !argv_out || !envp_out) return PROC_ERR_INVAL;
     uptr stack_top = process_stack_top_for(p);
     if (p) p->result.user_stack_top = stack_top;
     uptr stack_size = USER_STACK_PAGES * PAGE_SIZE;
@@ -101,7 +158,7 @@ static process_status_t build_user_stack(active_process_t *p, int argc, const ch
         process_status_t st = map_user_page(p, stack_base + i * PAGE_SIZE, VMM_WRITE | VMM_NX);
         if (st != PROC_OK) return st;
     }
-    process_status_t stack_vma_status = process_add_vma(p, stack_base, stack_top, AURORA_PROT_READ | AURORA_PROT_WRITE, AURORA_MAP_ANON | AURORA_MAP_PRIVATE, USER_VMA_STACK);
+    process_status_t stack_vma_status = process_add_vma(p, stack_base, stack_top, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE, USER_VMA_STACK);
     if (stack_vma_status != PROC_OK) return stack_vma_status;
     uptr sp = stack_top;
     u64 arg_ptrs[PROCESS_ARG_MAX + 1u];
@@ -109,34 +166,42 @@ static process_status_t build_user_stack(active_process_t *p, int argc, const ch
     memset(arg_ptrs, 0, sizeof(arg_ptrs));
     memset(env_ptrs, 0, sizeof(env_ptrs));
     for (int i = envc - 1; i >= 0; --i) {
-        const char *s = envp && envp[i] ? envp[i] : "";
-        usize len = strnlen(s, USER_ARG_STRING_MAX);
-        if (len >= USER_ARG_STRING_MAX || len == 0) return PROC_ERR_RANGE;
-        sp -= len + 1u;
-        process_status_t cs = copy_to_user_space(p, sp, s, len + 1u);
-        if (cs != PROC_OK) return cs;
-        env_ptrs[i] = sp;
-    }
-    for (int i = argc - 1; i >= 0; --i) {
-        const char *s = argv && argv[i] ? argv[i] : "";
+        const char *s = envp[i] ? envp[i] : "";
         usize len = strnlen(s, USER_ARG_STRING_MAX);
         if (len >= USER_ARG_STRING_MAX) return PROC_ERR_RANGE;
-        sp -= len + 1u;
-        process_status_t cs = copy_to_user_space(p, sp, s, len + 1u);
+        uptr dst = 0;
+        if (!user_stack_reserve(stack_base, &sp, len + 1u, &dst)) return PROC_ERR_RANGE;
+        process_status_t cs = copy_to_user_space(p, dst, s, len + 1u);
         if (cs != PROC_OK) return cs;
-        arg_ptrs[i] = sp;
+        env_ptrs[i] = dst;
     }
-    sp &= ~0xfull;
-    sp -= (u64)(envc + 1) * sizeof(u64);
-    process_status_t ps = copy_to_user_space(p, sp, env_ptrs, (usize)(envc + 1) * sizeof(u64));
+    for (int i = argc - 1; i >= 0; --i) {
+        const char *s = argv[i] ? argv[i] : "";
+        usize len = strnlen(s, USER_ARG_STRING_MAX);
+        if (len >= USER_ARG_STRING_MAX) return PROC_ERR_RANGE;
+        uptr dst = 0;
+        if (!user_stack_reserve(stack_base, &sp, len + 1u, &dst)) return PROC_ERR_RANGE;
+        process_status_t cs = copy_to_user_space(p, dst, s, len + 1u);
+        if (cs != PROC_OK) return cs;
+        arg_ptrs[i] = dst;
+    }
+    if (!user_stack_align_down(stack_base, &sp, 16u)) return PROC_ERR_RANGE;
+    usize env_bytes = 0;
+    if (__builtin_mul_overflow((usize)(envc + 1), sizeof(u64), &env_bytes)) return PROC_ERR_RANGE;
+    uptr env_user = 0;
+    if (!user_stack_reserve(stack_base, &sp, env_bytes, &env_user)) return PROC_ERR_RANGE;
+    process_status_t ps = copy_to_user_space(p, env_user, env_ptrs, env_bytes);
     if (ps != PROC_OK) return ps;
-    u64 env_user = sp;
-    sp -= (u64)(argc + 1) * sizeof(u64);
-    ps = copy_to_user_space(p, sp, arg_ptrs, (usize)(argc + 1) * sizeof(u64));
+    usize arg_bytes = 0;
+    if (__builtin_mul_overflow((usize)(argc + 1), sizeof(u64), &arg_bytes)) return PROC_ERR_RANGE;
+    uptr argv_user = 0;
+    if (!user_stack_reserve(stack_base, &sp, arg_bytes, &argv_user)) return PROC_ERR_RANGE;
+    ps = copy_to_user_space(p, argv_user, arg_ptrs, arg_bytes);
     if (ps != PROC_OK) return ps;
-    *argv_out = sp;
+    if (!user_stack_align_down(stack_base, &sp, 16u)) return PROC_ERR_RANGE;
+    *argv_out = argv_user;
     *envp_out = env_user;
-    *rsp_out = sp & ~0xfull;
+    *rsp_out = sp;
     return PROC_OK;
 }
 
@@ -173,7 +238,7 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     if (!p->session_id) p->session_id = p->result.pid;
     if (!tty_session_id) tty_session_id = p->session_id;
     if (!tty_foreground_pgrp) tty_foreground_pgrp = p->process_group;
-    p->signal_flags = (p->result.pid == p->session_id) ? AURORA_PROCESS_FLAG_SESSION_LEADER : 0u;
+    p->signal_flags = (p->result.pid == p->session_id) ? RABBITBONE_PROCESS_FLAG_SESSION_LEADER : 0u;
     process_signal_init(p);
     p->result.started_ticks = pit_ticks();
     p->result.address_space = p->space.pml4_physical;
@@ -228,7 +293,7 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->parent_pid = current_proc.parent_pid;
     dst->process_group = current_proc.process_group;
     dst->session_id = current_proc.session_id;
-    dst->signal_flags = current_proc.signal_flags & AURORA_PROCESS_FLAG_SESSION_LEADER;
+    dst->signal_flags = current_proc.signal_flags & RABBITBONE_PROCESS_FLAG_SESSION_LEADER;
     dst->signal_blocked = current_proc.signal_blocked;
     memcpy(dst->signal_actions, current_proc.signal_actions, sizeof(dst->signal_actions));
     dst->cred = current_proc.cred;
@@ -288,7 +353,7 @@ static void commit_exec_replacement(cpu_regs_t *regs) {
      */
     *exec_old_proc = current_proc;
 
-    syscall_close_user_handles_with_flags(AURORA_FD_CLOEXEC);
+    syscall_close_user_handles_with_flags(RABBITBONE_FD_CLOEXEC);
     current_proc = *exec_replacement;
     memset(exec_replacement, 0, sizeof(*exec_replacement));
     exec_requested = false;

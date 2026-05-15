@@ -1,42 +1,42 @@
-#include <aurora/bootinfo.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/panic.h>
-#include <aurora/arch/cpu.h>
-#include <aurora/arch/idt.h>
-#include <aurora/arch/gdt.h>
-#include <aurora/arch/io.h>
-#include <aurora/drivers.h>
-#include <aurora/memory.h>
-#include <aurora/vmm.h>
-#include <aurora/kmem.h>
-#include <aurora/block.h>
-#include <aurora/pci.h>
-#include <aurora/ahci.h>
-#include <aurora/vfs.h>
-#include <aurora/ramfs.h>
-#include <aurora/devfs.h>
-#include <aurora/ext4_vfs.h>
-#include <aurora/syscall.h>
-#include <aurora/task.h>
-#include <aurora/process.h>
-#include <aurora/scheduler.h>
-#if AURORA_EMBED_USERLAND
-#include <aurora/user_bins.h>
+#include <rabbitbone/bootinfo.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/arch/cpu.h>
+#include <rabbitbone/arch/idt.h>
+#include <rabbitbone/arch/gdt.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/ahci.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/ramfs.h>
+#include <rabbitbone/devfs.h>
+#include <rabbitbone/ext4_vfs.h>
+#include <rabbitbone/syscall.h>
+#include <rabbitbone/task.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/scheduler.h>
+#if RABBITBONE_EMBED_USERLAND
+#include <rabbitbone/user_bins.h>
 #endif
-#include <aurora/version.h>
-#include <aurora/tty.h>
-#include <aurora/libc.h>
-#include <aurora/timer.h>
-#include <aurora/acpi.h>
-#include <aurora/apic.h>
-#include <aurora/hpet.h>
-#include <aurora/smp.h>
+#include <rabbitbone/version.h>
+#include <rabbitbone/tty.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/hpet.h>
+#include <rabbitbone/smp.h>
 
-#ifdef AURORA_DEBUG_SHELL
+#ifdef RABBITBONE_DEBUG_SHELL
 extern void shell_run(void);
 #endif
-extern void aurora_cpp_api_selftest(void);
+extern void rabbitbone_cpp_api_selftest(void);
 
 static void kernel_mount_filesystems(void) {
     vfs_init();
@@ -44,7 +44,7 @@ static void kernel_mount_filesystems(void) {
     if (st != VFS_OK) PANIC("boot ramfs mount failed: %s", vfs_status_name(st));
     st = devfs_mount();
     if (st != VFS_OK) KLOG(LOG_WARN, "kernel", "devfs mount failed: %s", vfs_status_name(st));
-#if AURORA_EMBED_USERLAND
+#if RABBITBONE_EMBED_USERLAND
     user_bins_install();
 #endif
     st = ext4_vfs_mount_first_linux_partition("/disk0");
@@ -58,7 +58,7 @@ static void kernel_mount_filesystems(void) {
         "forkcheck", "heapcheck", "mmapcheck", "mmapfilecheck", "mmapsharedcheck",
         "procctl", "execcheck", "execfdcheck", "execfdchild", "execvecheck", "exectarget",
         "pipecheck", "fdremapcheck", "pollcheck", "stdcat", "termcheck", "regtrash",
-        "sh", "aursh", 0
+        "sh", "rbsh", 0
     };
     for (unsigned int i = 0; userland_aliases[i]; ++i) {
         char link_path[64];
@@ -70,21 +70,26 @@ static void kernel_mount_filesystems(void) {
     (void)vfs_symlink("/disk0/sbin/init", "/sbin/init");
 }
 
-void kernel_main(const aurora_bootinfo_t *bootinfo) {
+void kernel_main(const rabbitbone_bootinfo_t *bootinfo) {
     console_init();
     log_init();
-    KLOG(LOG_INFO, "kernel", AURORA_KERNEL_BANNER);
+    KLOG(LOG_INFO, "kernel", RABBITBONE_KERNEL_BANNER);
     cpu_init();
     gdt_init();
 
+    bool bootinfo_basic = bootinfo_basic_usable(bootinfo);
+    memory_init(bootinfo_basic ? bootinfo : 0);
+    vmm_init(1024ull * 1024ull * 1024ull);
+    if (bootinfo_basic && (bootinfo->flags & RABBITBONE_BOOT_FLAG_UEFI) && !vga_use_boot_framebuffer_early(bootinfo)) {
+        KLOG(LOG_WARN, "fbcon", "UEFI framebuffer unavailable; serial console remains active");
+    }
     if (!bootinfo_validate(bootinfo)) {
-        PANIC("invalid boot information block at %p", bootinfo);
+        PANIC("invalid boot information block at %p: %s", bootinfo, bootinfo_validate_reason(bootinfo));
     }
     bootinfo_remember(bootinfo);
-    bootinfo_dump(bootinfo);
-    memory_init(bootinfo);
-    vmm_init(1024ull * 1024ull * 1024ull);
+    bootramdisk_init(bootinfo);
     kmem_init();
+    log_enable_heap_ring();
     if (!gdt_install_dynamic_stacks(64u * 1024u, 8u * 1024u)) {
         PANIC("failed to install heap-backed TSS stacks");
     }
@@ -113,17 +118,17 @@ void kernel_main(const aurora_bootinfo_t *bootinfo) {
     block_log_devices();
     kernel_mount_filesystems();
     syscall_init();
-    aurora_cpp_api_selftest();
+    rabbitbone_cpp_api_selftest();
 
     KLOG(LOG_INFO, "kernel", "initialized: block_devices=%llu", (unsigned long long)block_count());
 
-#ifdef AURORA_DEBUG_SHELL
+#ifdef RABBITBONE_DEBUG_SHELL
     shell_run();
 #else
     const char *init_argv[] = { "/disk0/sbin/init" };
     u32 init_pid = 0;
     process_status_t init_status = process_spawn_async("/disk0/sbin/init", 1, init_argv, &init_pid);
-#if AURORA_EMBED_USERLAND
+#if RABBITBONE_EMBED_USERLAND
     if (init_status != PROC_OK) {
         const char *fallback_argv[] = { "/sbin/init" };
         init_status = process_spawn_async("/sbin/init", 1, fallback_argv, &init_pid);

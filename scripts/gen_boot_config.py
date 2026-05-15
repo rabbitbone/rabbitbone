@@ -27,7 +27,10 @@ if a.kernel_bin is not None:
     except OSError as exc:
         print(f'gen_boot_config.py: cannot stat kernel binary {a.kernel_bin}: {exc}', file=sys.stderr)
         raise SystemExit(1) from exc
-    kernel_sectors = max(1, math.ceil(kernel_size / SECTOR_SIZE))
+    if kernel_size == 0:
+        print(f'gen_boot_config.py: kernel binary is empty: {a.kernel_bin}', file=sys.stderr)
+        raise SystemExit(1)
+    kernel_sectors = math.ceil(kernel_size / SECTOR_SIZE)
 else:
     kernel_size = None
     kernel_sectors = a.kernel_sectors
@@ -69,6 +72,8 @@ if kernel_symbols:
             errors.append(f'kernel memory image ends at 0x{end:x}; maximum safe low-memory end is 0x{KERNEL_LOAD_LIMIT:x}')
 if not (1 <= a.kernel_lba <= U64_MAX):
     errors.append('--kernel-lba must be in 1..2^64-1')
+elif a.kernel_lba < 1 + a.stage2_sectors:
+    errors.append('--kernel-lba overlaps the stage2 reserved sectors')
 elif a.kernel_lba + max(kernel_sectors, 0) - 1 > U64_MAX:
     errors.append('--kernel-lba + kernel sectors overflows 64-bit LBA')
 

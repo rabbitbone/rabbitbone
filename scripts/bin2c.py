@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import re
+import stat
 from pathlib import Path
 
 C_IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+RABBITBONE_PATH_MAX = 256
+SAFE_PATH_COMPONENT_RE = re.compile(r'^[A-Za-z0-9._+-]+$')
+MAX_BLOB_BYTES = 8 * 1024 * 1024
 
 def sym(name: str) -> str:
     out = []
@@ -33,8 +37,37 @@ def c_string(value: str) -> str:
 def validate_dest(dest: str) -> None:
     if not dest.startswith('/') or '\x00' in dest:
         raise SystemExit(f'invalid destination path {dest!r}')
-    if '//' in dest or '/../' in dest or dest.endswith('/..') or '/./' in dest or dest.endswith('/.'):
+    if len(dest) >= RABBITBONE_PATH_MAX:
+        raise SystemExit(f'destination path exceeds Rabbitbone path limit: {dest!r}')
+    if dest == '/' or dest.endswith('/'):
+        raise SystemExit(f'destination path must name a file: {dest!r}')
+    parts = dest.split('/')[1:]
+    if any(part in ('', '.', '..') for part in parts):
         raise SystemExit(f'non-normal destination path {dest!r}')
+    bad = [part for part in parts if not SAFE_PATH_COMPONENT_RE.fullmatch(part)]
+    if bad:
+        raise SystemExit(f'destination path contains unsupported component {bad[0]!r}: {dest!r}')
+
+def read_regular_file(path: Path) -> bytes:
+    try:
+        st = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise SystemExit(f'{path}: cannot stat: {exc}') from exc
+    if stat.S_ISLNK(st.st_mode):
+        raise SystemExit(f'{path}: refusing to embed symlink')
+    if not stat.S_ISREG(st.st_mode):
+        raise SystemExit(f'{path}: refusing to embed non-regular file')
+    if st.st_size <= 0:
+        raise SystemExit(f'{path}: refusing to embed empty file')
+    if st.st_size > MAX_BLOB_BYTES:
+        raise SystemExit(f'{path}: file is too large to embed: {st.st_size} bytes > {MAX_BLOB_BYTES}')
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise SystemExit(f'{path}: cannot read: {exc}') from exc
+    if len(data) != st.st_size:
+        raise SystemExit(f'{path}: file changed while being read')
+    return data
 
 def emit_array(name: str, data: bytes) -> str:
     lines = [f'static const unsigned char {name}[] __attribute__((aligned(16))) = {{']
@@ -54,7 +87,7 @@ def main() -> None:
     blobs = []
     by_source = {}
     seen_dest = set()
-    src = ['#include <aurora/user_bins.h>', '#include <aurora/ramfs.h>', '#include <aurora/vfs.h>', '#include <aurora/abi.h>', '#include <aurora/libc.h>', '']
+    src = ['#include <rabbitbone/user_bins.h>', '#include <rabbitbone/ramfs.h>', '#include <rabbitbone/vfs.h>', '#include <rabbitbone/abi.h>', '#include <rabbitbone/libc.h>', '']
 
     for idx, m in enumerate(ns.mapping):
         if ':' not in m:
@@ -66,7 +99,7 @@ def main() -> None:
         seen_dest.add(dest)
 
         path = Path(path_text)
-        data = path.read_bytes()
+        data = read_regular_file(path)
         key = str(path.resolve(strict=True))
         blob = by_source.get(key)
         if blob is None:
@@ -107,11 +140,11 @@ def main() -> None:
         if first_dest == dest:
             src.append(f'    (void)vfs_create({d}, {name}, {size}u);')
             src.append(f'    (void)vfs_chmod({d}, 0755u);')
-            src.append(f'    (void)vfs_chown({d}, AURORA_UID_ROOT, AURORA_GID_ROOT);')
+            src.append(f'    (void)vfs_chown({d}, RABBITBONE_UID_ROOT, RABBITBONE_GID_ROOT);')
         else:
             src.append(f'    if (vfs_link({c_string(first_dest)}, {d}) != VFS_OK) (void)vfs_create({d}, {name}, {size}u);')
             src.append(f'    (void)vfs_chmod({d}, 0755u);')
-            src.append(f'    (void)vfs_chown({d}, AURORA_UID_ROOT, AURORA_GID_ROOT);')
+            src.append(f'    (void)vfs_chown({d}, RABBITBONE_UID_ROOT, RABBITBONE_GID_ROOT);')
     src.append('}')
     src.append('')
 

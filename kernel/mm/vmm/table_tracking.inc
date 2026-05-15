@@ -70,6 +70,8 @@ static pte_t *next_table(vmm_space_t *space, pte_t *parent, usize idx, bool crea
     if ((flags & ~(VMM_ALLOWED_TABLE_FLAGS)) != 0) return 0;
     if (parent[idx] & VMM_PRESENT) {
         (void)create;
+        if ((parent[idx] & VMM_HUGE) != 0) return 0;
+        if ((flags & VMM_USER) && (parent[idx] & VMM_USER) == 0) return 0;
         return (pte_t *)(uptr)(parent[idx] & PTE_ADDR_MASK);
     }
     if (!create) return 0;
@@ -84,5 +86,26 @@ static void split_indices(uptr virt, usize *pml4i, usize *pdpti, usize *pdi, usi
     *pdpti = (virt >> 30) & 0x1ffu;
     *pdi = (virt >> 21) & 0x1ffu;
     *pti = (virt >> 12) & 0x1ffu;
+}
+
+static bool vmm_user_table_entry_allows_user(pte_t entry) {
+    return (entry & VMM_PRESENT) != 0 && (entry & VMM_USER) != 0 && (entry & VMM_HUGE) == 0;
+}
+
+static bool vmm_space_existing_path_is_user(const vmm_space_t *space, uptr virt) {
+    if (!space || !space->user_space || !vmm_is_user_range(virt, PAGE_SIZE)) return false;
+    pte_t *pml4 = space_pml4(space);
+    if (!pml4) return false;
+    usize a, b, c, d;
+    split_indices(virt, &a, &b, &c, &d);
+    (void)d;
+    pte_t pml4e = pml4[a];
+    if (!vmm_user_table_entry_allows_user(pml4e)) return false;
+    pte_t *pdpt = (pte_t *)(uptr)(pml4e & PTE_ADDR_MASK);
+    pte_t pdpte = pdpt[b];
+    if (!vmm_user_table_entry_allows_user(pdpte)) return false;
+    pte_t *pd = (pte_t *)(uptr)(pdpte & PTE_ADDR_MASK);
+    pte_t pde = pd[c];
+    return vmm_user_table_entry_allows_user(pde);
 }
 

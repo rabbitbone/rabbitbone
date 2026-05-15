@@ -1,4 +1,4 @@
-syscall_result_t aurora_sys_exit(u64 code) {
+syscall_result_t rabbitbone_sys_exit(u64 code) {
     if (process_user_active() && process_async_scheduler_active()) {
         process_request_exit((i32)code);
         return ok((i64)code);
@@ -7,7 +7,7 @@ syscall_result_t aurora_sys_exit(u64 code) {
     return ok((i64)code);
 }
 
-syscall_result_t aurora_sys_fork(void) {
+syscall_result_t rabbitbone_sys_fork(void) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     if (!process_request_fork()) return err(VFS_ERR_NOMEM);
     return ok(0);
@@ -48,7 +48,7 @@ static bool user_log_permit(u32 pid, u32 *suppressed_out) {
     return permit;
 }
 
-syscall_result_t aurora_sys_log(u64 msg_ptr) {
+syscall_result_t rabbitbone_sys_log(u64 msg_ptr) {
     char msg[160];
     if (!copy_string_arg(msg_ptr, msg, sizeof(msg))) return err(VFS_ERR_INVAL);
     u32 pid = process_current_pid();
@@ -63,60 +63,60 @@ syscall_result_t aurora_sys_log(u64 msg_ptr) {
 }
 
 
-syscall_result_t aurora_sys_theme(u64 op64, u64 value64) {
-    if (op64 == AURORA_THEME_OP_GET) return ok((i64)console_theme());
-    if (op64 != AURORA_THEME_OP_SET || value64 >= AURORA_THEME_MAX) return err(VFS_ERR_INVAL);
+syscall_result_t rabbitbone_sys_theme(u64 op64, u64 value64) {
+    if (op64 == RABBITBONE_THEME_OP_GET) return ok((i64)console_theme());
+    if (op64 != RABBITBONE_THEME_OP_SET || value64 >= RABBITBONE_THEME_MAX) return err(VFS_ERR_INVAL);
     if (!console_set_theme((u32)value64)) return err(VFS_ERR_INVAL);
     KLOG(LOG_INFO, "theme", "active=%s", console_theme_name((u32)value64));
     return ok((i64)value64);
 }
 
-syscall_result_t aurora_sys_tty_getinfo(u64 out_ptr) {
+syscall_result_t rabbitbone_sys_tty_getinfo(u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
-    aurora_ttyinfo_t info;
+    rabbitbone_ttyinfo_t info;
     if (!tty_getinfo(&info)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_setmode(u64 mode64) {
+syscall_result_t rabbitbone_sys_tty_setmode(u64 mode64) {
     if (mode64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     return tty_set_mode((u32)mode64) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_readkey(u64 out_ptr, u64 flags64) {
+syscall_result_t rabbitbone_sys_tty_readkey(u64 out_ptr, u64 flags64) {
     if (!out_ptr || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
-    aurora_key_event_t ev;
+    rabbitbone_key_event_t ev;
     if (!tty_read_key(&ev, (u32)flags64)) return err(VFS_ERR_INVAL);
     return copy_out_buf(out_ptr, &ev, sizeof(ev)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_scroll(u64 lines64) {
+syscall_result_t rabbitbone_sys_tty_scroll(u64 lines64) {
     i64 signed_lines = (i64)lines64;
     if (signed_lines > 1000 || signed_lines < -1000) return err(VFS_ERR_INVAL);
     return tty_scroll((i32)signed_lines) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_setcursor(u64 row64, u64 col64) {
+syscall_result_t rabbitbone_sys_tty_setcursor(u64 row64, u64 col64) {
     if (row64 > 0xffffffffull || col64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     return tty_set_cursor((u32)row64, (u32)col64) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_clearline(void) {
+syscall_result_t rabbitbone_sys_tty_clearline(void) {
     return tty_clear_line() ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_clear(void) {
+syscall_result_t rabbitbone_sys_tty_clear(void) {
     return tty_clear() ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_tty_cursor_visible(u64 visible64) {
+syscall_result_t rabbitbone_sys_tty_cursor_visible(u64 visible64) {
     if (visible64 > 1u) return err(VFS_ERR_INVAL);
     return tty_set_cursor_visible(visible64 != 0u) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
 syscall_result_t syscall_dispatch(u64 no, u64 a0, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5) {
     if (!initialized) syscall_init();
-    aurora_rust_sysargs_t args = { a0, a1, a2, a3, a4, a5 };
-    return aurora_rust_syscall_dispatch(no, args);
+    rabbitbone_rust_sysargs_t args = { a0, a1, a2, a3, a4, a5 };
+    return rabbitbone_rust_syscall_dispatch(no, args);
 }
 

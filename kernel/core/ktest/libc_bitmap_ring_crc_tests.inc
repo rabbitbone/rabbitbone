@@ -9,7 +9,7 @@ static void test_libc_bitmap_ring_crc(void) {
     memcpy(a, "0123456789", 11u);
     memmove(a + 2, a, 8u);
     check(strcmp(a, "0101234567") == 0, "memmove overlapping right shift");
-    check(strlen("aurora") == 6u && strnlen("aurora", 3u) == 3u, "strlen/strnlen");
+    check(strlen("rabbitbone") == 10u && strnlen("rabbitbone", 3u) == 3u && strnlen("rabbitbone", 32u) == 10u, "strlen/strnlen");
     check(strcmp("abc", "abc") == 0 && strcmp("abc", "abd") < 0, "strcmp ordering");
     check(strncmp("abcdef", "abcXYZ", 3u) == 0, "strncmp prefix");
     check(strchr("abc", 'b') && !strchr("abc", 'z'), "strchr hit/miss");

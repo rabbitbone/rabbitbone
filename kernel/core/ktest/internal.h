@@ -1,45 +1,55 @@
 #pragma once
 
-#include <aurora/ktest.h>
-#include <aurora/bitmap.h>
-#include <aurora/block.h>
-#include <aurora/bootinfo.h>
-#include <aurora/console.h>
-#include <aurora/crc32.h>
-#include <aurora/drivers.h>
-#include <aurora/elf64.h>
-#include <aurora/ext4.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/mbr.h>
-#include <aurora/pci.h>
-#include <aurora/acpi.h>
-#include <aurora/apic.h>
-#include <aurora/hpet.h>
-#include <aurora/smp.h>
-#include <aurora/memory.h>
-#include <aurora/path.h>
-#include <aurora/ringbuf.h>
-#include <aurora/syscall.h>
-#include <aurora/task.h>
-#include <aurora/scheduler.h>
-#include <aurora/tarfs.h>
-#include <aurora/timer.h>
-#include <aurora/vfs.h>
-#include <aurora/vmm.h>
-#include <aurora/arch/gdt.h>
-#include <aurora/arch/cpu.h>
-#include <aurora/process.h>
-#include <aurora/rust.h>
-#include <aurora/version.h>
-#include <aurora/tty.h>
+#include <rabbitbone/ktest.h>
+#include <rabbitbone/bitmap.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/bootinfo.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/crc32.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/elf64.h>
+#include <rabbitbone/ext4.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/mbr.h>
+#include <rabbitbone/pci.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/hpet.h>
+#include <rabbitbone/smp.h>
+#include <rabbitbone/memory.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/ringbuf.h>
+#include <rabbitbone/syscall.h>
+#include <rabbitbone/task.h>
+#include <rabbitbone/scheduler.h>
+#include <rabbitbone/tarfs.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/vfs.h>
+#include <rabbitbone/vmm.h>
+#include <rabbitbone/arch/gdt.h>
+#include <rabbitbone/arch/cpu.h>
+#include <rabbitbone/process.h>
+#include <rabbitbone/rust.h>
+#include <rabbitbone/version.h>
+#include <rabbitbone/tty.h>
 
 static ktest_totals_t totals;
 static const char *current_suite;
 static u32 suite_failed;
 static u32 suite_passed;
 static u32 suite_skipped;
+static bool ktest_verbose_passes;
+
+static void ktest_log_line(log_level_t level, const char *fmt, ...) {
+    char msg[256];
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    kvsnprintf(msg, sizeof(msg), fmt, ap);
+    __builtin_va_end(ap);
+    log_write(level, "ktest", "%s", msg);
+}
 
 static void suite_begin(const char *name) {
     current_suite = name;
@@ -48,28 +58,33 @@ static void suite_begin(const char *name) {
     suite_skipped = 0;
     ++totals.suites;
     kprintf("\n[ suite ] %s\n", name);
+    ktest_log_line(LOG_INFO, "[ suite ] %s", name);
 }
 
 static void suite_end(void) {
     kprintf("[ result] %s: passed=%u failed=%u skipped=%u\n", current_suite, suite_passed, suite_failed, suite_skipped);
+    ktest_log_line(suite_failed ? LOG_ERROR : LOG_INFO, "[ result] %s: passed=%u failed=%u skipped=%u", current_suite, suite_passed, suite_failed, suite_skipped);
 }
 
 static void pass(const char *name) {
     ++totals.passed;
     ++suite_passed;
-    kprintf("[ ok    ] %s\n", name);
+    ktest_log_line(LOG_INFO, "[ ok    ] %s", name);
+    if (ktest_verbose_passes) kprintf("[ ok    ] %s\n", name);
 }
 
 static void fail(const char *name) {
     ++totals.failed;
     ++suite_failed;
     kprintf("[ fail  ] %s\n", name);
+    ktest_log_line(LOG_ERROR, "[ fail  ] %s", name);
 }
 
 static void skip(const char *name) {
     ++totals.skipped;
     ++suite_skipped;
     kprintf("[ skip  ] %s\n", name);
+    ktest_log_line(LOG_WARN, "[ skip  ] %s", name);
 }
 
 static void check(bool expr, const char *name) {
@@ -145,7 +160,8 @@ static bool ktest_remove_tree(const char *path) {
             bool removed_any = false;
             for (u32 i = 0; i < batch->count; ++i) {
                 char child[VFS_PATH_MAX];
-                ksnprintf(child, sizeof(child), "%s/%s", path, batch->names[i]);
+                int n = ksnprintf(child, sizeof(child), "%s/%s", path, batch->names[i]);
+                if (n < 0 || (usize)n >= sizeof(child)) continue;
                 if (ktest_remove_tree(child)) removed_any = true;
             }
             bool overflow = batch->overflow;
@@ -175,7 +191,8 @@ static bool ktest_cleanup_disk_prefix(const char *prefix) {
         bool removed_any = false;
         for (u32 i = 0; i < batch->count; ++i) {
             char path[VFS_PATH_MAX];
-            ksnprintf(path, sizeof(path), "/disk0/%s", batch->names[i]);
+            int n = ksnprintf(path, sizeof(path), "/disk0/%s", batch->names[i]);
+            if (n < 0 || (usize)n >= sizeof(path)) continue;
             if (ktest_remove_tree(path)) removed_any = true;
         }
         bool overflow = batch->overflow;
@@ -192,6 +209,7 @@ typedef struct seen_name_ctx {
 
 static bool list_seen_name(const vfs_dirent_t *e, void *ctx) {
     seen_name_ctx_t *s = (seen_name_ctx_t *)ctx;
+    if (!e || !s || !s->name) return true;
     if (strcmp(e->name, s->name) == 0) { s->seen = true; return false; }
     return true;
 }
@@ -199,6 +217,7 @@ static bool list_seen_name(const vfs_dirent_t *e, void *ctx) {
 static bool list_count_cb(const vfs_dirent_t *e, void *ctx) {
     (void)e;
     u32 *n = (u32 *)ctx;
+    if (!n || *n == ((u32)~0u)) return false;
     ++*n;
     return true;
 }

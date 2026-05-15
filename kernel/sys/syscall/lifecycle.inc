@@ -61,6 +61,19 @@ void syscall_close_user_handles_with_flags(u32 flags) {
     }
 }
 
+
+void syscall_forget_pid(u32 pid) {
+    if (!pid || !initialized) return;
+    u64 flags = spin_lock_irqsave(&user_log_lock);
+    for (usize i = 0; i < SYSCALL_USER_LOG_SLOTS; ++i) {
+        if (user_log_states[i].used && user_log_states[i].pid == pid) {
+            memset(&user_log_states[i], 0, sizeof(user_log_states[i]));
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&user_log_lock, flags);
+}
+
 void syscall_close_all_user_handles(void) {
     for (usize i = 0; i < SYSCALL_MAX_HANDLES; ++i) {
         if (user_handles[i].used) close_handle(user_handles, i);
@@ -109,7 +122,7 @@ void syscall_init(void) {
 }
 
 const char *syscall_name(u64 no) {
-    return (const char *)aurora_rust_syscall_name(no);
+    return (const char *)rabbitbone_rust_syscall_name(no);
 }
 
 static sys_file_t *file_by_id(u32 id) {

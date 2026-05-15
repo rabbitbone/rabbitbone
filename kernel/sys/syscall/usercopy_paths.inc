@@ -36,7 +36,7 @@ static bool syscall_get_cwd(char *out, usize out_size) {
 }
 
 static bool syscall_set_cwd(const char *path) {
-    if (!path || !aurora_rust_path_policy_check((const u8 *)path, SYSCALL_PATH_MAX)) return false;
+    if (!path || !rabbitbone_rust_path_policy_check((const u8 *)path, SYSCALL_PATH_MAX)) return false;
     if (process_user_active()) return process_set_current_cwd(path);
     usize n = strnlen(path, sizeof(kernel_cwd));
     if (n >= sizeof(kernel_cwd)) return false;
@@ -51,7 +51,7 @@ static bool copy_symlink_target_arg(u64 user_or_kernel_ptr, char *out) {
     if (!copy_string_arg(user_or_kernel_ptr, out, SYSCALL_PATH_MAX)) return false;
     if (!syscall_path_chars_valid(out)) return false;
     return strnlen(out, SYSCALL_PATH_MAX) < SYSCALL_PATH_MAX &&
-           aurora_rust_path_no_traversal_check((const u8 *)out, SYSCALL_PATH_MAX, true);
+           rabbitbone_rust_path_no_traversal_check((const u8 *)out, SYSCALL_PATH_MAX, true);
 }
 
 static bool copy_path_arg(u64 user_or_kernel_ptr, char *out) {
@@ -67,7 +67,7 @@ static bool copy_path_arg(u64 user_or_kernel_ptr, char *out) {
         ok = path_join(cwd, raw, out, SYSCALL_PATH_MAX);
     }
     if (!ok) return false;
-    return aurora_rust_path_policy_check((const u8 *)out, SYSCALL_PATH_MAX);
+    return rabbitbone_rust_path_policy_check((const u8 *)out, SYSCALL_PATH_MAX);
 }
 
 static bool copy_in_buf(void *dst, u64 src, usize len) {

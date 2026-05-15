@@ -1,0 +1,17 @@
+#include <rabbitbone_sys.h>
+
+#include "rbsh/internal.inc"
+#include "rbsh/util.inc"
+#include "rbsh/parse.inc"
+#include "rbsh/runtime.inc"
+#include "rbsh/builtins_ui.inc"
+#include "rbsh/builtins_fs.inc"
+#include "rbsh/builtins_theme.inc"
+#include "rbsh/builtins_proc.inc"
+#include "rbsh/builtins_system.inc"
+#include "rbsh/builtins_auth.inc"
+#include "rbsh/builtins_kctl.inc"
+#include "rbsh/dispatch.inc"
+#include "rbsh/exec.inc"
+#include "rbsh/line_editor.inc"
+#include "rbsh/repl.inc"

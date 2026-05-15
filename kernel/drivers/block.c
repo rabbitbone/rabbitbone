@@ -1,6 +1,6 @@
-#include <aurora/block.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
+#include <rabbitbone/block.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
 
 #define MAX_BLOCK_DEVS 8u
 static block_device_t *devices[MAX_BLOCK_DEVS];
@@ -9,6 +9,11 @@ static usize device_count;
 bool block_register(block_device_t *dev) {
     if (!dev || !dev->read || device_count >= MAX_BLOCK_DEVS) return false;
     if (dev->sector_count == 0 || dev->sector_size != BLOCKDEV_SECTOR_SIZE) return false;
+    if (dev->name[0] == 0 || strnlen(dev->name, sizeof(dev->name)) >= sizeof(dev->name)) return false;
+    for (usize i = 0; i < device_count; ++i) {
+        if (devices[i] == dev) return false;
+        if (devices[i] && strncmp(devices[i]->name, dev->name, sizeof(dev->name)) == 0) return false;
+    }
     if (!dev->driver) dev->driver = "unknown";
     if (dev->write) dev->flags |= BLOCKDEV_FLAG_WRITE;
     if (dev->flush) dev->flags |= BLOCKDEV_FLAG_FLUSH;
@@ -68,6 +73,10 @@ const char *block_status_name(block_status_t status) {
 }
 
 void block_log_devices(void) {
+#if defined(RABBITBONE_HOST_TEST)
+    (void)devices;
+    (void)device_count;
+#else
     KLOG(LOG_INFO, "block", "registered devices=%llu", (unsigned long long)device_count);
     for (usize i = 0; i < device_count; ++i) {
         block_device_t *dev = devices[i];
@@ -75,4 +84,5 @@ void block_log_devices(void) {
         KLOG(LOG_INFO, "block", "block%llu name=%s driver=%s sectors=%llu sector_size=%u flags=0x%x",
              (unsigned long long)i, dev->name, block_driver_name(dev), (unsigned long long)dev->sector_count, dev->sector_size, dev->flags);
     }
+#endif
 }

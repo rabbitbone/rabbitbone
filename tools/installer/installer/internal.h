@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -31,6 +33,7 @@ struct Args {
     std::string kernel;
     std::uint64_t size_mib = 64;
     bool force = false;
+    bool root_only = false;
     std::vector<InstallFile> install_files;
 };
 
@@ -66,9 +69,13 @@ constexpr std::uint32_t kEtcIno = 12;
 constexpr std::uint32_t kBinIno = 13;
 constexpr std::uint32_t kSbinIno = 14;
 constexpr std::uint32_t kFirstDynamicInode = 15;
+constexpr std::uint64_t kMaxSeedFileBytes = (12ull + kFsBlockSize / 4ull) * kFsBlockSize;
+constexpr std::uint64_t kMaxKernelImageBytes = static_cast<std::uint64_t>(kKernelLoadMaxSectors) * kSectorSize;
+constexpr std::uint64_t kMaxStage2Bytes = static_cast<std::uint64_t>(kStage2ReservedSectors) * kSectorSize;
+constexpr std::size_t kRabbitbonePathMax = 256;
 
 [[noreturn]] void usage() {
-    std::cerr << "usage: aurora-install --out disk.img --stage1 stage1.bin --stage2 stage2.bin --kernel kernel.bin [--size-mib N] [--install SRC:DEST]... [--force]\n";
+    std::cerr << "usage: rabbitbone-install --out disk.img [--root-only | --stage1 stage1.bin --stage2 stage2.bin --kernel kernel.bin] [--size-mib N] [--install SRC:DEST]... [--force]\n";
     std::exit(2);
 }
 
@@ -84,19 +91,43 @@ std::string errno_message(const std::string &prefix) {
     return prefix + ": " + std::strerror(errno);
 }
 
+bool is_safe_path_char(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+           c == '_' || c == '-' || c == '.' || c == '+';
+}
+
+void validate_seed_path(const std::string &dest, const char *context) {
+    if (dest.empty() || dest[0] != '/') throw std::runtime_error(std::string(context) + " must be absolute: " + dest);
+    if (dest.size() >= kRabbitbonePathMax) throw std::runtime_error(std::string(context) + " exceeds Rabbitbone path limit: " + dest);
+    if (dest == "/") throw std::runtime_error(std::string(context) + " must name a file, not /");
+    if (dest.back() == '/') throw std::runtime_error(std::string(context) + " must not end with /: " + dest);
+
+    std::size_t begin = 1;
+    while (begin <= dest.size()) {
+        const std::size_t slash = dest.find('/', begin);
+        const std::size_t end = slash == std::string::npos ? dest.size() : slash;
+        const std::string component = dest.substr(begin, end - begin);
+        if (component.empty() || component == "." || component == "..") {
+            throw std::runtime_error(std::string(context) + " must be normalized: " + dest);
+        }
+        if (component.size() > 255u) throw std::runtime_error(std::string(context) + " component too long: " + dest);
+        for (char c : component) {
+            if (!is_safe_path_char(c)) throw std::runtime_error(std::string(context) + " contains unsupported character: " + dest);
+        }
+        if (slash == std::string::npos) break;
+        begin = slash + 1u;
+    }
+}
+
 InstallFile parse_install_spec(const std::string &spec) {
-    const std::size_t sep = spec.find(':');
+    const std::size_t sep = spec.rfind(':');
     if (sep == std::string::npos || sep == 0 || sep + 1 >= spec.size()) {
         throw std::runtime_error("--install expects SRC:DEST");
     }
     InstallFile f;
     f.source = spec.substr(0, sep);
     f.dest = spec.substr(sep + 1);
-    if (f.dest.empty() || f.dest[0] != '/') throw std::runtime_error("--install DEST must be absolute: " + f.dest);
-    if (f.dest.find("//") != std::string::npos || f.dest.find("/../") != std::string::npos ||
-        f.dest.find("/./") != std::string::npos || f.dest == "/." || f.dest == "/..") {
-        throw std::runtime_error("--install DEST must be normalized: " + f.dest);
-    }
+    validate_seed_path(f.dest, "--install DEST");
     return f;
 }
 
@@ -123,7 +154,7 @@ std::uint64_t ceil_div_u64(std::uint64_t value, std::uint64_t divisor) {
 
 std::filesystem::path unique_temp_path_for(const std::filesystem::path &out_path, unsigned int attempt) {
     const auto parent = out_path.parent_path();
-    const std::string stem = out_path.filename().empty() ? "aurora.img" : out_path.filename().string();
+    const std::string stem = out_path.filename().empty() ? "rabbitbone.img" : out_path.filename().string();
     const std::string leaf = "." + stem + ".tmp." + std::to_string(static_cast<unsigned long long>(::getpid())) + "." + std::to_string(attempt);
     return parent.empty() ? std::filesystem::path(leaf) : parent / leaf;
 }

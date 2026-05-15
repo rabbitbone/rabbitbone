@@ -55,7 +55,7 @@ bool scheduler_tick(const cpu_regs_t *regs) {
     return preempt;
 }
 
-bool scheduler_preempt_info(aurora_preemptinfo_t *out) {
+bool scheduler_preempt_info(rabbitbone_preemptinfo_t *out) {
     ensure_init();
     if (!out) return false;
     memset(out, 0, sizeof(*out));

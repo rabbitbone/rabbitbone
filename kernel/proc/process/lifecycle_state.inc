@@ -116,15 +116,15 @@ static bool process_state_live(u32 state) {
     return state == PROCESS_STATE_READY || state == PROCESS_STATE_RUNNING || state == PROCESS_STATE_SLEEPING || state == PROCESS_STATE_WAITING || state == PROCESS_STATE_STOPPED;
 }
 
-static void process_init_root_cred(aurora_credinfo_t *cred) {
+static void process_init_root_cred(rabbitbone_credinfo_t *cred) {
     if (!cred) return;
     memset(cred, 0, sizeof(*cred));
-    cred->uid = AURORA_UID_ROOT;
-    cred->euid = AURORA_UID_ROOT;
-    cred->gid = AURORA_GID_ROOT;
-    cred->egid = AURORA_GID_ROOT;
+    cred->uid = RABBITBONE_UID_ROOT;
+    cred->euid = RABBITBONE_UID_ROOT;
+    cred->gid = RABBITBONE_GID_ROOT;
+    cred->egid = RABBITBONE_GID_ROOT;
     cred->is_admin = 1u;
-    cred->sudo_ttl = AURORA_SUDO_DEFAULT_TTL_TICKS;
+    cred->sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
     cred->umask = 022u;
     strncpy(cred->user, "root", sizeof(cred->user) - 1u);
 }
@@ -135,11 +135,11 @@ static void process_inherit_cred(active_process_t *p) {
     else process_init_root_cred(&p->cred);
 }
 
-static bool process_cred_is_root(const aurora_credinfo_t *cred) {
-    return cred && cred->euid == AURORA_UID_ROOT;
+static bool process_cred_is_root(const rabbitbone_credinfo_t *cred) {
+    return cred && cred->euid == RABBITBONE_UID_ROOT;
 }
 
-static bool process_cred_can_access(const aurora_credinfo_t *cred, const vfs_stat_t *st, u32 need) {
+static bool process_cred_can_access(const rabbitbone_credinfo_t *cred, const vfs_stat_t *st, u32 need) {
     if (!cred || !st) return false;
     if (process_cred_is_root(cred)) return true;
     u32 mode = st->mode & 0777u;
@@ -197,6 +197,8 @@ static void release_process_fd_snapshot(active_process_t *p) {
 
 static void release_process_slot(active_process_t *p) {
     if (!p || !p->active) return;
+    tty_forget_pid(p->result.pid);
+    syscall_forget_pid(p->result.pid);
     release_process_fd_snapshot(p);
     release_mappings(p);
     if (p->space.pml4_physical) vmm_space_destroy(&p->space);
@@ -227,7 +229,7 @@ static void fill_info_from_active(process_info_t *info, const active_process_t *
     info->euid = p->cred.euid;
     info->gid = p->cred.gid;
     info->egid = p->cred.egid;
-    info->flags = p->signal_flags | ((tty_foreground_pgrp && p->process_group == tty_foreground_pgrp) ? AURORA_PROCESS_FLAG_FOREGROUND : 0u);
+    info->flags = p->signal_flags | ((tty_foreground_pgrp && p->process_group == tty_foreground_pgrp) ? RABBITBONE_PROCESS_FLAG_FOREGROUND : 0u);
     info->pending_signals = (u32)(p->signal_pending & 0xffffffffu);
     info->blocked_signals = (u32)(p->signal_blocked & 0xffffffffu);
 }
@@ -291,7 +293,7 @@ bool process_set_current_cwd(const char *path) {
     return true;
 }
 
-bool process_current_credentials(aurora_credinfo_t *out) {
+bool process_current_credentials(rabbitbone_credinfo_t *out) {
     if (!out || !current_proc.active) return false;
     *out = current_proc.cred;
     u64 now = pit_ticks();
@@ -299,7 +301,7 @@ bool process_current_credentials(aurora_credinfo_t *out) {
     return true;
 }
 
-bool process_set_current_credentials(const aurora_credinfo_t *cred) {
+bool process_set_current_credentials(const rabbitbone_credinfo_t *cred) {
     if (!cred || !current_proc.active) return false;
     current_proc.cred = *cred;
     current_proc.cred.user[sizeof(current_proc.cred.user) - 1u] = 0;
@@ -315,7 +317,7 @@ bool process_set_current_user(u32 uid, u32 gid, const char *name, bool admin) {
     current_proc.cred.gid = gid;
     current_proc.cred.egid = gid;
     current_proc.cred.is_admin = admin ? 1u : 0u;
-    current_proc.cred.sudo_ttl = AURORA_SUDO_DEFAULT_TTL_TICKS;
+    current_proc.cred.sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
     current_proc.cred.umask = 022u;
     strncpy(current_proc.cred.user, name, sizeof(current_proc.cred.user) - 1u);
     (void)sync_current_to_slot();
@@ -325,7 +327,7 @@ bool process_set_current_user(u32 uid, u32 gid, const char *name, bool admin) {
 bool process_set_current_euid(u32 euid) {
     if (!current_proc.active) return false;
     current_proc.cred.euid = euid;
-    current_proc.cred.egid = (euid == AURORA_UID_ROOT) ? AURORA_GID_ROOT : current_proc.cred.gid;
+    current_proc.cred.egid = (euid == RABBITBONE_UID_ROOT) ? RABBITBONE_GID_ROOT : current_proc.cred.gid;
     (void)sync_current_to_slot();
     return true;
 }
@@ -370,7 +372,7 @@ void process_dump_table(void) {
 }
 
 static bool user_addr_range_valid(uptr user, usize size) {
-    if (!aurora_rust_user_range_check((u64)user, size)) return false;
+    if (!rabbitbone_rust_user_range_check((u64)user, size)) return false;
     if (!size) return true;
     return user < USER_SPACE_LIMIT;
 }
@@ -392,8 +394,8 @@ bool process_validate_user_range(uptr user, usize size, bool write) {
             if (!(flags & VMM_COW) || !process_resolve_cow_page(&current_proc, addr)) return false;
             if (!ensure_process_user_page_writable(&current_proc, addr, &phys, &flags)) return false;
         }
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         done += step_info.chunk;
     }
     return true;
@@ -410,8 +412,8 @@ bool process_copy_from_user(void *dst, uptr user, usize size) {
         uptr phys = 0;
         u64 flags = 0;
         if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags) || !(flags & VMM_USER)) return false;
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         usize n = step_info.chunk;
         memcpy(d + done, (const void *)phys, n);
         done += n;
@@ -430,8 +432,8 @@ bool process_copy_to_user(uptr user, const void *src, usize size) {
         uptr phys = 0;
         u64 flags = 0;
         if (!ensure_process_user_page_writable(&current_proc, addr, &phys, &flags)) return false;
-        aurora_rust_user_copy_step_t step_info;
-        if (!aurora_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
+        rabbitbone_rust_user_copy_step_t step_info;
+        if (!rabbitbone_rust_user_copy_step((u64)addr, size - done, &step_info) || !step_info.ok || step_info.chunk == 0) return false;
         usize n = step_info.chunk;
         memcpy((void *)phys, s + done, n);
         done += n;

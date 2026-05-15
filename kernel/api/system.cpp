@@ -1,8 +1,8 @@
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/memory.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/memory.h>
 
-namespace aurora {
+namespace rabbitbone {
 
 class Console final {
 public:
@@ -26,8 +26,8 @@ public:
 
 }
 
-extern "C" void aurora_cpp_api_selftest(void) {
-    aurora::Logger::info("cpp", "kernel C++ API facade ready");
-    const memory_stats_t s = aurora::Memory::stats();
-    if (s.frame_count == 0) aurora::Console::line("cpp api: memory stats unavailable");
+extern "C" void rabbitbone_cpp_api_selftest(void) {
+    rabbitbone::Logger::info("cpp", "kernel C++ API facade ready");
+    const memory_stats_t s = rabbitbone::Memory::stats();
+    if (s.frame_count == 0) rabbitbone::Console::line("cpp api: memory stats unavailable");
 }

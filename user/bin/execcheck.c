@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 int main(int argc, char **argv) {
     if (argc >= 2 && argv && argv[1] && au_strcmp(argv[1], "shebang") == 0) {

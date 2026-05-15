@@ -60,6 +60,7 @@ static vfs_status_t op_stat_inode(vfs_mount_t *mnt, u32 ino, vfs_stat_t *out) {
 
 static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void *buffer, usize size, usize *read_out) {
     if (read_out) *read_out = 0;
+    if (size && !buffer) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_inode_disk_t inode;
     ext4_status_t st = lookup_path_retry(ctx, "read.lookup", path, &inode, 0);
@@ -76,6 +77,7 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
 
 static vfs_status_t op_read_inode(vfs_mount_t *mnt, u32 ino, u64 offset, void *buffer, usize size, usize *read_out) {
     if (read_out) *read_out = 0;
+    if (size && !buffer) return VFS_ERR_INVAL;
     if (ino == 0) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_inode_disk_t inode;
@@ -127,6 +129,7 @@ static ext4_status_t list_inode_loaded_ext4(ext4_vfs_ctx_t *ctx, ext4_inode_disk
 }
 
 static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn fn, void *user) {
+    if (!fn) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_inode_disk_t inode;
     ext4_status_t st = lookup_path_retry(ctx, "list.lookup", path, &inode, 0);

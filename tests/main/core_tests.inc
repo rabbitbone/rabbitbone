@@ -27,6 +27,10 @@ static void test_bitmap() {
     require(bitmap_count_set(&bm) == 0, "bitmap ignores padding bits");
     bitmap_init(&bm, nullptr, 8);
     require(bitmap_count_set(&bm) == 0 && !bitmap_test(&bm, 0), "bitmap null storage safe");
+    u64 huge_storage[1] = { 0xdeadbeefull };
+    bitmap_init(&bm, huge_storage, static_cast<usize>(-1));
+    require(bm.bit_count == 0 && bitmap_count_set(&bm) == 0, "bitmap rejects overflowing bit counts without touching storage");
+    require(huge_storage[0] == 0xdeadbeefull, "bitmap leaves storage untouched on invalid size");
     const char *end = nullptr;
     require(strtou64("18446744073709551616", &end, 10) == 0xffffffffffffffffull && end && *end == 0, "strtou64 overflow saturates");
     require(strtou64("77", &end, 1) == 0 && end && *end == '7', "strtou64 invalid base rejected");
@@ -34,7 +38,13 @@ static void test_bitmap() {
 
 static void test_ringbuf_crc32() {
     require(ringbuf_selftest(), "ringbuf selftest");
+    u8 storage[1] = {0};
+    ringbuf_t corrupt = {storage, 0, 0, 0, 1};
+    u8 out = 0;
+    require(ringbuf_peek(&corrupt, &out, 1) == 0, "ringbuf rejects corrupt zero-capacity state");
+    require(!ringbuf_pop(&corrupt, &out), "ringbuf pop rejects corrupt zero-capacity state");
     require(crc32_selftest(), "crc32 selftest");
+    require(crc32_update(0x89abcdefu, nullptr, 8) == 0x89abcdefu, "crc32 null input leaves crc unchanged");
 }
 
 static void test_printf() {
@@ -45,6 +55,7 @@ static void test_printf() {
     require(strcmp(buf, "000a") == 0, "printf zero pad");
     ksnprintf(buf, sizeof(buf), "%lld", static_cast<long long>(INT64_MIN));
     require(strcmp(buf, "-9223372036854775808") == 0, "printf handles int64 min without UB");
+    require(ksnprintf(nullptr, 8, "safe") == 4, "printf tolerates null output buffer");
 }
 
 static void put32(std::vector<u8> &d, std::size_t off, u32 v) {
@@ -92,9 +103,20 @@ static void test_mbr() {
     require(mbr.part[0].type == 0x83, "mbr type");
     require(mbr.part[0].lba_first == 2048, "mbr lba");
     require(mbr_find_linux(&mbr) == &mbr.part[0], "mbr linux find");
+    std::vector<u8> bad = sec;
+    bad[450] = 0x00;
+    put32(bad, 454, 2048);
+    put32(bad, 458, 0);
+    require(!mbr_parse_sector(bad.data(), &mbr), "mbr rejects unused partition with stale lba");
+    bad = sec;
+    bad[450] = 0x83;
+    put32(bad, 458, 0);
+    require(!mbr_parse_sector(bad.data(), &mbr), "mbr rejects typed partition with zero length");
 }
 
 struct MemDisk {
     std::vector<u8> data;
+    u64 reads = 0;
+    u64 writes = 0;
 };
 

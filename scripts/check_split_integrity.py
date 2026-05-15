@@ -23,7 +23,7 @@ SPLIT_UNITS: dict[str, list[str]] = {
     "kernel/vfs/vfs.c": ["kernel/vfs/vfs"],
     "tests/test_main.cpp": ["tests/main"],
     "tools/installer/main.cpp": ["tools/installer/installer"],
-    "user/lib/aurora.c": ["user/lib/aurora"],
+    "user/lib/rabbitbone.c": ["user/lib/rabbitbone"],
 }
 
 RUST_SPLIT_UNITS: dict[str, list[str]] = {

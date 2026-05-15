@@ -1,0 +1,23 @@
+.encoding = "UTF-8"
+config.version = "8"
+virtualHW.version = "20"
+displayName = "Rabbitbone"
+guestOS = "other-64"
+memsize = "512"
+numvcpus = "1"
+firmware = "bios"
+
+ide0.present = "TRUE"
+ide0:0.present = "TRUE"
+ide0:0.fileName = "build/rabbitbone-legacy.img"
+ide0:0.deviceType = "disk"
+ide0:0.mode = "persistent"
+
+serial0.present = "TRUE"
+serial0.fileType = "file"
+serial0.fileName = "rabbitbone-com1.log"
+serial0.tryNoRxLoss = "FALSE"
+
+floppy0.present = "FALSE"
+usb.present = "FALSE"
+sound.present = "FALSE"

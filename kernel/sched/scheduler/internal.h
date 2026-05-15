@@ -1,13 +1,13 @@
 #pragma once
 
-#include <aurora/scheduler.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/console.h>
-#include <aurora/timer.h>
-#include <aurora/drivers.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/scheduler.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/timer.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/spinlock.h>
 
 typedef struct sched_job {
     sched_job_info_t info;

@@ -1,7 +1,7 @@
-syscall_result_t aurora_sys_signal(u64 sig64, u64 handler64) {
-    if (sig64 >= AURORA_NSIG) return err(VFS_ERR_INVAL);
-    aurora_sigaction_t act;
-    aurora_sigaction_t old;
+syscall_result_t rabbitbone_sys_signal(u64 sig64, u64 handler64) {
+    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    rabbitbone_sigaction_t act;
+    rabbitbone_sigaction_t old;
     memset(&act, 0, sizeof(act));
     memset(&old, 0, sizeof(old));
     act.handler = handler64;
@@ -10,11 +10,11 @@ syscall_result_t aurora_sys_signal(u64 sig64, u64 handler64) {
     return st == PROC_OK ? ok((i64)old.handler) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_sigaction(u64 sig64, u64 act_ptr, u64 old_ptr) {
-    if (sig64 >= AURORA_NSIG) return err(VFS_ERR_INVAL);
-    aurora_sigaction_t act;
-    aurora_sigaction_t old;
-    aurora_sigaction_t *actp = 0;
+syscall_result_t rabbitbone_sys_sigaction(u64 sig64, u64 act_ptr, u64 old_ptr) {
+    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    rabbitbone_sigaction_t act;
+    rabbitbone_sigaction_t old;
+    rabbitbone_sigaction_t *actp = 0;
     memset(&act, 0, sizeof(act));
     memset(&old, 0, sizeof(old));
     if (act_ptr) {
@@ -27,8 +27,8 @@ syscall_result_t aurora_sys_sigaction(u64 sig64, u64 act_ptr, u64 old_ptr) {
     return ok(0);
 }
 
-syscall_result_t aurora_sys_sigprocmask(u64 how64, u64 set_ptr, u64 old_ptr) {
-    if (how64 > AURORA_SIG_SETMASK) return err(VFS_ERR_INVAL);
+syscall_result_t rabbitbone_sys_sigprocmask(u64 how64, u64 set_ptr, u64 old_ptr) {
+    if (how64 > RABBITBONE_SIG_SETMASK) return err(VFS_ERR_INVAL);
     u64 set = 0;
     u64 old = 0;
     u64 *setp = 0;
@@ -42,7 +42,7 @@ syscall_result_t aurora_sys_sigprocmask(u64 how64, u64 set_ptr, u64 old_ptr) {
     return ok(0);
 }
 
-syscall_result_t aurora_sys_sigpending(u64 out_ptr) {
+syscall_result_t rabbitbone_sys_sigpending(u64 out_ptr) {
     if (!out_ptr) return err(VFS_ERR_INVAL);
     u64 pending = 0;
     process_status_t st = process_signal_pending(&pending);
@@ -50,63 +50,63 @@ syscall_result_t aurora_sys_sigpending(u64 out_ptr) {
     return copy_out_buf(out_ptr, &pending, sizeof(pending)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
-syscall_result_t aurora_sys_kill(u64 pid64, u64 sig64) {
-    if (pid64 > 0xffffffffull || sig64 >= AURORA_NSIG) return err(VFS_ERR_INVAL);
+syscall_result_t rabbitbone_sys_kill(u64 pid64, u64 sig64) {
+    if (pid64 > 0xffffffffull || sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
     process_status_t st = process_signal_send((u32)pid64, (u32)sig64);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_raise(u64 sig64) {
-    if (sig64 >= AURORA_NSIG) return err(VFS_ERR_INVAL);
+syscall_result_t rabbitbone_sys_raise(u64 sig64) {
+    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
     process_status_t st = process_signal_raise((u32)sig64);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_getpgrp(void) {
+syscall_result_t rabbitbone_sys_getpgrp(void) {
     u32 pg = 0;
     process_status_t st = process_get_pgrp(0, &pg);
     return st == PROC_OK ? ok((i64)pg) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_setpgid(u64 pid64, u64 pgid64) {
+syscall_result_t rabbitbone_sys_setpgid(u64 pid64, u64 pgid64) {
     if (pid64 > 0xffffffffull || pgid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     process_status_t st = process_set_pgrp((u32)pid64, (u32)pgid64);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_getpgid(u64 pid64) {
+syscall_result_t rabbitbone_sys_getpgid(u64 pid64) {
     if (pid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     u32 pg = 0;
     process_status_t st = process_get_pgrp((u32)pid64, &pg);
     return st == PROC_OK ? ok((i64)pg) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_setsid(void) {
+syscall_result_t rabbitbone_sys_setsid(void) {
     u32 sid = 0;
     process_status_t st = process_set_sid(&sid);
     return st == PROC_OK ? ok((i64)sid) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_getsid(u64 pid64) {
+syscall_result_t rabbitbone_sys_getsid(u64 pid64) {
     if (pid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     u32 sid = 0;
     process_status_t st = process_get_sid((u32)pid64, &sid);
     return st == PROC_OK ? ok((i64)sid) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_tcgetpgrp(void) {
+syscall_result_t rabbitbone_sys_tcgetpgrp(void) {
     u32 pg = 0;
     process_status_t st = process_tcgetpgrp(&pg);
     return st == PROC_OK ? ok((i64)pg) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_tcsetpgrp(u64 pgid64) {
+syscall_result_t rabbitbone_sys_tcsetpgrp(u64 pgid64) {
     if (pgid64 == 0 || pgid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
     process_status_t st = process_tcsetpgrp((u32)pgid64);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
-syscall_result_t aurora_sys_sigreturn(u64 frame) {
+syscall_result_t rabbitbone_sys_sigreturn(u64 frame) {
     (void)frame;
     return err(VFS_ERR_UNSUPPORTED);
 }

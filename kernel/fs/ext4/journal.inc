@@ -1,4 +1,4 @@
-static u32 journal_header_crc(aurora_ext4_journal_record_t *jr) {
+static u32 journal_header_crc(rabbitbone_ext4_journal_record_t *jr) {
     u32 saved = jr->header_crc;
     jr->header_crc = 0;
     u32 c = crc32(jr, sizeof(*jr));
@@ -26,9 +26,9 @@ static ext4_status_t journal_commit_ordered_block(ext4_mount_t *mnt, u64 target,
     ++g_ext4_perf_stats.journal_commits;
     if (mnt->journal_blocks < 2u || mnt->block_size > MAX_BLOCK_SIZE) return raw_write_block(mnt, target, buffer);
 
-    aurora_ext4_journal_record_t jr;
+    rabbitbone_ext4_journal_record_t jr;
     memset(&jr, 0, sizeof(jr));
-    jr.magic = AURORA_EXT4_JOURNAL_MAGIC;
+    jr.magic = RABBITBONE_EXT4_JOURNAL_MAGIC;
     jr.version = 1u;
     jr.state = 1u;
     jr.seq = ++mnt->journal_seq;

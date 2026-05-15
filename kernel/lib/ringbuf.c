@@ -1,5 +1,9 @@
-#include <aurora/ringbuf.h>
-#include <aurora/libc.h>
+#include <rabbitbone/ringbuf.h>
+#include <rabbitbone/libc.h>
+
+static bool ringbuf_valid(const ringbuf_t *rb) {
+    return rb && rb->data && rb->capacity != 0 && rb->count <= rb->capacity && rb->head < rb->capacity && rb->tail < rb->capacity;
+}
 
 void ringbuf_init(ringbuf_t *rb, void *storage, usize capacity) {
     if (!rb) return;
@@ -11,7 +15,7 @@ void ringbuf_init(ringbuf_t *rb, void *storage, usize capacity) {
 }
 
 bool ringbuf_push(ringbuf_t *rb, u8 value) {
-    if (!rb || !rb->data || rb->count >= rb->capacity) return false;
+    if (!ringbuf_valid(rb) || rb->count >= rb->capacity) return false;
     rb->data[rb->tail] = value;
     rb->tail = (rb->tail + 1u) % rb->capacity;
     ++rb->count;
@@ -19,7 +23,7 @@ bool ringbuf_push(ringbuf_t *rb, u8 value) {
 }
 
 bool ringbuf_pop(ringbuf_t *rb, u8 *out) {
-    if (!rb || !rb->data || rb->count == 0) return false;
+    if (!ringbuf_valid(rb) || rb->count == 0) return false;
     if (out) *out = rb->data[rb->head];
     rb->head = (rb->head + 1u) % rb->capacity;
     --rb->count;
@@ -43,7 +47,7 @@ usize ringbuf_read(ringbuf_t *rb, void *data, usize size) {
 }
 
 usize ringbuf_peek(const ringbuf_t *rb, void *data, usize size) {
-    if (!rb || !rb->data || !data) return 0;
+    if (!ringbuf_valid(rb) || !data) return 0;
     u8 *out = (u8 *)data;
     usize n = size < rb->count ? size : rb->count;
     usize pos = rb->head;
@@ -59,11 +63,11 @@ void ringbuf_clear(ringbuf_t *rb) {
     rb->head = rb->tail = rb->count = 0;
 }
 
-usize ringbuf_size(const ringbuf_t *rb) { return rb ? rb->count : 0; }
-usize ringbuf_capacity(const ringbuf_t *rb) { return rb ? rb->capacity : 0; }
-usize ringbuf_space(const ringbuf_t *rb) { return rb && rb->capacity >= rb->count ? rb->capacity - rb->count : 0; }
-bool ringbuf_empty(const ringbuf_t *rb) { return !rb || rb->count == 0; }
-bool ringbuf_full(const ringbuf_t *rb) { return rb && rb->capacity != 0 && rb->count == rb->capacity; }
+usize ringbuf_size(const ringbuf_t *rb) { return ringbuf_valid(rb) ? rb->count : 0; }
+usize ringbuf_capacity(const ringbuf_t *rb) { return ringbuf_valid(rb) ? rb->capacity : 0; }
+usize ringbuf_space(const ringbuf_t *rb) { return ringbuf_valid(rb) ? rb->capacity - rb->count : 0; }
+bool ringbuf_empty(const ringbuf_t *rb) { return !ringbuf_valid(rb) || rb->count == 0; }
+bool ringbuf_full(const ringbuf_t *rb) { return ringbuf_valid(rb) && rb->count == rb->capacity; }
 
 bool ringbuf_selftest(void) {
     u8 storage[8];

@@ -139,7 +139,7 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             if signed >= -1000 && signed <= 1000 { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::TtySetCursor => {
-            if a.a0 < 25 && a.a1 < 80 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+            if a.a0 <= u32::MAX as u64 && a.a1 <= u32::MAX as u64 { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::TtyClearLine | SyscallNo::TtyClear => Ok(()),
         SyscallNo::TtyCursorVisible => {

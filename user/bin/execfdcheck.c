@@ -1,4 +1,4 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 static void u64_to_dec(au_u64 v, char *out, au_usize cap) {
     char tmp[24];
@@ -20,9 +20,9 @@ int main(int argc, char **argv) {
     if (au_read(fd, prefix, 6) != 6) return clo ? 41 : 31;
     if (prefix[0] != 'H' || prefix[1] != 'e') return clo ? 42 : 32;
     if (clo) {
-        if (au_fdctl(fd, AURORA_FDCTL_SET, AURORA_FD_CLOEXEC) != AURORA_FD_CLOEXEC) return 43;
+        if (au_fdctl(fd, RABBITBONE_FDCTL_SET, RABBITBONE_FD_CLOEXEC) != RABBITBONE_FD_CLOEXEC) return 43;
         au_fdinfo_t info;
-        if (au_fdinfo(fd, &info) != 0 || !(info.flags & AURORA_FD_CLOEXEC)) return 44;
+        if (au_fdinfo(fd, &info) != 0 || !(info.flags & RABBITBONE_FD_CLOEXEC)) return 44;
     }
     char fd_text[24];
     u64_to_dec((au_u64)fd, fd_text, sizeof(fd_text));

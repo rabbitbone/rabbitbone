@@ -53,6 +53,9 @@ static void test_ext4_minimal() {
     require(found == 1, "ext4 found hello.txt");
     u32 ino = 0;
     require(ext4_find_in_dir(&mnt, &inode, "hello.txt", &ino, nullptr) == EXT4_OK && ino == 12, "ext4 find in dir");
+    char too_long_name[EXT4_NAME_LEN + 2]{};
+    memset(too_long_name, 'x', sizeof(too_long_name) - 1);
+    require(ext4_find_in_dir(&mnt, &inode, too_long_name, &ino, nullptr) == EXT4_ERR_RANGE, "ext4 find rejects overlong name");
     const char payload[] = "persistent ext4 write";
     require(ext4_create_file(&mnt, "/new.txt", payload, sizeof(payload) - 1) == EXT4_OK, "ext4 create file");
     ext4_inode_disk_t created{};
@@ -78,6 +81,25 @@ static void test_ext4_minimal() {
     usize zero_written = 99;
     require(ext4_write_file(&mnt, created_ino, &created, 8192, "", 0, &zero_written) == EXT4_OK && zero_written == 0, "ext4 zero-byte write succeeds");
     require(ext4_read_inode(&mnt, created_ino, &created) == EXT4_OK && ext4_inode_size(&created) == 4100, "ext4 zero-byte write does not extend file");
+
+    require(ext4_sync_file(&mnt, created_ino, true) == EXT4_OK, "ext4 clears prior dirty file data before delayed-write probe");
+    std::vector<char> full_block(static_cast<std::size_t>(mnt.block_size), 'd');
+    const u64 writes_before_delayed = disk.writes;
+    require(ext4_write_file(&mnt, created_ino, &created, 0, full_block.data(), static_cast<usize>(full_block.size()), nullptr) == EXT4_OK, "ext4 full-block rewrite succeeds");
+    require(disk.writes == writes_before_delayed, "ext4 data rewrite stays in writeback cache before fsync");
+    require(ext4_sync_file(&mnt, created_ino, true) == EXT4_OK && disk.writes > writes_before_delayed, "ext4 fsync flushes cached data rewrite");
+
+    const char other_name[] = "/other.txt";
+    require(ext4_create_file(&mnt, other_name, full_block.data(), static_cast<usize>(full_block.size())) == EXT4_OK, "ext4 create second dirty file");
+    ext4_inode_disk_t other_inode{};
+    u32 other_ino = 0;
+    ext4_perf_stats_t sync_before{};
+    ext4_perf_stats_t sync_after{};
+    require(ext4_lookup_path(&mnt, other_name, &other_inode, &other_ino) == EXT4_OK && other_ino != 0, "ext4 lookup second dirty file");
+    require(ext4_get_perf_stats(&mnt, &sync_before) == EXT4_OK && sync_before.dirty_slots > 0, "ext4 reports dirty slots before targeted fsync");
+    require(ext4_sync_file(&mnt, created_ino, true) == EXT4_OK && ext4_get_perf_stats(&mnt, &sync_after) == EXT4_OK && sync_after.dirty_slots > 0, "ext4 targeted fsync leaves unrelated dirty data queued");
+    require(ext4_sync_file(&mnt, other_ino, true) == EXT4_OK, "ext4 fsync flushes second dirty file");
+    require(ext4_unlink(&mnt, other_name) == EXT4_OK, "ext4 unlink second dirty file");
     require(ext4_mkdir(&mnt, "/.") == EXT4_ERR_RANGE, "ext4 rejects mkdir dot entry");
     require(ext4_mkdir(&mnt, "/..") == EXT4_ERR_RANGE, "ext4 rejects mkdir dotdot entry");
     require(ext4_mkdir(&mnt, "/dir") == EXT4_OK, "ext4 mkdir");

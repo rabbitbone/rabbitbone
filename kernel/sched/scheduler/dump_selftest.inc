@@ -56,7 +56,7 @@ bool scheduler_selftest(void) {
     regs.cs = 0x08;
     regs.rip = 0xffffffff80001000ull;
     scheduler_tick(&regs);
-    aurora_preemptinfo_t pi;
+    rabbitbone_preemptinfo_t pi;
     if (!scheduler_preempt_info(&pi) || pi.quantum_ticks != quantum_ticks || pi.total_timer_ticks == 0) return false;
     scheduler_stats(&stats);
     if (stats.total_dispatched != 2 || stats.total_yields == 0 || stats.total_sleeps == 0 || stats.total_timer_ticks == 0) return false;

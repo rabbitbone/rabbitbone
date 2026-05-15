@@ -1,8 +1,8 @@
-static bool signal_valid(u32 sig) { return sig > 0 && sig < AURORA_NSIG; }
+static bool signal_valid(u32 sig) { return sig > 0 && sig < RABBITBONE_NSIG; }
 static u64 signal_bit(u32 sig) { return 1ull << sig; }
-static bool signal_unmaskable(u32 sig) { return sig == AURORA_SIGKILL || sig == AURORA_SIGSTOP; }
-static bool signal_stop_default(u32 sig) { return sig == AURORA_SIGSTOP || sig == AURORA_SIGTSTP || sig == AURORA_SIGTTIN || sig == AURORA_SIGTTOU; }
-static bool signal_ignore_default(u32 sig) { return sig == AURORA_SIGCHLD || sig == AURORA_SIGCONT; }
+static bool signal_unmaskable(u32 sig) { return sig == RABBITBONE_SIGKILL || sig == RABBITBONE_SIGSTOP; }
+static bool signal_stop_default(u32 sig) { return sig == RABBITBONE_SIGSTOP || sig == RABBITBONE_SIGTSTP || sig == RABBITBONE_SIGTTIN || sig == RABBITBONE_SIGTTOU; }
+static bool signal_ignore_default(u32 sig) { return sig == RABBITBONE_SIGCHLD || sig == RABBITBONE_SIGCONT; }
 static bool signal_terminates_default(u32 sig) { return !signal_ignore_default(sig) && !signal_stop_default(sig); }
 
 static void process_signal_init(active_process_t *p) {
@@ -15,16 +15,16 @@ static void process_signal_init(active_process_t *p) {
 
 static u64 signal_sanitized_mask(u64 m) {
     m &= ~1ull;
-    m &= ~(signal_bit(AURORA_SIGKILL) | signal_bit(AURORA_SIGSTOP));
+    m &= ~(signal_bit(RABBITBONE_SIGKILL) | signal_bit(RABBITBONE_SIGSTOP));
     return m;
 }
 
 static u32 process_next_deliverable_signal(const active_process_t *p) {
     if (!p) return 0;
     u64 pending = p->signal_pending;
-    u64 blocked = p->signal_blocked & ~(signal_bit(AURORA_SIGKILL) | signal_bit(AURORA_SIGSTOP));
+    u64 blocked = p->signal_blocked & ~(signal_bit(RABBITBONE_SIGKILL) | signal_bit(RABBITBONE_SIGSTOP));
     pending &= ~blocked;
-    for (u32 sig = 1; sig < AURORA_NSIG; ++sig) {
+    for (u32 sig = 1; sig < RABBITBONE_NSIG; ++sig) {
         if (pending & signal_bit(sig)) return sig;
     }
     return 0;
@@ -48,9 +48,9 @@ static bool process_group_exists(u32 pgid) {
 static bool process_signal_queue_one(active_process_t *p, u32 sig) {
     if (!p || !p->active || !signal_valid(sig)) return false;
     p->signal_pending |= signal_bit(sig);
-    if (sig == AURORA_SIGCONT && p->state == PROCESS_STATE_STOPPED) {
+    if (sig == RABBITBONE_SIGCONT && p->state == PROCESS_STATE_STOPPED) {
         p->state = PROCESS_STATE_READY;
-        p->signal_flags &= ~AURORA_PROCESS_FLAG_STOPPED;
+        p->signal_flags &= ~RABBITBONE_PROCESS_FLAG_STOPPED;
     }
     if (current_proc.active && p == &current_proc) return sync_current_to_slot();
     return true;
@@ -80,9 +80,13 @@ process_status_t process_signal_send(u32 pid, u32 sig) {
 
 process_status_t process_signal_raise(u32 sig) { return current_proc.active ? process_signal_send(current_proc.result.pid, sig) : PROC_ERR_INVAL; }
 
-process_status_t process_signal_set_action(u32 sig, const aurora_sigaction_t *act, aurora_sigaction_t *oldact) {
+process_status_t process_signal_set_action(u32 sig, const rabbitbone_sigaction_t *act, rabbitbone_sigaction_t *oldact) {
     if (!current_proc.active || !signal_valid(sig)) return PROC_ERR_INVAL;
-    if ((sig == AURORA_SIGKILL || sig == AURORA_SIGSTOP) && act) return PROC_ERR_INVAL;
+    if ((sig == RABBITBONE_SIGKILL || sig == RABBITBONE_SIGSTOP) && act) return PROC_ERR_INVAL;
+    if (act && act->handler > 1) {
+        if (!act->restorer) return PROC_ERR_INVAL;
+        if (!user_addr_range_valid((uptr)act->handler, 1u) || !user_addr_range_valid((uptr)act->restorer, 1u)) return PROC_ERR_RANGE;
+    }
     process_signal_action_t *a = &current_proc.signal_actions[sig];
     if (oldact) {
         memset(oldact, 0, sizeof(*oldact));
@@ -94,7 +98,7 @@ process_status_t process_signal_set_action(u32 sig, const aurora_sigaction_t *ac
     if (act) {
         a->handler = (uptr)act->handler;
         a->mask = signal_sanitized_mask(act->mask);
-        a->flags = act->flags & AURORA_SA_RESTART;
+        a->flags = act->flags & RABBITBONE_SA_RESTART;
         a->restorer = (uptr)act->restorer;
         if (a->handler > 1 && !a->restorer) return PROC_ERR_INVAL;
     }
@@ -106,9 +110,9 @@ process_status_t process_signal_mask(u32 how, const u64 *set, u64 *oldset) {
     if (oldset) *oldset = current_proc.signal_blocked;
     if (set) {
         u64 m = signal_sanitized_mask(*set);
-        if (how == AURORA_SIG_BLOCK) current_proc.signal_blocked |= m;
-        else if (how == AURORA_SIG_UNBLOCK) current_proc.signal_blocked &= ~m;
-        else if (how == AURORA_SIG_SETMASK) current_proc.signal_blocked = m;
+        if (how == RABBITBONE_SIG_BLOCK) current_proc.signal_blocked |= m;
+        else if (how == RABBITBONE_SIG_UNBLOCK) current_proc.signal_blocked &= ~m;
+        else if (how == RABBITBONE_SIG_SETMASK) current_proc.signal_blocked = m;
         else return PROC_ERR_INVAL;
     }
     return sync_current_to_slot() ? PROC_OK : PROC_ERR_INVAL;
@@ -147,22 +151,22 @@ static int process_signal_deliver_pending(active_process_t *p, cpu_regs_t *regs)
     u32 sig = process_next_deliverable_signal(p);
     if (!sig) return 0;
     p->signal_pending &= ~signal_bit(sig);
-    if (sig == AURORA_SIGCONT) {
+    if (sig == RABBITBONE_SIGCONT) {
         if (p->state == PROCESS_STATE_STOPPED) p->state = PROCESS_STATE_READY;
-        p->signal_flags &= ~AURORA_PROCESS_FLAG_STOPPED;
+        p->signal_flags &= ~RABBITBONE_PROCESS_FLAG_STOPPED;
         return 1;
     }
     process_signal_action_t *a = &p->signal_actions[sig];
-    if (!signal_unmaskable(sig) && a->handler == AURORA_SIG_IGN) return 1;
+    if (!signal_unmaskable(sig) && a->handler == RABBITBONE_SIG_IGN) return 1;
     if (!signal_unmaskable(sig) && a->handler > 1) {
         return process_signal_make_frame(p, regs, sig, a) ? 1 : 0;
     }
     if (signal_stop_default(sig)) {
         p->state = PROCESS_STATE_STOPPED;
-        p->signal_flags |= AURORA_PROCESS_FLAG_STOPPED;
+        p->signal_flags |= RABBITBONE_PROCESS_FLAG_STOPPED;
         return 3;
     }
-    if (signal_terminates_default(sig) || sig == AURORA_SIGKILL) {
+    if (signal_terminates_default(sig) || sig == RABBITBONE_SIGKILL) {
         p->result.exit_code = 128 + (i32)sig;
         p->result.faulted = false;
         finish_current(PROCESS_STATE_EXITED, PROC_OK, regs);
@@ -172,15 +176,29 @@ static int process_signal_deliver_pending(active_process_t *p, cpu_regs_t *regs)
     return 1;
 }
 
+static u64 signal_sanitize_user_rflags(u64 rflags) {
+    /* Preserve ordinary arithmetic/direction flags, force IF and reserved bit 1,
+     * clear IOPL/NT/VM/RF/AC/VIF/VIP/ID and all privileged/high bits. */
+    const u64 user_flags = 0x0000000000000cd5ull;
+    return (rflags & user_flags) | 0x202ull;
+}
+
 bool process_signal_return(uptr frame_addr, cpu_regs_t *regs) {
     if (!current_proc.active || !regs || !frame_addr) return false;
     process_signal_frame_t frame;
     if (!process_copy_from_user(&frame, frame_addr, sizeof(frame))) return false;
     if (frame.magic != PROCESS_SIGNAL_FRAME_MAGIC || frame.restorer == 0) return false;
+    if (!user_addr_range_valid((uptr)frame.saved_regs.rip, 1u) || !user_addr_range_valid((uptr)frame.saved_regs.rsp, 1u)) return false;
     current_proc.signal_blocked = signal_sanitized_mask(frame.old_mask);
     current_proc.signal_in_handler = false;
-    *regs = frame.saved_regs;
-    current_proc.regs = frame.saved_regs;
+    cpu_regs_t restored = frame.saved_regs;
+    restored.cs = RABBITBONE_UCODE_SEL;
+    restored.ss = RABBITBONE_UDATA_SEL;
+    restored.rflags = signal_sanitize_user_rflags(restored.rflags);
+    restored.vector = regs->vector;
+    restored.error = regs->error;
+    *regs = restored;
+    current_proc.regs = restored;
     return sync_current_to_slot();
 }
 
@@ -219,7 +237,7 @@ process_status_t process_set_sid(u32 *out) {
     if (process_group_exists(current_proc.result.pid)) return PROC_ERR_BUSY;
     current_proc.session_id = current_proc.result.pid;
     current_proc.process_group = current_proc.result.pid;
-    current_proc.signal_flags |= AURORA_PROCESS_FLAG_SESSION_LEADER;
+    current_proc.signal_flags |= RABBITBONE_PROCESS_FLAG_SESSION_LEADER;
     if (!tty_session_id) tty_session_id = current_proc.session_id;
     if (!tty_foreground_pgrp) tty_foreground_pgrp = current_proc.process_group;
     if (out) *out = current_proc.session_id;
@@ -244,7 +262,7 @@ void process_format_signals(char *out, usize cap) {
     if (!out || cap == 0) return;
     out[0] = 0;
     ksnprintf(out, cap, "signals: nsig=%u pending=0x%llx blocked=0x%llx current_pid=%u pgrp=%u sid=%u fg=%u\n",
-              AURORA_NSIG, (unsigned long long)(current_proc.active ? current_proc.signal_pending : 0),
+              RABBITBONE_NSIG, (unsigned long long)(current_proc.active ? current_proc.signal_pending : 0),
               (unsigned long long)(current_proc.active ? current_proc.signal_blocked : 0),
               current_proc.active ? current_proc.result.pid : 0,
               current_proc.active ? current_proc.process_group : 0,

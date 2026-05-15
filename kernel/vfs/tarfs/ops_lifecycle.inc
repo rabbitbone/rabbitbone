@@ -21,7 +21,7 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
     out->type = e->type;
     out->size = e->size;
     out->inode = e->inode;
-    out->mode = e->type == VFS_NODE_DIR ? 0555u : 0444u; out->uid = AURORA_UID_ROOT; out->gid = AURORA_GID_ROOT;
+    out->mode = e->type == VFS_NODE_DIR ? 0555u : 0444u; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
     out->fs_id = mnt->fs_id;
     return VFS_OK;
 }
@@ -41,6 +41,7 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
 }
 
 static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn fn, void *ctx) {
+    if (!fn) return VFS_ERR_INVAL;
     tarfs_t *fs = (tarfs_t *)mnt->ctx;
     char norm[VFS_PATH_MAX];
     if (!path_normalize(path, norm, sizeof(norm))) return VFS_ERR_INVAL;

@@ -8,12 +8,12 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
         while (total < len) {
             char c = 0;
             if (!tty_read_char(&c)) break;
-            if ((mode & AURORA_TTY_MODE_ECHO) && c >= 32) console_putc(c);
-            if ((mode & AURORA_TTY_MODE_ECHO) && c == '\n') console_putc('\n');
+            if ((mode & RABBITBONE_TTY_MODE_ECHO) && c >= 32) console_putc(c);
+            if ((mode & RABBITBONE_TTY_MODE_ECHO) && c == '\n') console_putc('\n');
             u64 ptr = 0;
             if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, &c, 1u)) return err(VFS_ERR_INVAL);
             ++total;
-            if ((mode & AURORA_TTY_MODE_CANON) && c == '\n') break;
+            if ((mode & RABBITBONE_TTY_MODE_CANON) && c == '\n') break;
         }
         if (__builtin_add_overflow(handles[h].offset, (u64)total, &handles[h].offset)) return err(VFS_ERR_INVAL);
         return ok((i64)total);
@@ -70,7 +70,7 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
             if (n > sizeof(chunk)) n = sizeof(chunk);
             u64 ptr = 0;
             if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
-            for (usize i = 0; i < n; ++i) console_putc((char)chunk[i]);
+            console_write_n((const char *)chunk, n);
             total += n;
         }
         if (__builtin_add_overflow(handles[h].offset, (u64)total, &handles[h].offset)) return err(VFS_ERR_INVAL);
@@ -107,7 +107,7 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
         if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
         usize wrote = 0;
         u64 ff = spin_lock_irqsave(&f->lock);
-        if (f->open_flags & AURORA_O_APPEND) {
+        if (f->open_flags & RABBITBONE_O_APPEND) {
             vfs_stat_t ast;
             if (vfs_stat_ref(&f->ref, &ast) == VFS_OK) f->size = ast.size;
             f->offset = f->size;
@@ -127,21 +127,21 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
     return ok((i64)total);
 }
 
-syscall_result_t aurora_sys_version(void) {
+syscall_result_t rabbitbone_sys_version(void) {
     return ok(SYSCALL_VERSION_VALUE);
 }
 
-syscall_result_t aurora_sys_write_console(u64 ptr, u64 len64) {
+syscall_result_t rabbitbone_sys_write_console(u64 ptr, u64 len64) {
     usize n = (usize)len64;
     if ((!ptr && n) || len64 > 65536u) return err(VFS_ERR_INVAL);
-    char chunk[256];
+    char chunk[SYSCALL_IO_CHUNK];
     usize done = 0;
     while (done < n) {
         usize step = n - done;
         if (step > sizeof(chunk)) step = sizeof(chunk);
         u64 cptr = 0;
         if (!add_user_ptr(ptr, done, &cptr) || !copy_in_buf(chunk, cptr, step)) return err(VFS_ERR_INVAL);
-        for (usize i = 0; i < step; ++i) console_putc(chunk[i]);
+        console_write_n(chunk, step);
         done += step;
     }
     return ok((i64)n);

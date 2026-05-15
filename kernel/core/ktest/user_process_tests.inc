@@ -167,7 +167,7 @@ static void test_user_processes(void) {
     check(sb_env_ok, "ring3 shebang execve preserves caller envp limits and values");
     if (!sb_env_ok) detail_process_result(sb_env_path, ps, &r);
 
-    syscall_result_t sb_sv = syscall_dispatch(AURORA_SYS_SPAWNV, (u64)(uptr)sb_basic_path, 2u, (u64)(uptr)sb_basic_argv, 0, 0, 0);
+    syscall_result_t sb_sv = syscall_dispatch(RABBITBONE_SYS_SPAWNV, (u64)(uptr)sb_basic_path, 2u, (u64)(uptr)sb_basic_argv, 0, 0, 0);
     bool sb_spawnv_ok = sb_sv.error == 0 && sb_sv.value > 0;
     if (sb_spawnv_ok) {
         process_info_t info;
@@ -246,7 +246,7 @@ static void test_user_processes(void) {
     const char *pipe_argv[] = { "/bin/pipecheck" };
     ps = process_exec("/bin/pipecheck", 1, pipe_argv, &r);
     bool pipe_ok = ps == PROC_OK && !r.faulted && r.exit_code == 0;
-    check(pipe_ok, "ring3 /bin/pipecheck exercises pipes, stdio remap AURORA_STDIN AURORA_STDOUT AURORA_STDERR and fork+exec pipeline");
+    check(pipe_ok, "ring3 /bin/pipecheck exercises pipes, stdio remap RABBITBONE_STDIN RABBITBONE_STDOUT RABBITBONE_STDERR and fork+exec pipeline");
     if (!pipe_ok) detail_process_result("/bin/pipecheck", ps, &r);
 
     const char *fdremap_argv[] = { "/bin/fdremapcheck" };

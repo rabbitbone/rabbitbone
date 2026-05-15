@@ -1,4 +1,5 @@
 static vfs_status_t op_sync_inode(vfs_mount_t *mnt, u32 ino, bool data_only) {
+    if (ino == 0) return VFS_ERR_INVAL;
     ext4_vfs_ctx_t *ctx = (ext4_vfs_ctx_t *)mnt->ctx;
     ext4_status_t st = ext4_sync_file(&ctx->mount, ino, data_only);
     if (st != EXT4_OK && ext4_vfs_repair_once(ctx, "sync_inode", st)) st = ext4_sync_file(&ctx->mount, ino, data_only);

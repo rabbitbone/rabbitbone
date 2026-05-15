@@ -1,8 +1,8 @@
-#include <aurora/console.h>
-#include <aurora/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/libc.h>
 
-#ifndef AURORA_HOST_TEST
-#include <aurora/drivers.h>
+#ifndef RABBITBONE_HOST_TEST
+#include <rabbitbone/drivers.h>
 #endif
 
 typedef struct outbuf {
@@ -51,6 +51,7 @@ static void out_int(outbuf_t *out, i64 v, int width, bool pad_zero) {
 }
 
 int kvsnprintf(char *buf, usize cap, const char *fmt, __builtin_va_list ap) {
+    if (!buf) cap = 0;
     outbuf_t out = { buf, cap, 0 };
     for (const char *p = fmt; p && *p; ++p) {
         if (*p != '%') {
@@ -122,7 +123,7 @@ int ksnprintf(char *buf, usize cap, const char *fmt, ...) {
     return n;
 }
 
-#ifndef AURORA_HOST_TEST
+#ifndef RABBITBONE_HOST_TEST
 int kprintf(const char *fmt, ...) {
     char tmp[1024];
     __builtin_va_list ap;

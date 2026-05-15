@@ -23,6 +23,9 @@ static vfs_status_t op_rename(vfs_mount_t *mnt, const char *old_path, const char
     ramfs_node_t *dst = new_parent->obj->children;
     while (dst && strcmp(dst->name, new_leaf) != 0) { dst_prev = dst; dst = dst->next; }
     if (dst == n) { st = VFS_OK; goto out; }
+    bool dir_cross_parent = node_type(n) == VFS_NODE_DIR && old_parent != new_parent;
+    bool dst_is_dir = dst && node_type(dst) == VFS_NODE_DIR;
+    if (dir_cross_parent && !dst_is_dir && (!new_parent->obj || new_parent->obj->nlink == 0xffffffffu)) { st = VFS_ERR_NOSPC; goto out; }
     if (dst) {
         if (node_type(dst) != node_type(n)) { st = VFS_ERR_EXIST; goto out; }
         if (node_type(dst) == VFS_NODE_DIR && dst->obj->children) { st = VFS_ERR_NOTEMPTY; goto out; }
@@ -83,22 +86,23 @@ vfs_status_t ramfs_mount_boot(void) {
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/sbin");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/tmp");
     if (st == VFS_OK) st = ramfs_add_dir(fs, "/home");
-    if (st == VFS_OK) st = ramfs_add_dir(fs, "/home/aurora");
-    static const char motd[] = AURORA_VERSION_FULL " boot ramfs\nKernel-owned VFS root is online.\n";
-    static const char version[] = AURORA_UNAME_TEXT "\n";
+    if (st == VFS_OK) st = ramfs_add_dir(fs, "/home/rabbitbone");
+    static const char motd[] = RABBITBONE_VERSION_FULL "\n";
+    static const char version[] = RABBITBONE_UNAME_TEXT "\n";
     static const char profile[] = "PATH=/disk0/bin:/disk0/sbin:/bin:/sbin\nSHELL=/disk0/bin/sh\n";
-    static const char passwd[] = "root:x:0:0:root:/root:/bin/sh\naurora:x:1000:1000:Aurora User:/home/aurora:/bin/sh\nguest:x:1001:1000:Guest:/tmp:/bin/sh\n";
-    static const char group[] = "root:x:0:\nusers:x:1000:aurora,guest\nadmin:x:27:aurora\n";
-    static const char sudoers[] = "root ALL=(ALL) ALL\naurora ALL=(ALL) ALL\n";
+    static const char passwd[] = "root:x:0:0:root:/root:/bin/sh\nrabbitbone:x:1000:1000:Rabbitbone User:/home/rabbitbone:/bin/sh\nguest:x:1001:1000:Guest:/tmp:/bin/sh\n";
+    static const char group[] = "root:x:0:\nusers:x:1000:rabbitbone,guest\nadmin:x:27:rabbitbone\n";
+    static const char sudoers[] = "root ALL=(ALL) ALL\nrabbitbone ALL=(ALL) ALL\n";
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/motd", motd, sizeof(motd) - 1u);
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/version", version, sizeof(version) - 1u);
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/profile", profile, sizeof(profile) - 1u);
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/passwd", passwd, sizeof(passwd) - 1u);
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/group", group, sizeof(group) - 1u);
     if (st == VFS_OK) st = ramfs_add_file(fs, "/etc/sudoers", sudoers, sizeof(sudoers) - 1u);
-    if (st == VFS_OK) st = ramfs_add_file(fs, "/bin/readme", "Aurora userland: /bin/sh, /sbin/init, sudo, users, scheduler tests.\n", 68u);
+    static const char readme[] = "Rabbitbone /bin/sh /sbin/init\n";
+    if (st == VFS_OK) st = ramfs_add_file(fs, "/bin/readme", readme, sizeof(readme) - 1u);
     if (st == VFS_OK) { (void)op_chmod(&(vfs_mount_t){ .ctx = fs }, "/tmp", 01777u); }
-    if (st == VFS_OK) { (void)op_chown(&(vfs_mount_t){ .ctx = fs }, "/home/aurora", AURORA_UID_AURORA, AURORA_GID_USERS); (void)op_chmod(&(vfs_mount_t){ .ctx = fs }, "/home/aurora", 0755u); }
+    if (st == VFS_OK) { (void)op_chown(&(vfs_mount_t){ .ctx = fs }, "/home/rabbitbone", RABBITBONE_UID_RABBITBONE, RABBITBONE_GID_USERS); (void)op_chmod(&(vfs_mount_t){ .ctx = fs }, "/home/rabbitbone", 0755u); }
     if (st != VFS_OK) { ramfs_destroy(fs); return st; }
     return vfs_mount("/", "ramfs", ramfs_ops(), fs, true);
 }

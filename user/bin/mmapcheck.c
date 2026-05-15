@@ -1,7 +1,7 @@
-#include <aurora_sys.h>
+#include <rabbitbone_sys.h>
 
 #define PAGE 4096ul
-#define MAP_FLAGS (AURORA_MAP_ANON | AURORA_MAP_PRIVATE)
+#define MAP_FLAGS (RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE)
 
 static int current_mapped_pages(unsigned long long *out) {
     au_procinfo_t info;
@@ -25,14 +25,14 @@ static int wait_exit(unsigned int pid, unsigned int state, int exit_code, int fa
 }
 
 static int check_basic_map_unmap(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p || ((unsigned long)p & (PAGE - 1u)) != 0) return 10;
     p[0] = 0x11u;
     p[PAGE - 1u] = 0x22u;
     p[PAGE] = 0x33u;
     p[PAGE * 2u - 1u] = 0x44u;
     if (p[0] != 0x11u || p[PAGE - 1u] != 0x22u || p[PAGE] != 0x33u || p[PAGE * 2u - 1u] != 0x44u) return 11;
-    if (mmap(p, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED, -1, 0) != (void *)-1) return 12;
+    if (mmap(p, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS | RABBITBONE_MAP_FIXED, -1, 0) != (void *)-1) return 12;
     if (munmap(p, PAGE) != 0) return 13;
     au_i64 child = au_fork();
     if (child < 0) return 14;
@@ -49,10 +49,10 @@ static int check_basic_map_unmap(void) {
 }
 
 static int check_mprotect_fault_and_restore(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 40;
     p[0] = 0x61u;
-    if (mprotect(p, PAGE, AURORA_PROT_READ) != 0) return 41;
+    if (mprotect(p, PAGE, RABBITBONE_PROT_READ) != 0) return 41;
     au_i64 child = au_fork();
     if (child < 0) return 42;
     if (child == 0) {
@@ -62,16 +62,16 @@ static int check_mprotect_fault_and_restore(void) {
     int wr = wait_exit((unsigned int)child, 3u, 0, 1, 14u);
     if (wr != 0) return 50 + wr;
     if (p[0] != 0x61u) return 56;
-    if (mprotect(p, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE) != 0) return 57;
+    if (mprotect(p, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE) != 0) return 57;
     p[0] = 0x63u;
     if (p[0] != 0x63u) return 58;
-    if (mprotect(p, PAGE, AURORA_PROT_WRITE | AURORA_PROT_EXEC) >= 0) return 59;
+    if (mprotect(p, PAGE, RABBITBONE_PROT_WRITE | RABBITBONE_PROT_EXEC) >= 0) return 59;
     if (munmap(p, PAGE) != 0) return 60;
     return 0;
 }
 
 static int check_mmap_fork_cow(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 70;
     p[0] = 7u;
     p[PAGE - 1u] = 9u;
@@ -94,7 +94,7 @@ static int check_mmap_fork_cow(void) {
 }
 
 static int check_exec_release(void) {
-    unsigned char *p = (unsigned char *)mmap(0, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 100;
     p[0] = 0xacu;
     au_i64 child = au_fork();
@@ -115,15 +115,15 @@ static int check_exec_release(void) {
 
 static int check_fixed_and_arg_rejects(void) {
     unsigned char *fixed = (unsigned char *)0x0000010080020000ull;
-    unsigned char *p = (unsigned char *)mmap(fixed, PAGE, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS | AURORA_MAP_FIXED, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(fixed, PAGE, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS | RABBITBONE_MAP_FIXED, -1, 0);
     if (p != fixed) return 130;
     p[0] = 0x5au;
     if (p[0] != 0x5au) return 131;
-    if (mprotect(p + 1, PAGE, AURORA_PROT_READ) >= 0) return 132;
+    if (mprotect(p + 1, PAGE, RABBITBONE_PROT_READ) >= 0) return 132;
     if (munmap(p + 1, PAGE) >= 0) return 133;
-    if (mmap(0, 0, AURORA_PROT_READ, MAP_FLAGS, -1, 0) != (void *)-1) return 134;
+    if (mmap(0, 0, RABBITBONE_PROT_READ, MAP_FLAGS, -1, 0) != (void *)-1) return 134;
     if (mmap(0, PAGE, 0, MAP_FLAGS, -1, 0) != (void *)-1) return 135;
-    if (mmap(0, PAGE, AURORA_PROT_READ, AURORA_MAP_ANON, -1, 0) != (void *)-1) return 136;
+    if (mmap(0, PAGE, RABBITBONE_PROT_READ, RABBITBONE_MAP_ANON, -1, 0) != (void *)-1) return 136;
     if (munmap(p, PAGE) != 0) return 137;
     return 0;
 }
@@ -131,7 +131,7 @@ static int check_fixed_and_arg_rejects(void) {
 static int check_demand_anon(void) {
     unsigned long long before = 0, after_map = 0, after_first = 0, after_second = 0, after_unmap = 0;
     if (current_mapped_pages(&before) != 0) return 150;
-    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, AURORA_PROT_READ | AURORA_PROT_WRITE, MAP_FLAGS, -1, 0);
+    unsigned char *p = (unsigned char *)mmap(0, PAGE * 2u, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, MAP_FLAGS, -1, 0);
     if (p == (void *)-1 || !p) return 151;
     if (current_mapped_pages(&after_map) != 0) return 152;
     if (after_map != before) return 153;

@@ -79,21 +79,21 @@ fn validate_path(buf: &[u8]) -> Result<(), PathError> {
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_path_policy_check(ptr: *const u8, max_len: usize) -> bool {
+pub extern "C" fn rabbitbone_rust_path_policy_check(ptr: *const u8, max_len: usize) -> bool {
     if ptr.is_null() || max_len == 0 || max_len > VFS_PATH_MAX { return false; }
     let slice = unsafe { core::slice::from_raw_parts(ptr, max_len) };
     validate_path(slice).is_ok()
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_path_no_traversal_check(ptr: *const u8, max_len: usize, allow_relative: bool) -> bool {
+pub extern "C" fn rabbitbone_rust_path_no_traversal_check(ptr: *const u8, max_len: usize, allow_relative: bool) -> bool {
     if ptr.is_null() || max_len == 0 || max_len > VFS_PATH_MAX { return false; }
     let slice = unsafe { core::slice::from_raw_parts(ptr, max_len) };
     validate_path_shape(slice, !allow_relative, true).is_ok()
 }
 
 #[no_mangle]
-pub extern "C" fn aurora_rust_path_policy_selftest() -> bool {
+pub extern "C" fn rabbitbone_rust_path_policy_selftest() -> bool {
     if !validate_path(b"/tmp/file\0").is_ok() { return false; }
     if validate_path(b"/disk0/../disk0/hello.txt\0").is_ok() { return false; }
     if validate_path(b"relative\0").is_ok() { return false; }

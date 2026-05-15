@@ -1,7 +1,7 @@
-#include <aurora/elf64.h>
-#include <aurora/kmem.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
+#include <rabbitbone/elf64.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
 
 static u16 le16(u16 v) { return v; }
 static u32 le32(u32 v) { return v; }
@@ -23,6 +23,11 @@ static bool elf64_is_power_of_two(u64 v) {
     return v && ((v & (v - 1u)) == 0);
 }
 
+static bool elf64_congruent_mod_power2(u64 a, u64 b, u64 mod) {
+    if (mod <= 1u) return true;
+    return (a & (mod - 1u)) == (b & (mod - 1u));
+}
+
 bool elf64_ranges_overlap(u64 a_start, u64 a_end, u64 b_start, u64 b_end) {
     return a_start < b_end && b_start < a_end;
 }
@@ -39,7 +44,7 @@ elf_status_t elf64_validate_load_segment(const elf64_phdr_t *ph, u64 file_size, 
     if (pflags & ~(ELF64_PF_X | ELF64_PF_W | ELF64_PF_R)) return ELF_ERR_FORMAT;
     if ((pflags & ELF64_PF_X) && (pflags & ELF64_PF_W)) return ELF_ERR_UNSUPPORTED;
     if (align > 1u && !elf64_is_power_of_two(align)) return ELF_ERR_FORMAT;
-    if (align > 1u && ((vaddr - off) & (align - 1u)) != 0) return ELF_ERR_FORMAT;
+    if (align > 1u && !elf64_congruent_mod_power2(vaddr, off, align)) return ELF_ERR_FORMAT;
     u64 file_end = 0;
     if (__builtin_add_overflow(off, filesz, &file_end) || file_end > file_size) return ELF_ERR_RANGE;
     u64 mem_end = 0;
@@ -53,11 +58,13 @@ elf_status_t elf64_validate_header(const elf64_ehdr_t *h, u64 file_size) {
     if (h->e_ident[0] != 0x7f || h->e_ident[1] != 'E' || h->e_ident[2] != 'L' || h->e_ident[3] != 'F') return ELF_ERR_FORMAT;
     if (h->e_ident[4] != 2u || h->e_ident[5] != 1u || h->e_ident[6] != 1u) return ELF_ERR_UNSUPPORTED;
     if (le16(h->e_type) != ELF64_ET_EXEC && le16(h->e_type) != ELF64_ET_DYN) return ELF_ERR_UNSUPPORTED;
+    if (le32(h->e_flags) != 0u) return ELF_ERR_UNSUPPORTED;
     if (le16(h->e_machine) != ELF64_EM_X86_64) return ELF_ERR_UNSUPPORTED;
     if (le32(h->e_version) != 1u) return ELF_ERR_FORMAT;
     if (le16(h->e_ehsize) != sizeof(elf64_ehdr_t)) return ELF_ERR_FORMAT;
     if (le16(h->e_phentsize) != sizeof(elf64_phdr_t)) return ELF_ERR_FORMAT;
     if (le16(h->e_phnum) == 0 || le16(h->e_phnum) > 64u) return ELF_ERR_FORMAT;
+    if (le64(h->e_phoff) < sizeof(elf64_ehdr_t)) return ELF_ERR_FORMAT;
     u64 ph_size = 0;
     u64 ph_end = 0;
     if (__builtin_mul_overflow((u64)le16(h->e_phnum), (u64)le16(h->e_phentsize), &ph_size) ||
@@ -92,14 +99,23 @@ elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out) {
     if (es != ELF_OK) return es;
     es = elf64_validate_header(&eh, st.size);
     if (es != ELF_OK) return es;
-    if (le64(eh.e_entry) < ELF64_AURORA_USER_IMAGE_BASE || le64(eh.e_entry) >= ELF64_AURORA_USER_SPACE_LIMIT) return ELF_ERR_RANGE;
+    if (le16(eh.e_type) != ELF64_ET_EXEC) return ELF_ERR_UNSUPPORTED;
+    if (le64(eh.e_entry) < ELF64_RABBITBONE_USER_IMAGE_BASE || le64(eh.e_entry) >= ELF64_RABBITBONE_USER_SPACE_LIMIT) return ELF_ERR_RANGE;
     u16 phnum = le16(eh.e_phnum);
     elf64_phdr_t *ph = (elf64_phdr_t *)kcalloc(phnum, sizeof(elf64_phdr_t));
     if (!ph) return ELF_ERR_NOMEM;
     es = read_exact(path, le64(eh.e_phoff), ph, (usize)phnum * sizeof(elf64_phdr_t));
     if (es != ELF_OK) { kfree(ph); return es; }
     u16 load_count = 0;
-    for (u16 i = 0; i < phnum; ++i) if (le32(ph[i].p_type) == ELF64_PT_LOAD) ++load_count;
+    for (u16 i = 0; i < phnum; ++i) {
+        u32 ptype = le32(ph[i].p_type);
+        if (ptype == ELF64_PT_LOAD) {
+            ++load_count;
+        } else if (ptype == ELF64_PT_INTERP || ptype == ELF64_PT_DYNAMIC) {
+            kfree(ph);
+            return ELF_ERR_UNSUPPORTED;
+        }
+    }
     if (!load_count) { kfree(ph); return ELF_ERR_FORMAT; }
     out->segments = (elf_loaded_segment_t *)kcalloc(load_count, sizeof(elf_loaded_segment_t));
     if (!out->segments) { kfree(ph); return ELF_ERR_NOMEM; }
@@ -113,7 +129,7 @@ elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out) {
     u16 seg_index = 0;
     for (u16 i = 0; i < phnum; ++i) {
         if (le32(ph[i].p_type) != ELF64_PT_LOAD) continue;
-        es = elf64_validate_load_segment(&ph[i], st.size, ELF64_AURORA_USER_IMAGE_BASE, ELF64_AURORA_USER_SPACE_LIMIT);
+        es = elf64_validate_load_segment(&ph[i], st.size, ELF64_RABBITBONE_USER_IMAGE_BASE, ELF64_RABBITBONE_USER_SPACE_LIMIT);
         if (es != ELF_OK) goto fail;
         u64 off = le64(ph[i].p_offset);
         u64 vaddr = le64(ph[i].p_vaddr);

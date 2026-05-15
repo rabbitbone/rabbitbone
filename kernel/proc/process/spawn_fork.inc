@@ -49,7 +49,7 @@ static bool clone_current_address_space(active_process_t *child) {
     child->parent_pid = current_proc.result.pid;
     child->process_group = current_proc.process_group;
     child->session_id = current_proc.session_id;
-    child->signal_flags = current_proc.signal_flags & ~AURORA_PROCESS_FLAG_STOPPED;
+    child->signal_flags = current_proc.signal_flags & ~RABBITBONE_PROCESS_FLAG_STOPPED;
     child->signal_pending = 0;
     child->signal_blocked = current_proc.signal_blocked;
     child->signal_in_handler = false;
@@ -142,7 +142,7 @@ static void finish_current(process_lifecycle_t state, process_status_t status, c
     current_proc.active = true;
     current_proc.result.finished_ticks = pit_ticks();
     reparent_children(current_proc.result.pid, current_proc.result.pid == 1u ? 0u : 1u);
-    if (current_proc.parent_pid) (void)process_signal_send(current_proc.parent_pid, AURORA_SIGCHLD);
+    if (current_proc.parent_pid) (void)process_signal_send(current_proc.parent_pid, RABBITBONE_SIGCHLD);
 
     /*
      * A terminal process no longer owns its descriptor table.  Closing the
@@ -154,6 +154,8 @@ static void finish_current(process_lifecycle_t state, process_status_t status, c
      */
     syscall_close_all_user_handles();
     syscall_save_user_handles(current_proc.fd_snapshot, sizeof(current_proc.fd_snapshot));
+    tty_forget_pid(current_proc.result.pid);
+    syscall_forget_pid(current_proc.result.pid);
 
     release_mappings(&current_proc);
     if (current_proc.space.pml4_physical) vmm_space_destroy(&current_proc.space);

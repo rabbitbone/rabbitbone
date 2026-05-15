@@ -1,7 +1,7 @@
-#include <aurora/arch/gdt.h>
-#include <aurora/libc.h>
-#include <aurora/log.h>
-#include <aurora/kmem.h>
+#include <rabbitbone/arch/gdt.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/kmem.h>
 
 #define GDT_ENTRIES 7u
 #define KERNEL_PRIV_STACK_SIZE 12288u
@@ -11,12 +11,12 @@
 #define EARLY_IST2_TOP 0x1de000ull
 #define EARLY_IST3_TOP 0x1dd000ull
 
-typedef struct AURORA_PACKED gdtr {
+typedef struct RABBITBONE_PACKED gdtr {
     u16 limit;
     u64 base;
 } gdtr_t;
 
-typedef struct AURORA_PACKED tss64 {
+typedef struct RABBITBONE_PACKED tss64 {
     u32 reserved0;
     u64 rsp0;
     u64 rsp1;

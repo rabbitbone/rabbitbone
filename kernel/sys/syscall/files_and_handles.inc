@@ -73,7 +73,7 @@ static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32
             files[i].id = id;
             files[i].refs = 1u;
             strncpy(files[i].path, path, sizeof(files[i].path) - 1u);
-            files[i].offset = (open_flags & AURORA_O_APPEND) ? st->size : 0;
+            files[i].offset = (open_flags & RABBITBONE_O_APPEND) ? st->size : 0;
             files[i].open_flags = open_flags;
             files[i].type = st->type;
             files[i].size = st->size;
@@ -236,7 +236,7 @@ static bool install_owned_handle(sys_handle_t *handles, u32 target_fd, sys_handl
 
 bool syscall_snapshot_open_vfs(void *snapshot, usize snapshot_size, u32 target_fd, const char *path, u32 flags, bool create_truncate) {
     if (!snapshot_valid(snapshot, snapshot_size) || !path || !*path || target_fd >= SYSCALL_MAX_HANDLES) return false;
-    if (flags & ~AURORA_FD_CLOEXEC) return false;
+    if (flags & ~RABBITBONE_FD_CLOEXEC) return false;
     if (count_vfs_handles((const sys_handle_t *)snapshot) >= SYSCALL_FILE_PER_PROCESS_CAP) return false;
     char resolved[SYSCALL_PATH_MAX];
     if (!copy_path_arg((u64)(uptr)path, resolved)) return false;
@@ -246,7 +246,7 @@ bool syscall_snapshot_open_vfs(void *snapshot, usize snapshot_size, u32 target_f
     }
     vfs_stat_t st;
     if (vfs_stat(resolved, &st) != VFS_OK || st.type == VFS_NODE_DIR) return false;
-    sys_file_t *file = alloc_file_object(resolved, &st, AURORA_O_RDONLY);
+    sys_file_t *file = alloc_file_object(resolved, &st, RABBITBONE_O_RDONLY);
     if (!file) return false;
     sys_handle_t h;
     memset(&h, 0, sizeof(h));

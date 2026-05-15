@@ -10,8 +10,8 @@ static ext4_status_t validate_htree_inode(ext4_mount_t *mnt, const ext4_inode_di
     if (!block) return EXT4_ERR_NO_MEMORY;
     u8 *dir_block = ext4_tmp_block(mnt);
     if (!dir_block) { ext4_tmp_block_free(block); return EXT4_ERR_NO_MEMORY; }
-    aurora_htree_header_t *hdr = 0;
-    aurora_htree_entry_t *entries = 0;
+    rabbitbone_htree_header_t *hdr = 0;
+    rabbitbone_htree_entry_t *entries = 0;
     st = htree_load(mnt, inode, block, &hdr, &entries);
     if (st != EXT4_OK) { ++report->htree_errors; ++report->errors; goto out; }
     ++report->htree_dirs;

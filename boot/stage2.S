@@ -345,7 +345,7 @@ long_mode_entry:
     mov rsi, offset msg_lm_active
     call serial_puts64
 
-    mov dword ptr [bootinfo + 0], 0x4155524f
+    mov dword ptr [bootinfo + 0], 0x52424f4e
     mov dword ptr [bootinfo + 4], BOOTINFO_VERSION
     xor rax, rax
     mov al, byte ptr [boot_drive]
@@ -433,15 +433,15 @@ pd:
     .fill 504, 8, 0
 
 .code16
-msg_stage2: .asciz "Aurora stage2: entered\r\n"
-msg_e820: .asciz "Aurora stage2: collecting E820\r\n"
-msg_load_kernel: .asciz "Aurora stage2: loading kernel\r\n"
-msg_kernel_loaded: .asciz "Aurora stage2: kernel loaded\r\n"
-msg_pm: .asciz "Aurora stage2: entering long mode\r\n"
-msg_lm_active: .asciz "Aurora stage2: long mode active\r\n"
-msg_jump_kernel: .asciz "Aurora stage2: jumping kernel\r\n"
-msg_disk_error: .asciz "Aurora stage2: INT13 kernel read failed\r\n"
-msg_a20_error: .asciz "Aurora stage2: A20 enable failed\r\n"
+msg_stage2: .asciz "Rabbitbone stage2: entered\r\n"
+msg_e820: .asciz "Rabbitbone stage2: collecting E820\r\n"
+msg_load_kernel: .asciz "Rabbitbone stage2: loading kernel\r\n"
+msg_kernel_loaded: .asciz "Rabbitbone stage2: kernel loaded\r\n"
+msg_pm: .asciz "Rabbitbone stage2: entering long mode\r\n"
+msg_lm_active: .asciz "Rabbitbone stage2: long mode active\r\n"
+msg_jump_kernel: .asciz "Rabbitbone stage2: jumping kernel\r\n"
+msg_disk_error: .asciz "Rabbitbone stage2: INT13 kernel read failed\r\n"
+msg_a20_error: .asciz "Rabbitbone stage2: A20 enable failed\r\n"
 a20_saved_low: .byte 0
 a20_saved_high: .byte 0
 boot_drive: .byte 0

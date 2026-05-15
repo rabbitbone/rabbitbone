@@ -1,10 +1,10 @@
 #pragma once
 
-#include <aurora/tarfs.h>
-#include <aurora/kmem.h>
-#include <aurora/path.h>
-#include <aurora/libc.h>
-#include <aurora/abi.h>
+#include <rabbitbone/tarfs.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/path.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/abi.h>
 
 typedef struct tarfs_entry {
     char path[VFS_PATH_MAX];
@@ -21,7 +21,7 @@ struct tarfs {
     usize count;
 };
 
-typedef struct AURORA_PACKED tar_header {
+typedef struct RABBITBONE_PACKED tar_header {
     char name[100];
     char mode[8];
     char uid[8];

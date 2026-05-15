@@ -1,13 +1,13 @@
-#include <aurora/panic.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/arch/io.h>
-#include <aurora/libc.h>
-#include <aurora/drivers.h>
+#include <rabbitbone/panic.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/arch/io.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/drivers.h>
 
 static volatile u32 g_panic_active;
 
-static AURORA_NORETURN void panic_halt_forever(void) {
+static RABBITBONE_NORETURN void panic_halt_forever(void) {
     cpu_cli();
     for (;;) cpu_hlt();
 }
@@ -102,11 +102,11 @@ static void panic_dump_regs_serial(const cpu_regs_t *r) {
     panic_serial_line("\n");
 }
 
-static AURORA_NORETURN void panic_emit(const char *file, int line, const cpu_regs_t *regs, const char *msg) {
+static RABBITBONE_NORETURN void panic_emit(const char *file, int line, const cpu_regs_t *regs, const char *msg) {
     cpu_cli();
     if (__sync_lock_test_and_set(&g_panic_active, 1u) != 0) {
-        serial_write("\n*** AURORA KERNEL PANIC REENTERED ***\n");
-        console_write("\n*** AURORA KERNEL PANIC REENTERED ***\n");
+        serial_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
+        console_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
         if (msg) {
             serial_write(msg);
             serial_write("\n");
@@ -116,7 +116,7 @@ static AURORA_NORETURN void panic_emit(const char *file, int line, const cpu_reg
         panic_halt_forever();
     }
 
-    panic_serial_printf("\n========== AURORA KERNEL PANIC ==========" "\n");
+    panic_serial_printf("\n========== RABBITBONE KERNEL PANIC ==========" "\n");
     panic_serial_printf("theme=%s at %s:%d\n", console_theme_name(console_theme()), file ? file : "?", line);
     if (msg) panic_serial_printf("message=%s\n", msg);
     panic_dump_regs_serial(regs);
@@ -126,7 +126,7 @@ static AURORA_NORETURN void panic_emit(const char *file, int line, const cpu_reg
 
     console_panic_begin();
     console_write("================================================================================\n");
-    console_write("                            AURORA KERNEL PANIC                                 \n");
+    console_write("                            RABBITBONE KERNEL PANIC                                 \n");
     console_write("================================================================================\n\n");
     kprintf("Location: %s:%d\n", file ? file : "?", line);
     kprintf("Theme: %s\n", console_theme_name(console_theme()));
@@ -137,12 +137,12 @@ static AURORA_NORETURN void panic_emit(const char *file, int line, const cpu_reg
         kprintf("[FATAL] panic: %s\n", msg);
     }
     panic_dump_regs_console(regs);
-    console_write("\nFull panic record and kernel log were written to COM1 / VMware aurora-com1.log.\n");
+    console_write("\nFull panic record and kernel log were written to COM1 / VMware rabbitbone-com1.log.\n");
     console_write("System halted.\n");
     panic_halt_forever();
 }
 
-AURORA_NORETURN void panic_at(const char *file, int line, const char *fmt, ...) {
+RABBITBONE_NORETURN void panic_at(const char *file, int line, const char *fmt, ...) {
     char msg[512];
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
@@ -151,7 +151,7 @@ AURORA_NORETURN void panic_at(const char *file, int line, const char *fmt, ...) 
     panic_emit(file, line, 0, msg);
 }
 
-AURORA_NORETURN void panic_at_regs(const char *file, int line, const cpu_regs_t *regs, const char *fmt, ...) {
+RABBITBONE_NORETURN void panic_at_regs(const char *file, int line, const cpu_regs_t *regs, const char *fmt, ...) {
     char msg[512];
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
@@ -160,6 +160,6 @@ AURORA_NORETURN void panic_at_regs(const char *file, int line, const cpu_regs_t 
     panic_emit(file, line, regs, msg);
 }
 
-AURORA_NORETURN void aurora_rust_panic(const char *msg) {
+RABBITBONE_NORETURN void rabbitbone_rust_panic(const char *msg) {
     PANIC("rust panic: %s", msg ? msg : "unknown");
 }

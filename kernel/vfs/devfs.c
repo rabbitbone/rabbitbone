@@ -1,12 +1,12 @@
-#include <aurora/devfs.h>
-#include <aurora/abi.h>
-#include <aurora/libc.h>
-#include <aurora/kmem.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/drivers.h>
-#include <aurora/tty.h>
-#include <aurora/spinlock.h>
+#include <rabbitbone/devfs.h>
+#include <rabbitbone/abi.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/kmem.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/drivers.h>
+#include <rabbitbone/tty.h>
+#include <rabbitbone/spinlock.h>
 
 typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_PRNG, DEV_KMSG, DEV_TTY } dev_kind_t;
 
@@ -34,7 +34,7 @@ static devfs_entry_t const *find_entry(const char *path) {
     if (!path) return 0;
     while (*path == '/') ++path;
     if (!*path) return 0;
-    for (usize i = 0; i < AURORA_ARRAY_LEN(entries); ++i) {
+    for (usize i = 0; i < RABBITBONE_ARRAY_LEN(entries); ++i) {
         if (strcmp(entries[i].name, path) == 0) return &entries[i];
     }
     return 0;
@@ -55,14 +55,14 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
     if (strcmp(path, "/") == 0) {
         memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_DIR;
-        out->mode = 0555; out->uid = AURORA_UID_ROOT; out->gid = AURORA_GID_ROOT;
+        out->mode = 0555; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
         return VFS_OK;
     }
     const devfs_entry_t *e = find_entry(path);
     if (!e) return VFS_ERR_NOENT;
     memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_DEV;
-    out->mode = 0666; out->uid = AURORA_UID_ROOT; out->gid = AURORA_GID_ROOT;
+    out->mode = 0666; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
     out->inode = e->inode;
     out->fs_id = mnt->fs_id;
     return VFS_OK;
@@ -79,7 +79,7 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
         case DEV_NULL:
             return VFS_OK;
         case DEV_ZERO:
-            memset(buffer, 0, size);
+            if (size) memset(buffer, 0, size);
             if (read_out) *read_out = size;
             return VFS_OK;
         case DEV_PRNG: {
@@ -135,8 +135,7 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
     }
     if (e->kind == DEV_TTY) {
         if (size && !buffer) return VFS_ERR_INVAL;
-        const char *s = (const char *)buffer;
-        for (usize i = 0; i < size; ++i) console_putc(s[i]);
+        if (size) console_write_n((const char *)buffer, size);
         if (written_out) *written_out = size;
         return VFS_OK;
     }
@@ -155,8 +154,9 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
 
 static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn fn, void *ctx) {
     (void)mnt;
+    if (!path || !fn) return VFS_ERR_INVAL;
     if (strcmp(path, "/") != 0) return VFS_ERR_NOTDIR;
-    for (usize i = 0; i < AURORA_ARRAY_LEN(entries); ++i) {
+    for (usize i = 0; i < RABBITBONE_ARRAY_LEN(entries); ++i) {
         vfs_dirent_t de;
         memset(&de, 0, sizeof(de));
         strncpy(de.name, entries[i].name, sizeof(de.name) - 1u);

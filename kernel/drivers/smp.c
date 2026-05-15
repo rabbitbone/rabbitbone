@@ -1,10 +1,10 @@
-#include <aurora/smp.h>
-#include <aurora/acpi.h>
-#include <aurora/apic.h>
-#include <aurora/libc.h>
-#include <aurora/console.h>
-#include <aurora/log.h>
-#include <aurora/format.h>
+#include <rabbitbone/smp.h>
+#include <rabbitbone/acpi.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/libc.h>
+#include <rabbitbone/console.h>
+#include <rabbitbone/log.h>
+#include <rabbitbone/format.h>
 
 static smp_info_t smp_info;
 
@@ -55,14 +55,14 @@ const smp_info_t *smp_get_info(void) { return &smp_info; }
 
 void smp_format_status(char *out, usize out_len) {
     if (!out || out_len == 0) return;
-    aurora_buf_out_t bo;
-    aurora_buf_init(&bo, out, out_len);
-    aurora_buf_appendf(&bo, "smp: initialized=%u bootstrap_only=%u cpus=%u enabled=%u bsp_apic_id=%u\n",
+    rabbitbone_buf_out_t bo;
+    rabbitbone_buf_init(&bo, out, out_len);
+    rabbitbone_buf_appendf(&bo, "smp: initialized=%u bootstrap_only=%u cpus=%u enabled=%u bsp_apic_id=%u\n",
             smp_info.initialized ? 1u : 0u, smp_info.bootstrap_only ? 1u : 0u,
             smp_info.cpu_count, smp_info.enabled_cpu_count, smp_info.bsp_apic_id);
     for (u32 i = 0; i < smp_info.cpu_count; ++i) {
         const smp_cpu_info_t *c = &smp_info.cpus[i];
-        aurora_buf_appendf(&bo, "  cpu%u acpi=%u apic=%u bsp=%u enabled=%u started=%u\n",
+        rabbitbone_buf_appendf(&bo, "  cpu%u acpi=%u apic=%u bsp=%u enabled=%u started=%u\n",
                 c->logical_id, c->acpi_id, c->apic_id, c->bsp ? 1u : 0u, c->enabled ? 1u : 0u,
                 c->started ? 1u : 0u);
     }
