@@ -2,13 +2,13 @@ static bool copy_args(sched_job_t *job, const char *path, int argc, const char *
     if (!job || !path || !*path || argc <= 0 || argc > (int)SCHED_ARG_MAX) return false;
     usize path_len = strnlen(path, SCHED_PATH_MAX);
     if (path_len == 0 || path_len >= SCHED_PATH_MAX) return false;
-    strncpy(job->info.path, path, sizeof(job->info.path) - 1u);
+    strlcpy(job->info.path, path, sizeof(job->info.path));
     job->argc = argc;
     for (int i = 0; i < argc; ++i) {
         const char *src = argv && argv[i] ? argv[i] : (i == 0 ? path : "");
         usize len = strnlen(src, SCHED_PATH_MAX);
         if (len >= SCHED_PATH_MAX) return false;
-        strncpy(job->argv[i], src, SCHED_PATH_MAX - 1u);
+        strlcpy(job->argv[i], src, SCHED_PATH_MAX);
     }
     return true;
 }
@@ -34,7 +34,7 @@ bool scheduler_enqueue(const char *path, int argc, const char *const *argv, u32 
     u32 jid = job->info.job_id;
     char log_path[SCHED_PATH_MAX];
     memset(log_path, 0, sizeof(log_path));
-    strncpy(log_path, job->info.path, sizeof(log_path) - 1u);
+    strlcpy(log_path, job->info.path, sizeof(log_path));
     spin_unlock_irqrestore(&scheduler_lock, flags);
     if (job_id_out) *job_id_out = jid;
     KLOG(LOG_INFO, "sched", "enqueue job=%u path=%s", jid, log_path);
@@ -64,8 +64,8 @@ static bool run_one(sched_job_t *job) {
     job->info.started_ticks = sched_now();
     job_id = job->info.job_id;
     argc = job->argc;
-    strncpy(path, job->info.path, sizeof(path) - 1u);
-    for (int i = 0; i < argc; ++i) strncpy(argv_storage[i], job->argv[i], SCHED_PATH_MAX - 1u);
+    strlcpy(path, job->info.path, sizeof(path));
+    for (int i = 0; i < argc; ++i) strlcpy(argv_storage[i], job->argv[i], SCHED_PATH_MAX);
     spin_unlock_irqrestore(&scheduler_lock, flags);
 
     const char *argv[SCHED_ARG_MAX];

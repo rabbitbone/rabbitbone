@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from rabbitbone_version import load_version
+
 SECTOR = 2048
 FAT_SECTOR = 512
 FAT_CLUSTER_SECTORS = 8
@@ -56,6 +58,14 @@ MAX_INPUT_BYTES = 128 * 1024 * 1024
 KERNEL_LOAD_BASE = 0x10000
 KERNEL_LOW_LIMIT = 0x9F000
 KERNEL_MAX_BYTES = KERNEL_LOW_LIMIT - KERNEL_LOAD_BASE
+
+
+def default_iso_volume_id() -> str:
+    return load_version().iso_volume_id
+
+
+def default_fat_serial() -> int:
+    return load_version().fat_serial
 
 
 def upper_83(name: str) -> bytes:
@@ -162,7 +172,7 @@ def fat_volume_label(volume_label: str) -> bytes:
     # ISO volume identifiers can be up to 32 bytes, while FAT volume labels are
     # a raw 11-byte directory field, not a normal 8.3 filename. Keep builds
     # deterministic and permissive by sanitizing the configured ISO id into a
-    # valid FAT label instead of rejecting names such as RABBITBONE_00302.
+    # valid FAT label instead of rejecting long release-derived identifiers.
     sanitized = []
     for c in volume_label.upper().replace("-", "_"):
         sanitized.append(c if c in FAT_LABEL_ALLOWED else "_")
@@ -208,7 +218,7 @@ class FatBuilder:
             self.dirs.add(cur)
         self.files[normalized] = data
 
-    def build(self, volume_label: str) -> bytes:
+    def build(self, volume_label: str, fat_serial: int) -> bytes:
         label = fat_volume_label(volume_label)
 
         def parent_of_static(path: str) -> str:
@@ -385,7 +395,7 @@ class FatBuilder:
         boot[28:32] = le32(0)
         boot[36] = 0x80
         boot[38] = 0x29
-        boot[39:43] = le32(0xA00302EF)
+        boot[39:43] = le32(fat_serial)
         boot[43:54] = label
         boot[54:62] = b"FAT16   "
         boot[510:512] = b"\x55\xAA"
@@ -549,7 +559,8 @@ def main() -> int:
     ap.add_argument("--efi", required=True)
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--root", required=True)
-    ap.add_argument("--volume-id", default="RABBITBONE_00302")
+    ap.add_argument("--volume-id", default=default_iso_volume_id())
+    ap.add_argument("--fat-serial", default=f"0x{default_fat_serial():08X}", help="FAT volume serial, defaults to version.h-derived value")
     args = ap.parse_args()
 
     efi = read_regular_file(Path(args.efi), "EFI image")
@@ -570,7 +581,13 @@ def main() -> int:
     fat.add_file("/EFI/BOOT/BOOTX64.EFI", efi)
     fat.add_file("/RABBITBONE/KERNEL.BIN", kernel)
     fat.add_file("/RABBITBONE/ROOT.IMG", root)
-    fat_image = fat.build(volume_id)
+    try:
+        fat_serial = int(str(args.fat_serial), 0)
+    except ValueError as exc:
+        raise SystemExit(f"invalid FAT serial {args.fat_serial!r}") from exc
+    if fat_serial < 0 or fat_serial > 0xFFFFFFFF:
+        raise SystemExit(f"FAT serial out of u32 range: {args.fat_serial!r}")
+    fat_image = fat.build(volume_id, fat_serial)
     iso = build_iso(fat_image, volume_id)
     out = Path(args.out)
     atomic_write(out, iso)

@@ -53,7 +53,7 @@ vfs_status_t vfs_sync_parent_dir(const char *path) {
     if (parent_len >= sizeof(norm)) return VFS_ERR_INVAL;
     if (parent_len > 1u && norm[parent_len - 1u] == '/') --parent_len;
     norm[parent_len] = 0;
-    if (norm[0] == 0) strcpy(norm, "/");
+    if (norm[0] == 0 && strlcpy(norm, "/", sizeof(norm)) >= sizeof(norm)) return VFS_ERR_INVAL;
     return vfs_sync_path(norm);
 }
 
@@ -72,9 +72,9 @@ vfs_status_t vfs_statvfs(const char *path, vfs_statvfs_t *out) {
     }
     out->fs_id = mnt->fs_id;
     out->flags = (out->flags & ~VFS_STATVFS_FLAG_READONLY) | (mnt->writable ? 0u : VFS_STATVFS_FLAG_READONLY);
-    strncpy(out->mount_path, mnt->path, sizeof(out->mount_path) - 1u);
+    strlcpy(out->mount_path, mnt->path, sizeof(out->mount_path));
     out->mount_path[sizeof(out->mount_path) - 1u] = 0;
-    strncpy(out->fs_name, mnt->name, sizeof(out->fs_name) - 1u);
+    strlcpy(out->fs_name, mnt->name, sizeof(out->fs_name));
     out->fs_name[sizeof(out->fs_name) - 1u] = 0;
     mount_release(mnt);
     return VFS_OK;

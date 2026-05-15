@@ -1,20 +1,16 @@
 typedef struct sys_user_record {
     const char *name;
-    const char *password;
+    u64 password_hash;
+    u64 password_salt;
     u32 uid;
     u32 gid;
     bool admin;
 } sys_user_record_t;
 
-/*
- * Live-only demo credentials. This table is intentionally static until
- * Rabbitbone grows persistent account storage outside of the kernel image.
- * Treat it as a bootstrap/userland exercise, not as a production auth boundary.
- */
 static const sys_user_record_t auth_users[] = {
-    { "root", "root", RABBITBONE_UID_ROOT, RABBITBONE_GID_ROOT, true },
-    { "rabbitbone", "rabbitbone", RABBITBONE_UID_RABBITBONE, RABBITBONE_GID_USERS, true },
-    { "guest", "guest", RABBITBONE_UID_GUEST, RABBITBONE_GID_USERS, false },
+    { "root", 0xa76f55511644a5b5ull, 0x8a1f2b7c4d9e0351ull, RABBITBONE_UID_ROOT, RABBITBONE_GID_ROOT, true },
+    { "rabbitbone", 0xa781401259e28deaull, 0x37c9a4d15e6f802bull, RABBITBONE_UID_RABBITBONE, RABBITBONE_GID_USERS, true },
+    { "guest", 0x7aa9ab26b2eae470ull, 0xb42d791c0e85a6f3ull, RABBITBONE_UID_GUEST, RABBITBONE_GID_USERS, false },
 };
 
 static const sys_user_record_t *auth_find_user_name(const char *name) {
@@ -32,18 +28,39 @@ static const sys_user_record_t *auth_find_user_uid(u32 uid) {
     return 0;
 }
 
-static bool auth_password_ok(const sys_user_record_t *u, const char *password) {
-    if (!u || !u->password || !password) return false;
+static u64 auth_password_hash(const char *password, u64 salt) {
     const usize max = 64u;
-    usize alen = strnlen(u->password, max);
-    usize blen = strnlen(password, max);
-    u8 diff = (u8)(alen ^ blen);
+    if (!password) return 0;
+    usize len = strnlen(password, max);
+    if (len >= max) return 0;
+    u64 h = 1469598103934665603ull ^ salt;
+    h ^= (u64)len;
+    h *= 1099511628211ull;
     for (usize i = 0; i < max; ++i) {
-        u8 a = i < alen ? (u8)u->password[i] : 0u;
-        u8 b = i < blen ? (u8)password[i] : 0u;
-        diff |= (u8)(a ^ b);
+        u8 c = i < len ? (u8)password[i] : 0u;
+        c = (u8)(c + (u8)(salt >> ((i & 7u) * 8u)));
+        h ^= (u64)c;
+        h *= 1099511628211ull;
+        h ^= h >> 32;
     }
-    return diff == 0 && alen < max && blen < max;
+    return h ? h : 1u;
+}
+
+static bool auth_consttime_u64_eq(u64 a, u64 b) {
+    u64 diff = a ^ b;
+    diff |= diff >> 32;
+    diff |= diff >> 16;
+    diff |= diff >> 8;
+    diff |= diff >> 4;
+    diff |= diff >> 2;
+    diff |= diff >> 1;
+    return (diff & 1u) == 0;
+}
+
+static bool auth_password_ok(const sys_user_record_t *u, const char *password) {
+    if (!u || !password) return false;
+    u64 candidate = auth_password_hash(password, u->password_salt);
+    return candidate != 0 && auth_consttime_u64_eq(candidate, u->password_hash);
 }
 
 static void auth_fill_cred(rabbitbone_credinfo_t *cred, const sys_user_record_t *u) {
@@ -56,7 +73,7 @@ static void auth_fill_cred(rabbitbone_credinfo_t *cred, const sys_user_record_t 
     cred->is_admin = u->admin ? 1u : 0u;
     cred->umask = 022u;
     cred->sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
-    strncpy(cred->user, u->name, sizeof(cred->user) - 1u);
+    strlcpy(cred->user, u->name, sizeof(cred->user));
 }
 
 static bool auth_cache_valid(const rabbitbone_credinfo_t *cred) {
@@ -64,8 +81,7 @@ static bool auth_cache_valid(const rabbitbone_credinfo_t *cred) {
 }
 
 static void auth_secure_bzero(void *ptr, usize len) {
-    volatile u8 *p = (volatile u8 *)ptr;
-    while (len--) *p++ = 0;
+    memzero_explicit(ptr, len);
 }
 
 static u64 auth_saturating_deadline(u64 now, u64 ttl) {
@@ -91,7 +107,7 @@ syscall_result_t rabbitbone_sys_cred(u64 op64, u64 arg0, u64 arg1, u64 value64) 
         info.uid = u->uid;
         info.gid = u->gid;
         info.is_admin = u->admin ? 1u : 0u;
-        strncpy(info.user, u->name, sizeof(info.user) - 1u);
+        strlcpy(info.user, u->name, sizeof(info.user));
         return copy_out_buf(arg0, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
     }
     if (op == RABBITBONE_CRED_OP_LOGIN) {

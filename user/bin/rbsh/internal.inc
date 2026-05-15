@@ -12,6 +12,8 @@
 #define SH_VAR_NAME_MAX 32u
 #define SH_ENV_ENTRY_MAX 288u
 #define SH_ASSIGN_MAX 8u
+#define SH_REDIR_MAX 12u
+#define SH_RM_MAX_DEPTH (SH_PATH_MAX / 2u)
 
 #if defined(__clang__) || defined(__GNUC__)
 #define SH_NOINLINE __attribute__((noinline))
@@ -33,6 +35,9 @@
 #define SH_REDIR_APPEND 2u
 #define SH_REDIR_DUP 3u
 
+#define SH_REDIR_KIND_PATH 1u
+#define SH_REDIR_KIND_DUP 2u
+
 static unsigned int sh_last_async_pid = 0;
 static int sh_last_status = 0;
 static unsigned int sh_shell_pid = 0;
@@ -50,6 +55,14 @@ typedef struct sh_var {
 static sh_var_t sh_vars[SH_VAR_MAX];
 
 
+typedef struct sh_redir {
+    unsigned int kind;
+    unsigned int fd;
+    unsigned int target_fd;
+    unsigned int mode;
+    char path[SH_PATH_MAX];
+} sh_redir_t;
+
 typedef struct sh_stage {
     char *argv[SH_ARG_MAX];
     unsigned int argc;
@@ -65,6 +78,8 @@ typedef struct sh_stage {
     unsigned int err_mode;
     unsigned int err_to_out;
     unsigned int out_to_err;
+    sh_redir_t redirs[SH_REDIR_MAX];
+    unsigned int redir_count;
 } sh_stage_t;
 
 static sh_stage_t sh_pipeline_stages[SH_STAGES_MAX];

@@ -100,7 +100,7 @@ static ext4_status_t ext4_lookup_path_ex(ext4_mount_t *mnt, const char *path, ex
     const char *cursor = norm;
     char comp[EXT4_NAME_LEN + 1];
     char cur_path[VFS_PATH_MAX];
-    strcpy(cur_path, "/");
+    if (strlcpy(cur_path, "/", sizeof(cur_path)) >= sizeof(cur_path)) return EXT4_ERR_RANGE;
     while (path_next_component(&cursor, comp, sizeof(comp))) {
         if (strcmp(comp, ".") == 0) continue;
         u32 next_ino = 0;

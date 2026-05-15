@@ -1,10 +1,38 @@
-fn valid_handle(h: u64) -> bool { h < MAX_HANDLES }
+fn fd_in_range(fd: u64) -> bool { fd < MAX_HANDLES }
 fn valid_mmap_prot(prot: u64) -> bool {
     prot != 0 && (prot & !PROT_SUPPORTED) == 0 && !((prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0)
 }
 fn valid_mmap_flags(flags: u64) -> bool {
     let sharing = flags & (MAP_PRIVATE | MAP_SHARED);
     (flags & !MAP_SUPPORTED) == 0 && (sharing == MAP_PRIVATE || sharing == MAP_SHARED)
+}
+
+fn valid_chmod_mode(mode: u64) -> bool {
+    mode <= CHMOD_MAX_MODE && (mode & CHMOD_FORBIDDEN_MODE) == 0
+}
+
+fn kctl_terminal_op(op: u64) -> bool {
+    op == KCTL_OP_PANIC || op == KCTL_OP_REBOOT || op == KCTL_OP_HALT
+}
+
+fn valid_cred_args(a: SysArgs) -> bool {
+    match a.a0 {
+        CRED_OP_GET => a.a1 != 0 && a.a2 == 0 && a.a3 == 0,
+        CRED_OP_LOGIN => a.a1 != 0 && a.a2 != 0 && a.a3 == 0,
+        CRED_OP_SET_USER => a.a1 != 0 && a.a2 == 0 && a.a3 == 0,
+        CRED_OP_SET_EUID => a.a1 == 0 && a.a2 == 0 && a.a3 <= u32::MAX as u64,
+        CRED_OP_USERINFO => a.a1 != 0 && a.a2 == 0,
+        _ => false,
+    }
+}
+
+fn valid_sudo_args(a: SysArgs) -> bool {
+    match a.a0 {
+        SUDO_OP_STATUS | SUDO_OP_DROP | SUDO_OP_INVALIDATE => a.a1 == 0 && a.a2 == 0,
+        SUDO_OP_SET_TIMEOUT => a.a1 == 0 && a.a2 <= SUDO_MAX_TTL_TICKS,
+        SUDO_OP_VALIDATE => (a.a2 & !(SUDO_FLAG_ACTIVATE | SUDO_FLAG_PERSIST)) == 0,
+        _ => false,
+    }
 }
 
 fn valid_pid_or_pgrp_arg(pid: u64) -> bool {
@@ -51,7 +79,7 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             else if (a.a3 & MAP_FIXED) != 0 && (a.a0 == 0 || (a.a0 & 4095) != 0) { Err(VFS_ERR_INVAL) }
             else if a.a0 != 0 && (a.a0 & 4095) != 0 { Err(VFS_ERR_INVAL) }
             else if anon && (a.a4 != u64::MAX || a.a5 != 0) { Err(VFS_ERR_INVAL) }
-            else if !anon && ((a.a3 & MAP_SHARED) != 0 || !valid_handle(a.a4) || (a.a5 & 4095) != 0) { Err(VFS_ERR_INVAL) }
+            else if !anon && ((a.a3 & MAP_SHARED) != 0 || !fd_in_range(a.a4) || (a.a5 & 4095) != 0) { Err(VFS_ERR_INVAL) }
             else { Ok(()) }
         }
         SyscallNo::Munmap => {
@@ -78,16 +106,16 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             if a.a0 == 0 || a.a1 == 0 || a.a1 > MAX_PROCESS_ARGS || a.a2 == 0 || a.a3 > MAX_PROCESS_ENVS || (a.a3 != 0 && a.a4 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Close | SyscallNo::Dup | SyscallNo::Tell | SyscallNo::Fsync | SyscallNo::Fdatasync => {
-            if valid_handle(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
+            if fd_in_range(a.a0) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Ftruncate | SyscallNo::Fpreallocate => {
-            if valid_handle(a.a0) && a.a1 <= MAX_FILE_SIZE { Ok(()) } else { Err(VFS_ERR_INVAL) }
+            if fd_in_range(a.a0) && a.a1 <= MAX_FILE_SIZE { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Read | SyscallNo::Write => {
-            if !valid_handle(a.a0) || a.a2 > MAX_IO_BYTES || (a.a2 != 0 && a.a1 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || a.a2 > MAX_IO_BYTES || (a.a2 != 0 && a.a1 == 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Seek => {
-            if !valid_handle(a.a0) || (a.a2 != SEEK_SET && a.a2 != SEEK_CUR && a.a2 != SEEK_END) { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || (a.a2 != SEEK_SET && a.a2 != SEEK_CUR && a.a2 != SEEK_END) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Create => {
             if a.a0 == 0 || a.a2 > MAX_CREATE_BYTES || (a.a1 == 0 && a.a2 != 0) { Err(VFS_ERR_INVAL) } else { Ok(()) }
@@ -109,25 +137,25 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Fstat | SyscallNo::FdInfo => {
-            if !valid_handle(a.a0) || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::ReadDir => {
-            if !valid_handle(a.a0) || a.a2 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || a.a2 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::FdCtl => {
-            if !valid_handle(a.a0) || (a.a1 != FDCTL_GET && a.a1 != FDCTL_SET) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || (a.a1 != FDCTL_GET && a.a1 != FDCTL_SET) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Pipe => {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::PipeInfo => {
-            if !valid_handle(a.a0) || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || a.a1 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Dup2 => {
-            if !valid_handle(a.a0) || !valid_handle(a.a1) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || !fd_in_range(a.a1) || (a.a2 & !FD_CLOEXEC) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Poll => {
-            if !valid_handle(a.a0) || a.a1 == 0 || (a.a1 & !(POLL_READ | POLL_WRITE | POLL_HUP)) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if !fd_in_range(a.a0) || a.a1 == 0 || (a.a1 & !(POLL_READ | POLL_WRITE | POLL_HUP)) != 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::TtyGetInfo => {
             if a.a0 == 0 { Err(VFS_ERR_INVAL) } else { Ok(()) }
@@ -153,19 +181,22 @@ fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {
             if a.a0 == THEME_OP_GET || (a.a0 == THEME_OP_SET && a.a1 < THEME_MAX) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Cred => {
-            if a.a0 <= 4 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+            if valid_cred_args(a) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Sudo => {
-            if a.a0 <= 4 { Ok(()) } else { Err(VFS_ERR_INVAL) }
+            if valid_sudo_args(a) { Ok(()) } else { Err(VFS_ERR_INVAL) }
         }
         SyscallNo::Chmod => {
-            if a.a0 == 0 || a.a1 > 0o7777 { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if a.a0 == 0 || !valid_chmod_mode(a.a1) { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Chown => {
             if a.a0 == 0 || a.a1 > MAX_PID || a.a2 > MAX_PID { Err(VFS_ERR_INVAL) } else { Ok(()) }
         }
         SyscallNo::Kctl => {
-            if a.a0 >= KCTL_OP_MAX || a.a1 == 0 || a.a2 == 0 || a.a2 > KCTL_OUT_MAX { Err(VFS_ERR_INVAL) } else { Ok(()) }
+            if a.a0 >= KCTL_OP_MAX { Err(VFS_ERR_INVAL) }
+            else if kctl_terminal_op(a.a0) { Ok(()) }
+            else if a.a1 == 0 || a.a2 == 0 || a.a2 > KCTL_OUT_MAX { Err(VFS_ERR_INVAL) }
+            else { Ok(()) }
         }
         SyscallNo::Truncate | SyscallNo::Preallocate => {
             if a.a0 == 0 || a.a1 > MAX_FILE_SIZE { Err(VFS_ERR_INVAL) } else { Ok(()) }

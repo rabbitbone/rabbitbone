@@ -3,6 +3,15 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.3.3
+
+Sixth-pass hardening update over `0.0.3.2`.
+
+- Added release guard scripts for Rust syscall ABI synchronization and source hardening invariants.
+- Hardened path normalization, tarfs archive path validation, auth password handling, pipe/open-file access wrappers, mmap argument validation, and ordered shell redirection handling.
+- Tightened generated Rust ABI usage and release metadata checks, removed the unused Rust target JSON, and bumped the syscall ABI to `0x00000303`.
+
+
 ## 0.0.3.2
 
 Fifth-pass hardening update over `0.0.3.0`.

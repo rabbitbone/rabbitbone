@@ -68,7 +68,7 @@ static vfs_status_t resolve_route(const char *path, vfs_route_t *route) {
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
         if (!mounts[i].ops || mounts[i].unmounting) continue;
         view[i].active = 1;
-        strncpy(view[i].path, mounts[i].path, sizeof(view[i].path) - 1u);
+        strlcpy(view[i].path, mounts[i].path, sizeof(view[i].path));
         generations[i] = mounts[i].generation;
     }
     spin_unlock_irqrestore(&mounts_lock, flags);
@@ -112,8 +112,8 @@ static void fill_default_statvfs(const vfs_mount_t *mnt, vfs_statvfs_t *out) {
     out->fs_id = mnt->fs_id;
     out->flags = mnt->writable ? 0u : VFS_STATVFS_FLAG_READONLY;
     out->max_name_len = VFS_NAME_MAX - 1u;
-    strncpy(out->mount_path, mnt->path, sizeof(out->mount_path) - 1u);
-    strncpy(out->fs_name, mnt->name, sizeof(out->fs_name) - 1u);
+    strlcpy(out->mount_path, mnt->path, sizeof(out->mount_path));
+    strlcpy(out->fs_name, mnt->name, sizeof(out->fs_name));
 }
 
 static vfs_mount_t *mount_acquire_index(usize idx, u32 generation) {
@@ -180,7 +180,7 @@ static void fill_ref_from_stat(vfs_node_ref_t *out, const char *path, const vfs_
     out->type = st->type;
     out->size = st->size;
     out->mount_generation = route ? route->mount_generation : 0;
-    if (path) strncpy(out->path, path, sizeof(out->path) - 1u);
+    if (path) strlcpy(out->path, path, sizeof(out->path));
 }
 
 typedef struct root_list_ctx {
@@ -202,7 +202,7 @@ static bool root_name_seen(const root_list_ctx_t *ctx, const char *name) {
 static void root_remember_name(root_list_ctx_t *ctx, const char *name) {
     if (!ctx || !name || !name[0] || ctx->seen_count >= VFS_MAX_MOUNTS * 2u) return;
     if (root_name_seen(ctx, name)) return;
-    strncpy(ctx->seen[ctx->seen_count], name, VFS_NAME_MAX - 1u);
+    strlcpy(ctx->seen[ctx->seen_count], name, VFS_NAME_MAX);
     ctx->seen[ctx->seen_count][VFS_NAME_MAX - 1u] = 0;
     ++ctx->seen_count;
 }

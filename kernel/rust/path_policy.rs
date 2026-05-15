@@ -1,5 +1,5 @@
-pub const VFS_PATH_MAX: usize = 256;
-pub const VFS_NAME_MAX: usize = 64;
+pub const VFS_PATH_MAX: usize = crate::abi::RABBITBONE_PATH_MAX as usize;
+pub const VFS_NAME_MAX: usize = crate::abi::RABBITBONE_NAME_MAX as usize;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum PathError {

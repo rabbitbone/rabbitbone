@@ -65,7 +65,7 @@ static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn 
         if (duplicate) continue;
         vfs_dirent_t de;
         memset(&de, 0, sizeof(de));
-        strcpy(de.name, name);
+        if (strlcpy(de.name, name, sizeof(de.name)) >= sizeof(de.name)) continue;
         de.type = implicit_dir ? VFS_NODE_DIR : fs->entries[i].type;
         de.size = implicit_dir ? 0u : fs->entries[i].size;
         de.inode = implicit_dir ? 0u : fs->entries[i].inode;

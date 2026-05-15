@@ -193,7 +193,7 @@ static vfs_status_t list_node(ramfs_node_t *n, vfs_dir_iter_fn fn, void *ctx) {
     for (ramfs_node_t *c = n->obj->children; c; c = c->next) {
         vfs_dirent_t de;
         memset(&de, 0, sizeof(de));
-        strncpy(de.name, c->name, sizeof(de.name) - 1u);
+        strlcpy(de.name, c->name, sizeof(de.name));
         de.type = c->obj->type;
         de.size = c->obj->size;
         de.inode = c->obj->inode;

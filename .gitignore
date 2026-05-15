@@ -22,6 +22,11 @@
 /target/
 Cargo.lock
 
+# Python cache artifacts
+__pycache__/
+*.pyc
+*.pyo
+
 # Host test and temporary output
 *.log
 *.tmp

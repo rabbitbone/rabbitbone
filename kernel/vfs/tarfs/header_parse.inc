@@ -27,13 +27,23 @@ static bool tar_type_supported(char typeflag) {
     return typeflag == 0 || typeflag == '0' || typeflag == '5';
 }
 
-static bool tar_name_has_parent_ref(const char *s, usize n) {
+static bool tar_name_byte_allowed(char c) {
+    unsigned char uc = (unsigned char)c;
+    return uc >= 0x20u && uc != 0x7fu && c != '\\';
+}
+
+static bool tar_name_invalid(const char *s, usize n) {
+    if (!s || n == 0 || s[0] == '/') return true;
     usize i = 0;
     while (i < n && s[i]) {
         while (i < n && s[i] == '/') ++i;
         usize start = i;
-        while (i < n && s[i] && s[i] != '/') ++i;
+        while (i < n && s[i] && s[i] != '/') {
+            if (!tar_name_byte_allowed(s[i])) return true;
+            ++i;
+        }
         usize len = i - start;
+        if (len == 1u && s[start] == '.') return true;
         if (len == 2u && s[start] == '.' && s[start + 1u] == '.') return true;
     }
     return false;
@@ -79,14 +89,14 @@ static bool header_path(const tar_header_t *h, char *out, usize out_size) {
     tmp[pos++] = '/';
     if (h->prefix[0]) {
         usize pl = strnlen(h->prefix, sizeof(h->prefix));
-        if (tar_name_has_parent_ref(h->prefix, pl)) return false;
+        if (tar_name_invalid(h->prefix, pl)) return false;
         if (pos + pl + 1u >= sizeof(tmp)) return false;
         memcpy(tmp + pos, h->prefix, pl);
         pos += pl;
         tmp[pos++] = '/';
     }
     usize nl = strnlen(h->name, sizeof(h->name));
-    if (nl == 0 || tar_name_has_parent_ref(h->name, nl) || pos + nl + 1u >= sizeof(tmp)) return false;
+    if (nl == 0 || tar_name_invalid(h->name, nl) || pos + nl + 1u >= sizeof(tmp)) return false;
     memcpy(tmp + pos, h->name, nl);
     pos += nl;
     tmp[pos] = 0;

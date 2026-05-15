@@ -5,7 +5,7 @@ typedef struct sh_fd_save {
 } sh_fd_save_t;
 
 static int sh_stage_has_redirs(const sh_stage_t *stage) {
-    return stage && (stage->in_path[0] || stage->out_path[0] || stage->err_path[0] || stage->err_to_out || stage->out_to_err);
+    return stage && stage->redir_count != 0;
 }
 
 static unsigned int sh_open_flags_for_mode(unsigned int mode) {
@@ -25,36 +25,31 @@ static int sh_dup_to(au_i64 src, au_i64 dst, const char *what) {
     return 1;
 }
 
+static const char *sh_fd_name(unsigned int fd) {
+    if (fd == RABBITBONE_STDIN) return "stdin";
+    if (fd == RABBITBONE_STDOUT) return "stdout";
+    if (fd == RABBITBONE_STDERR) return "stderr";
+    return "fd";
+}
+
 static int sh_open_redirs(const sh_stage_t *stage) {
     if (!stage) return 1;
-    if (stage->in_path[0]) {
-        au_i64 fd = au_open2(stage->in_path, RABBITBONE_O_RDONLY);
-        if (fd < 0) { sh_err("sh: cannot open input: "); sh_write_fd((au_i64)RABBITBONE_STDERR, stage->in_path); sh_err("\n"); return 0; }
-        int ok = sh_dup_to(fd, (au_i64)RABBITBONE_STDIN, "stdin");
-        if (fd > (au_i64)RABBITBONE_STDERR) (void)au_close(fd);
-        if (!ok) return 0;
-    }
-    if (stage->out_path[0]) {
-        unsigned int mode = stage->out_mode ? stage->out_mode : SH_REDIR_TRUNC;
-        au_i64 fd = au_open2(stage->out_path, sh_open_flags_for_mode(mode));
-        if (fd < 0) { sh_err("sh: cannot open output: "); sh_write_fd((au_i64)RABBITBONE_STDERR, stage->out_path); sh_err("\n"); return 0; }
-        int ok = sh_dup_to(fd, (au_i64)RABBITBONE_STDOUT, "stdout");
-        if (fd > (au_i64)RABBITBONE_STDERR) (void)au_close(fd);
-        if (!ok) return 0;
-    }
-    if (stage->err_path[0]) {
-        unsigned int mode = stage->err_mode ? stage->err_mode : SH_REDIR_TRUNC;
-        au_i64 fd = au_open2(stage->err_path, sh_open_flags_for_mode(mode));
-        if (fd < 0) { sh_err("sh: cannot open stderr: "); sh_write_fd((au_i64)RABBITBONE_STDERR, stage->err_path); sh_err("\n"); return 0; }
-        int ok = sh_dup_to(fd, (au_i64)RABBITBONE_STDERR, "stderr");
-        if (fd > (au_i64)RABBITBONE_STDERR) (void)au_close(fd);
-        if (!ok) return 0;
-    }
-    if (stage->err_to_out) {
-        if (!sh_dup_to((au_i64)RABBITBONE_STDOUT, (au_i64)RABBITBONE_STDERR, "stderr")) return 0;
-    }
-    if (stage->out_to_err) {
-        if (!sh_dup_to((au_i64)RABBITBONE_STDERR, (au_i64)RABBITBONE_STDOUT, "stdout")) return 0;
+    for (unsigned int i = 0; i < stage->redir_count; ++i) {
+        const sh_redir_t *r = &stage->redirs[i];
+        if (r->kind == SH_REDIR_KIND_PATH) {
+            unsigned int flags = r->fd == RABBITBONE_STDIN ? RABBITBONE_O_RDONLY : sh_open_flags_for_mode(r->mode ? r->mode : SH_REDIR_TRUNC);
+            au_i64 fd = au_open2(r->path, flags);
+            if (fd < 0) { sh_err("sh: cannot open redirection: "); sh_write_fd((au_i64)RABBITBONE_STDERR, r->path); sh_err("\n"); return 0; }
+            int ok = sh_dup_to(fd, (au_i64)r->fd, sh_fd_name(r->fd));
+            if (fd > (au_i64)RABBITBONE_STDERR) (void)au_close(fd);
+            if (!ok) return 0;
+            continue;
+        }
+        if (r->kind == SH_REDIR_KIND_DUP) {
+            if (!sh_dup_to((au_i64)r->target_fd, (au_i64)r->fd, sh_fd_name(r->fd))) return 0;
+            continue;
+        }
+        return 0;
     }
     return 1;
 }
@@ -70,9 +65,11 @@ static int sh_save_fd(sh_fd_save_t *s, unsigned int fd) {
 static int sh_save_shell_redirs(const sh_stage_t *stage, sh_fd_save_t saves[3]) {
     if (!stage || !saves) return 0;
     au_memset(saves, 0, sizeof(sh_fd_save_t) * 3u);
-    if (stage->in_path[0] && !sh_save_fd(&saves[0], RABBITBONE_STDIN)) return 0;
-    if ((stage->out_path[0] || stage->out_to_err) && !sh_save_fd(&saves[1], RABBITBONE_STDOUT)) return 0;
-    if ((stage->err_path[0] || stage->err_to_out || stage->out_to_err) && !sh_save_fd(&saves[2], RABBITBONE_STDERR)) return 0;
+    for (unsigned int i = 0; i < stage->redir_count; ++i) {
+        unsigned int fd = stage->redirs[i].fd;
+        if (fd > RABBITBONE_STDERR) return 0;
+        if (!saves[fd].active && !sh_save_fd(&saves[fd], fd)) return 0;
+    }
     return 1;
 }
 

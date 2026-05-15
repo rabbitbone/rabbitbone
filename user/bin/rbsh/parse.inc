@@ -151,46 +151,76 @@ static int sh_need_path_token(const char *op) {
     return 1;
 }
 
+static int sh_add_redir_path(sh_stage_t *stage, unsigned int fd, unsigned int mode, const char *path) {
+    if (!stage || !path || !*path || stage->redir_count >= SH_REDIR_MAX) return 0;
+    sh_redir_t *r = &stage->redirs[stage->redir_count++];
+    au_memset(r, 0, sizeof(*r));
+    r->kind = SH_REDIR_KIND_PATH;
+    r->fd = fd;
+    r->mode = mode;
+    return sh_copy(r->path, sizeof(r->path), path);
+}
+
+static int sh_add_redir_dup(sh_stage_t *stage, unsigned int fd, unsigned int target_fd) {
+    if (!stage || stage->redir_count >= SH_REDIR_MAX) return 0;
+    sh_redir_t *r = &stage->redirs[stage->redir_count++];
+    au_memset(r, 0, sizeof(*r));
+    r->kind = SH_REDIR_KIND_DUP;
+    r->fd = fd;
+    r->target_fd = target_fd;
+    return 1;
+}
+
 static int sh_set_stage_redir(sh_stage_t *stage, const char *op, const char *path) {
     if (!stage || !op) return 0;
     if (sh_streq(op, "<")) {
-        if (!path || !*path || stage->in_path[0]) return 0;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDIN, SH_REDIR_NONE, path)) return 0;
         return sh_copy(stage->in_path, sizeof(stage->in_path), path);
     }
     if (sh_streq(op, ">") || sh_streq(op, "1>")) {
-        if (!path || !*path || stage->out_path[0]) return 0;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDOUT, SH_REDIR_TRUNC, path)) return 0;
         stage->out_mode = SH_REDIR_TRUNC;
+        stage->out_to_err = 0;
         return sh_copy(stage->out_path, sizeof(stage->out_path), path);
     }
     if (sh_streq(op, ">>") || sh_streq(op, "1>>")) {
-        if (!path || !*path || stage->out_path[0]) return 0;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDOUT, SH_REDIR_APPEND, path)) return 0;
         stage->out_mode = SH_REDIR_APPEND;
+        stage->out_to_err = 0;
         return sh_copy(stage->out_path, sizeof(stage->out_path), path);
     }
     if (sh_streq(op, "2>")) {
-        if (!path || !*path || stage->err_path[0] || stage->err_to_out) return 0;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDERR, SH_REDIR_TRUNC, path)) return 0;
         stage->err_mode = SH_REDIR_TRUNC;
+        stage->err_to_out = 0;
         return sh_copy(stage->err_path, sizeof(stage->err_path), path);
     }
     if (sh_streq(op, "2>>")) {
-        if (!path || !*path || stage->err_path[0] || stage->err_to_out) return 0;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDERR, SH_REDIR_APPEND, path)) return 0;
         stage->err_mode = SH_REDIR_APPEND;
+        stage->err_to_out = 0;
         return sh_copy(stage->err_path, sizeof(stage->err_path), path);
     }
     if (sh_streq(op, "2>&1")) {
-        if (stage->err_path[0]) return 0;
+        if (!sh_add_redir_dup(stage, RABBITBONE_STDERR, RABBITBONE_STDOUT)) return 0;
+        stage->err_path[0] = 0;
         stage->err_to_out = 1;
         return 1;
     }
     if (sh_streq(op, "1>&2") || sh_streq(op, ">&2")) {
-        if (stage->out_path[0]) return 0;
+        if (!sh_add_redir_dup(stage, RABBITBONE_STDOUT, RABBITBONE_STDERR)) return 0;
+        stage->out_path[0] = 0;
         stage->out_to_err = 1;
         return 1;
     }
     if (sh_streq(op, "&>") || sh_streq(op, "&>>")) {
-        if (!path || !*path || stage->out_path[0] || stage->err_path[0] || stage->err_to_out) return 0;
-        stage->out_mode = sh_streq(op, "&>>") ? SH_REDIR_APPEND : SH_REDIR_TRUNC;
+        unsigned int mode = sh_streq(op, "&>>") ? SH_REDIR_APPEND : SH_REDIR_TRUNC;
+        if (!sh_add_redir_path(stage, RABBITBONE_STDOUT, mode, path)) return 0;
+        if (!sh_add_redir_dup(stage, RABBITBONE_STDERR, RABBITBONE_STDOUT)) return 0;
+        stage->out_mode = mode;
         stage->err_to_out = 1;
+        stage->out_to_err = 0;
+        stage->err_path[0] = 0;
         return sh_copy(stage->out_path, sizeof(stage->out_path), path);
     }
     return 0;
@@ -232,7 +262,7 @@ static SH_NOINLINE int sh_parse_stage(char *text, sh_stage_t *stage) {
     if (stage->argc > 0 && !sh_is_builtin(stage->argv[0])) {
         (void)sh_resolve_program(stage->path, sizeof(stage->path), stage->argv[0]);
     }
-    return stage->argc > 0 || stage->assign_count > 0 || stage->in_path[0] || stage->out_path[0] || stage->err_path[0] || stage->err_to_out;
+    return stage->argc > 0 || stage->assign_count > 0 || stage->redir_count != 0;
 }
 
 static int sh_split_pipeline(char *line, char **parts, unsigned int *count) {

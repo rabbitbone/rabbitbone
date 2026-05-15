@@ -127,6 +127,7 @@ elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out) {
     memset(loaded_ends, 0, sizeof(loaded_ends));
     u16 loaded_count = 0;
     u16 seg_index = 0;
+    bool entry_in_exec_segment = false;
     for (u16 i = 0; i < phnum; ++i) {
         if (le32(ph[i].p_type) != ELF64_PT_LOAD) continue;
         es = elf64_validate_load_segment(&ph[i], st.size, ELF64_RABBITBONE_USER_IMAGE_BASE, ELF64_RABBITBONE_USER_SPACE_LIMIT);
@@ -137,6 +138,7 @@ elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out) {
         u64 memsz = le64(ph[i].p_memsz);
         u64 mem_end = vaddr + memsz;
         if (memsz == 0 || memsz > 64ull * 1024ull * 1024ull) { es = ELF_ERR_UNSUPPORTED; goto fail; }
+        if ((le32(ph[i].p_flags) & ELF64_PF_X) && out->entry >= vaddr && out->entry < mem_end) entry_in_exec_segment = true;
         for (u16 j = 0; j < loaded_count; ++j) {
             if (elf64_ranges_overlap(vaddr, mem_end, loaded_starts[j], loaded_ends[j])) { es = ELF_ERR_FORMAT; goto fail; }
         }
@@ -157,6 +159,7 @@ elf_status_t elf64_load_from_vfs(const char *path, elf_loaded_image_t *out) {
         out->segments[seg_index].memory = mem;
         ++seg_index;
     }
+    if (!entry_in_exec_segment) { es = ELF_ERR_FORMAT; goto fail; }
     kfree(ph);
     KLOG(LOG_INFO, "elf", "loaded %s entry=%p segments=%u", path, (void *)(uptr)out->entry, out->segment_count);
     return ELF_OK;

@@ -425,7 +425,7 @@ static int sh_rm_recursive(const char *path, int recursive, int force, int verbo
     if (sr != 0) return force && sr == RABBITBONE_ERR_NOENT ? 0 : sr;
     if (st.type == SH_NODE_DIR) {
         if (!recursive) return RABBITBONE_ERR_ISDIR;
-        if (depth > 32u) return RABBITBONE_ERR_INVAL;
+        if (depth > SH_RM_MAX_DEPTH) return RABBITBONE_ERR_INVAL;
         au_i64 fd = au_open2(path, RABBITBONE_O_DIRECTORY);
         if (fd < 0) return (int)fd;
         for (au_u64 i = 0; ; ++i) {

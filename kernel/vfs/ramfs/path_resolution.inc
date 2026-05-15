@@ -3,7 +3,7 @@ static bool compose_symlink_path(const char *base_dir, const char *target, const
     char tmp[VFS_PATH_MAX];
     memset(tmp, 0, sizeof(tmp));
     if (target[0] == '/') {
-        strncpy(tmp, target, sizeof(tmp) - 1u);
+        strlcpy(tmp, target, sizeof(tmp));
     } else {
         const char *base = (base_dir && base_dir[0]) ? base_dir : "/";
         if (strcmp(base, "/") == 0) {
@@ -30,7 +30,7 @@ static ramfs_node_t *resolve_inner(ramfs_t *fs, const char *path, bool follow_fi
     char comp[VFS_NAME_MAX];
     ramfs_node_t *cur = fs->root;
     char cur_path[VFS_PATH_MAX];
-    strcpy(cur_path, "/");
+    if (strlcpy(cur_path, "/", sizeof(cur_path)) >= sizeof(cur_path)) return 0;
     while (path_next_component(&cursor, comp, sizeof(comp))) {
         ramfs_node_t *next = find_child(cur, comp);
         if (!next) return 0;
@@ -61,7 +61,7 @@ static vfs_status_t resolve_parent(ramfs_t *fs, const char *path, ramfs_node_t *
     if (strcmp(norm, "/") == 0) return VFS_ERR_INVAL;
     const char *base = path_basename(norm);
     if (!*base || strlen(base) >= leaf_size) return VFS_ERR_INVAL;
-    strcpy(leaf, base);
+    if (strlcpy(leaf, base, leaf_size) >= leaf_size) return VFS_ERR_INVAL;
     char parent_path[VFS_PATH_MAX];
     usize parent_len = (usize)(base - norm);
     if (parent_len == 0) parent_len = 1;
@@ -79,7 +79,7 @@ static vfs_status_t resolve_parent(ramfs_t *fs, const char *path, ramfs_node_t *
 ramfs_t *ramfs_create(const char *label) {
     ramfs_t *fs = (ramfs_t *)kcalloc(1, sizeof(*fs));
     if (!fs) return 0;
-    strncpy(fs->label, label ? label : "ramfs", sizeof(fs->label) - 1u);
+    strlcpy(fs->label, label ? label : "ramfs", sizeof(fs->label));
     spinlock_init(&fs->lock);
     fs->next_inode = 1;
     fs->max_nodes = RAMFS_MAX_NODES;

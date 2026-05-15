@@ -6,7 +6,8 @@ static void release_pipe(sys_pipe_t *p) {
 }
 
 static i64 alloc_pipe_handle(sys_handle_t *handles, sys_handle_kind_t kind, u32 pipe_id) {
-    if (kind != SYS_HANDLE_PIPE_READ && kind != SYS_HANDLE_PIPE_WRITE) return -1;
+    if (!handles || (kind != SYS_HANDLE_PIPE_READ && kind != SYS_HANDLE_PIPE_WRITE)) return -1;
+    if (count_pipe_endpoints(handles) >= SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP) return -1;
     sys_handle_t h;
     memset(&h, 0, sizeof(h));
     h.used = true;
@@ -33,6 +34,7 @@ typedef enum pipe_write_status {
     PIPE_WRITE_FULL = 1,
     PIPE_WRITE_CLOSED = 2,
     PIPE_WRITE_INVAL = 3,
+    PIPE_WRITE_GONE = 4,
 } pipe_write_status_t;
 
 static pipe_write_status_t pipe_write_bytes(sys_pipe_t *p, const u8 *src, usize len, usize *written_out) {
@@ -59,6 +61,7 @@ typedef enum pipe_read_status {
     PIPE_READ_EMPTY = 1,
     PIPE_READ_EOF = 2,
     PIPE_READ_INVAL = 3,
+    PIPE_READ_GONE = 4,
 } pipe_read_status_t;
 
 static pipe_read_status_t pipe_read_bytes(sys_pipe_t *p, u8 *dst, usize len, usize *read_out) {
@@ -93,5 +96,58 @@ static void pipe_snapshot(sys_pipe_t *p, rabbitbone_pipeinfo_t *info) {
     info->read_refs = p->read_refs;
     info->write_refs = p->write_refs;
     spin_unlock_irqrestore(&p->lock, flags);
+}
+
+static pipe_write_status_t pipe_write_by_id(u32 pipe_id, const u8 *src, usize len, usize *written_out) {
+    if (written_out) *written_out = 0;
+    u64 table_flags = spin_lock_irqsave(&pipe_table_lock);
+    sys_pipe_t *p = pipe_by_id(pipe_id);
+    bool found = p != 0;
+    pipe_write_status_t st = found ? pipe_write_bytes(p, src, len, written_out) : PIPE_WRITE_GONE;
+    spin_unlock_irqrestore(&pipe_table_lock, table_flags);
+    return st;
+}
+
+static pipe_read_status_t pipe_read_by_id(u32 pipe_id, u8 *dst, usize len, usize *read_out) {
+    if (read_out) *read_out = 0;
+    u64 table_flags = spin_lock_irqsave(&pipe_table_lock);
+    sys_pipe_t *p = pipe_by_id(pipe_id);
+    bool found = p != 0;
+    pipe_read_status_t st = found ? pipe_read_bytes(p, dst, len, read_out) : PIPE_READ_GONE;
+    spin_unlock_irqrestore(&pipe_table_lock, table_flags);
+    return st;
+}
+
+static bool pipe_snapshot_by_id(u32 pipe_id, rabbitbone_pipeinfo_t *info) {
+    if (!info) return false;
+    u64 table_flags = spin_lock_irqsave(&pipe_table_lock);
+    sys_pipe_t *p = pipe_by_id(pipe_id);
+    bool found = p != 0;
+    if (found) pipe_snapshot(p, info);
+    spin_unlock_irqrestore(&pipe_table_lock, table_flags);
+    return found;
+}
+
+static bool pipe_poll_by_id(u32 pipe_id, u32 endpoint_kind, u32 events, u32 *ready_out) {
+    if (!ready_out || (endpoint_kind != SYS_HANDLE_PIPE_READ && endpoint_kind != SYS_HANDLE_PIPE_WRITE)) return false;
+    u32 ready = 0;
+    u64 table_flags = spin_lock_irqsave(&pipe_table_lock);
+    sys_pipe_t *p = pipe_by_id(pipe_id);
+    bool found = p != 0;
+    if (found) {
+        u64 pf = spin_lock_irqsave(&p->lock);
+        if (endpoint_kind == SYS_HANDLE_PIPE_READ) {
+            if ((events & RABBITBONE_POLL_READ) && p->len > 0) ready |= RABBITBONE_POLL_READ;
+            if (p->write_refs == 0) ready |= RABBITBONE_POLL_HUP;
+        } else {
+            if ((events & RABBITBONE_POLL_WRITE) && p->read_refs > 0 && p->len < SYSCALL_PIPE_BUFFER) ready |= RABBITBONE_POLL_WRITE;
+            if (p->read_refs == 0) ready |= RABBITBONE_POLL_HUP;
+        }
+        spin_unlock_irqrestore(&p->lock, pf);
+    }
+    spin_unlock_irqrestore(&pipe_table_lock, table_flags);
+    if (!found) return false;
+    *ready_out = ready;
+    return true;
 }
 

@@ -1,7 +1,7 @@
 #![no_std]
 
 pub mod abi {
-    include!("../../build/kernel/rust/abi_generated.rs");
+    include!(env!("RABBITBONE_RUST_ABI_RS"));
 }
 
 pub mod syscall_dispatch;

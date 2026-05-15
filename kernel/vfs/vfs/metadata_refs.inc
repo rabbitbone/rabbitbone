@@ -28,8 +28,8 @@ vfs_status_t vfs_mount(const char *path, const char *name, const vfs_ops_t *ops,
     for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
         if (!mounts[i].ops && mounts[i].active_refs == 0) {
             memset(&mounts[i], 0, sizeof(mounts[i]));
-            strncpy(mounts[i].path, norm, sizeof(mounts[i].path) - 1u);
-            strncpy(mounts[i].name, name, sizeof(mounts[i].name) - 1u);
+            strlcpy(mounts[i].path, norm, sizeof(mounts[i].path));
+            strlcpy(mounts[i].name, name, sizeof(mounts[i].name));
             mounts[i].ops = ops;
             mounts[i].ctx = ctx;
             mounts[i].fs_id = alloc_fs_id();
@@ -192,7 +192,7 @@ vfs_status_t vfs_get_ref(const char *path, vfs_node_ref_t *out) {
         memset(out, 0, sizeof(*out));
         out->inode = 1u;
         out->type = VFS_NODE_DIR;
-        strncpy(out->path, "/", sizeof(out->path) - 1u);
+        strlcpy(out->path, "/", sizeof(out->path));
         return VFS_OK;
     }
     vfs_mount_t *mnt = route_mount(&route);

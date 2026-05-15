@@ -160,7 +160,7 @@ static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn 
     for (usize i = 0; i < RABBITBONE_ARRAY_LEN(entries); ++i) {
         vfs_dirent_t de;
         memset(&de, 0, sizeof(de));
-        strncpy(de.name, entries[i].name, sizeof(de.name) - 1u);
+        strlcpy(de.name, entries[i].name, sizeof(de.name));
         de.type = VFS_NODE_DEV;
         de.inode = entries[i].inode;
         if (!fn(&de, ctx)) break;

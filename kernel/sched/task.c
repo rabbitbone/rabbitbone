@@ -154,7 +154,7 @@ i32 task_spawn_kernel(const char *name, task_entry_t entry, void *ctx) {
     t->info.parent_pid = current ? current->info.pid : 0;
     t->info.state = TASK_READY;
     t->info.created_tick = now_tick();
-    strncpy(t->info.name, name, sizeof(t->info.name) - 1u);
+    strlcpy(t->info.name, name, sizeof(t->info.name));
     t->entry = entry;
     t->ctx = ctx;
     task_info_t info = t->info;

@@ -32,7 +32,7 @@ USER_ALIAS_INSTALLS := $(foreach m,$(USER_INSTALL_ALIASES),$(BUILD)/user/$(first
 USER_BIN_INSTALLS := $(USER_DEFAULT_INSTALLS) $(USER_ALIAS_INSTALLS)
 INSTALLER_USER_ARGS := $(foreach f,$(USER_BIN_INSTALLS),--install $(f))
 RABBITBONE_EMBED_USERLAND ?= 0
-ISO_VOLUME_ID ?= RABBITBONE_00302
+ISO_VOLUME_ID ?= $(shell python3 scripts/rabbitbone_version.py --print-iso-volume-id)
 
 K_CFLAGS := -DRABBITBONE_EMBED_USERLAND=$(RABBITBONE_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
@@ -126,7 +126,7 @@ K_RUST_ABI := $(BUILD)/kernel/rust/abi_generated.rs
 K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(if $(filter 1,$(RABBITBONE_EMBED_USERLAND)),$(BUILD)/user_bins.o,)
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
 
-.PHONY: all clean test image live-iso legacy-image bootcheck ueficheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck
+.PHONY: all clean test image live-iso legacy-image bootcheck ueficheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck releasecheck rustabisynccheck
 all: image
 
 $(BUILD):
@@ -233,7 +233,7 @@ $(K_RUST_ABI): include/rabbitbone/abi.h scripts/gen_rust_abi.py | $(BUILD)
 
 $(K_RUST_OBJ): $(K_RUST_SRCS) $(K_RUST_ABI) | rusttoolcheck
 	mkdir -p $(dir $@)
-	"$(RUSTC)" $(RUSTFLAGS) kernel/rust/lib.rs -o $@
+	RABBITBONE_RUST_ABI_RS="$(K_RUST_ABI)" "$(RUSTC)" $(RUSTFLAGS) kernel/rust/lib.rs -o $@
 
 $(BUILD)/kernel.elf: $(K_OBJS) scripts/kernel.ld
 	"$(LD)" $(LDFLAGS) -o $@ $(K_OBJS)
@@ -277,8 +277,17 @@ ueficheck: $(BUILD)/BOOTX64.EFI scripts/make_live_iso.py scripts/check_vmware_co
 	python3 scripts/check_uefi_boot_contract.py
 	python3 scripts/check_vmware_configs.py vmware/rabbitbone-uefi-live.vmx.example vmware/rabbitbone-uefi-live.vmx
 
+releasecheck:
+	python3 scripts/check_release_version.py
+
 splitintegritycheck:
 	python3 scripts/check_split_integrity.py
+
+rustabisynccheck:
+	python3 scripts/check_rust_abi_sync.py
+
+sourcehardeningcheck:
+	python3 scripts/check_source_hardening.py
 
 layoutcheck: $(BUILD)/stage2.elf
 	python3 scripts/check_stage2_layout.py $(BUILD)/stage2.elf
@@ -295,7 +304,7 @@ rustpaniccheck: $(K_RUST_OBJ)
 usercheck: $(USER_ELFS)
 	python3 scripts/check_userland.py $(USER_ELFS)
 
-test: splitintegritycheck ueficheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
+test: releasecheck splitintegritycheck rustabisynccheck sourcehardeningcheck ueficheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
 	$(BUILD)/host-tests
 
 HOST_C_SRCS := kernel/lib/bitmap.c kernel/lib/string.c kernel/lib/ringbuf.c kernel/lib/crc32.c kernel/core/printf.c kernel/drivers/block.c kernel/drivers/mbr.c kernel/fs/ext4.c kernel/mm/kmem.c kernel/vfs/path.c kernel/vfs/tarfs.c

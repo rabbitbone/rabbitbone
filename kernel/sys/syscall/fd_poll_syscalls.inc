@@ -53,17 +53,7 @@ syscall_result_t rabbitbone_sys_poll(u64 handle, u64 events64) {
         return ok((i64)ready);
     }
     if (handles[h].kind == SYS_HANDLE_PIPE_READ || handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
-        sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
-        if (!p) return ok(RABBITBONE_POLL_BADF);
-        u64 pf = spin_lock_irqsave(&p->lock);
-        if (handles[h].kind == SYS_HANDLE_PIPE_READ) {
-            if ((events & RABBITBONE_POLL_READ) && p->len > 0) ready |= RABBITBONE_POLL_READ;
-            if (p->write_refs == 0) ready |= RABBITBONE_POLL_HUP;
-        } else {
-            if ((events & RABBITBONE_POLL_WRITE) && p->read_refs > 0 && p->len < SYSCALL_PIPE_BUFFER) ready |= RABBITBONE_POLL_WRITE;
-            if (p->read_refs == 0) ready |= RABBITBONE_POLL_HUP;
-        }
-        spin_unlock_irqrestore(&p->lock, pf);
+        if (!pipe_poll_by_id(handles[h].pipe_id, handles[h].kind, events, &ready)) return ok(RABBITBONE_POLL_BADF);
         return ok((i64)ready);
     }
     refresh_handle_stat(&handles[h]);
@@ -97,12 +87,13 @@ syscall_result_t rabbitbone_sys_tell(u64 handle) {
     usize h = (usize)handle;
     if (!valid_handle(handles, h)) return err(VFS_ERR_INVAL);
     if (handles[h].kind == SYS_HANDLE_VFS) {
-        sys_file_t *f = handle_file(&handles[h]);
+        sys_file_t *f = handle_file_acquire(&handles[h]);
         if (!f) return err(VFS_ERR_NOENT);
         u64 ff = spin_lock_irqsave(&f->lock);
         sync_handle_from_file(&handles[h], f);
         i64 off = (i64)f->offset;
         spin_unlock_irqrestore(&f->lock, ff);
+        file_put(f);
         return ok(off);
     }
     return ok((i64)handles[h].offset);
@@ -124,11 +115,9 @@ syscall_result_t rabbitbone_sys_fstat(u64 handle, u64 out_ptr) {
         return copy_out_buf(out_ptr, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
     }
     if (handles[h].kind == SYS_HANDLE_PIPE_READ || handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
-        sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
-        if (!p) return err(VFS_ERR_NOENT);
         rabbitbone_pipeinfo_t snap;
         memset(&snap, 0, sizeof(snap));
-        pipe_snapshot(p, &snap);
+        if (!pipe_snapshot_by_id(handles[h].pipe_id, &snap)) return err(VFS_ERR_NOENT);
         st.type = VFS_NODE_DEV;
         st.size = snap.bytes_available;
         st.mode = handles[h].kind == SYS_HANDLE_PIPE_READ ? 0400u : 0200u;
@@ -137,10 +126,10 @@ syscall_result_t rabbitbone_sys_fstat(u64 handle, u64 out_ptr) {
         handles[h].size = snap.bytes_available;
         return copy_out_buf(out_ptr, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
     }
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
     vfs_status_t vs = vfs_stat_ref(&f->ref, &st);
-    if (vs != VFS_OK) return err(vs);
+    if (vs != VFS_OK) { file_put(f); return err(vs); }
     u64 ff = spin_lock_irqsave(&f->lock);
     f->type = st.type;
     f->size = st.size;
@@ -150,6 +139,7 @@ syscall_result_t rabbitbone_sys_fstat(u64 handle, u64 out_ptr) {
     f->ref.size = st.size;
     sync_handle_from_file(&handles[h], f);
     spin_unlock_irqrestore(&f->lock, ff);
+    file_put(f);
     return copy_out_buf(out_ptr, &st, sizeof(st)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
@@ -160,11 +150,9 @@ syscall_result_t rabbitbone_sys_fdinfo(u64 handle, u64 out_ptr) {
     if (!valid_handle(handles, h)) return err(VFS_ERR_INVAL);
     refresh_handle_stat(&handles[h]);
     if (handles[h].kind == SYS_HANDLE_PIPE_READ || handles[h].kind == SYS_HANDLE_PIPE_WRITE) {
-        sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
-        if (!p) return err(VFS_ERR_NOENT);
         rabbitbone_pipeinfo_t snap;
         memset(&snap, 0, sizeof(snap));
-        pipe_snapshot(p, &snap);
+        if (!pipe_snapshot_by_id(handles[h].pipe_id, &snap)) return err(VFS_ERR_NOENT);
         handles[h].size = snap.bytes_available;
         handles[h].inode = snap.pipe_id;
     }
@@ -178,13 +166,14 @@ syscall_result_t rabbitbone_sys_fdinfo(u64 handle, u64 out_ptr) {
     info.fs_id = handles[h].fs_id;
     info.flags = handles[h].flags;
     info.open_flags = 0;
-    sys_file_t *vf = handle_file(&handles[h]);
+    sys_file_t *vf = handle_file_acquire(&handles[h]);
     if (vf) {
         u64 ff = spin_lock_irqsave(&vf->lock);
         info.open_flags = vf->open_flags;
         spin_unlock_irqrestore(&vf->lock, ff);
+        file_put(vf);
     }
-    strncpy(info.path, handles[h].path, sizeof(info.path) - 1u);
+    strlcpy(info.path, handles[h].path, sizeof(info.path));
     return copy_out_buf(out_ptr, &info, sizeof(info)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 
@@ -199,7 +188,7 @@ static bool readdir_pick(const vfs_dirent_t *entry, void *raw) {
     readdir_ctx_t *ctx = (readdir_ctx_t *)raw;
     if (ctx->current == ctx->target) {
         memset(&ctx->out, 0, sizeof(ctx->out));
-        strncpy(ctx->out.name, entry->name, sizeof(ctx->out.name) - 1u);
+        strlcpy(ctx->out.name, entry->name, sizeof(ctx->out.name));
         ctx->out.type = (u32)entry->type;
         ctx->out.size = entry->size;
         ctx->out.inode = entry->inode;
@@ -220,9 +209,10 @@ syscall_result_t rabbitbone_sys_readdir(u64 handle, u64 index, u64 out_ptr) {
     readdir_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.target = index;
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
     vfs_status_t vs = vfs_list_ref(&f->ref, readdir_pick, &ctx);
+    file_put(f);
     if (vs != VFS_OK) return err(vs);
     if (!ctx.found) {
         rabbitbone_dirent_t zero;
@@ -260,14 +250,12 @@ syscall_result_t rabbitbone_sys_pipeinfo(u64 handle, u64 out_ptr) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || (handles[h].kind != SYS_HANDLE_PIPE_READ && handles[h].kind != SYS_HANDLE_PIPE_WRITE)) return err(VFS_ERR_INVAL);
-    sys_pipe_t *p = pipe_by_id(handles[h].pipe_id);
-    if (!p) return err(VFS_ERR_NOENT);
     rabbitbone_pipeinfo_t info;
     memset(&info, 0, sizeof(info));
-    pipe_snapshot(p, &info);
+    if (!pipe_snapshot_by_id(handles[h].pipe_id, &info)) return err(VFS_ERR_NOENT);
     info.endpoint = handles[h].kind == SYS_HANDLE_PIPE_READ ? 1u : 2u;
     for (usize i = 0; i < SYSCALL_MAX_HANDLES; ++i) {
-        if (handles[i].used && handles[i].pipe_id == p->id) {
+        if (handles[i].used && handles[i].pipe_id == info.pipe_id) {
             if (handles[i].kind == SYS_HANDLE_PIPE_READ && !info.read_handle) info.read_handle = (u32)i;
             if (handles[i].kind == SYS_HANDLE_PIPE_WRITE && !info.write_handle) info.write_handle = (u32)i;
         }

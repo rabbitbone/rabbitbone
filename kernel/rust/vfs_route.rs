@@ -1,6 +1,9 @@
-pub const VFS_PATH_MAX: usize = 256;
-pub const VFS_NAME_MAX: usize = 64;
+pub const VFS_PATH_MAX: usize = crate::abi::RABBITBONE_PATH_MAX as usize;
+pub const VFS_NAME_MAX: usize = crate::abi::RABBITBONE_NAME_MAX as usize;
 pub const VFS_MAX_MOUNTS: usize = 16;
+
+const VFS_ERR_NOENT: i32 = crate::abi::RABBITBONE_ERR_NOENT as i32;
+const VFS_ERR_INVAL: i32 = crate::abi::RABBITBONE_ERR_INVAL as i32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -65,58 +68,55 @@ fn fixed_cstr_len<const N: usize>(buf: &[u8; N]) -> usize {
     i
 }
 
-fn push_byte(out: &mut [u8; VFS_PATH_MAX], pos: &mut usize, b: u8) -> Result<(), RouteError> {
-    if *pos + 1 >= VFS_PATH_MAX { return Err(RouteError::Invalid); }
-    unsafe {
-        arr_set(out, *pos, b);
+fn append_component(out: &mut [u8; VFS_PATH_MAX], pos: &mut usize, input: &[u8], start: usize, len: usize) -> Result<(), RouteError> {
+    if len == 0 { return Ok(()); }
+    if len >= VFS_NAME_MAX { return Err(RouteError::Invalid); }
+    let slash = if *pos > 1 { 1usize } else { 0usize };
+    if *pos + slash + len >= VFS_PATH_MAX { return Err(RouteError::Invalid); }
+    if slash != 0 {
+        unsafe { arr_set(out, *pos, b'/'); }
         *pos += 1;
-        arr_set(out, *pos, 0);
     }
+    let mut j = 0usize;
+    while j < len {
+        unsafe { arr_set(out, *pos + j, slice_get(input, start + j)); }
+        j += 1;
+    }
+    *pos += len;
+    unsafe { arr_set(out, *pos, 0); }
+    Ok(())
+}
+
+fn pop_component(out: &mut [u8; VFS_PATH_MAX], pos: &mut usize) -> Result<(), RouteError> {
+    if *pos <= 1 { return Err(RouteError::Invalid); }
+    while *pos > 1 && unsafe { arr_get(out, *pos - 1) } != b'/' { *pos -= 1; }
+    if *pos > 1 && unsafe { arr_get(out, *pos - 1) } == b'/' { *pos -= 1; }
+    unsafe { arr_set(out, *pos, 0); }
     Ok(())
 }
 
 fn normalize(input: &[u8]) -> Result<[u8; VFS_PATH_MAX], RouteError> {
     let len = cstr_len(input);
     if len == 0 || len >= VFS_PATH_MAX || unsafe { slice_get(input, 0) } != b'/' { return Err(RouteError::Invalid); }
-    let mut comps = [[0u8; VFS_NAME_MAX]; 32];
-    let comps_ptr = comps.as_mut_ptr();
-    let mut count = 0usize;
+    let mut out = [0u8; VFS_PATH_MAX];
+    let mut pos = 1usize;
+    unsafe { arr_set(&mut out, 0, b'/'); arr_set(&mut out, 1, 0); }
+
     let mut i = 0usize;
     while i < len {
         while i < len && unsafe { slice_get(input, i) } == b'/' { i += 1; }
         let start = i;
         while i < len && unsafe { slice_get(input, i) } != b'/' { i += 1; }
         let clen = i - start;
-        if clen == 0 || (clen == 1 && unsafe { slice_get(input, start) } == b'.') { continue; }
-        if clen == 2 && unsafe { slice_get(input, start) } == b'.' && unsafe { slice_get(input, start + 1) } == b'.' {
-            count = count.saturating_sub(1);
+        if clen == 0 { continue; }
+        let is_dot = clen == 1 && unsafe { slice_get(input, start) } == b'.';
+        if is_dot { continue; }
+        let is_dotdot = clen == 2 && unsafe { slice_get(input, start) } == b'.' && unsafe { slice_get(input, start + 1) } == b'.';
+        if is_dotdot {
+            pop_component(&mut out, &mut pos)?;
             continue;
         }
-        if clen >= VFS_NAME_MAX || count >= 32 { return Err(RouteError::Invalid); }
-        let comp_ptr = unsafe { comps_byte_ptr(comps_ptr, count) };
-        let mut j = 0;
-        while j < clen {
-            unsafe { *comp_ptr.add(j) = slice_get(input, start + j); }
-            j += 1;
-        }
-        unsafe { *comp_ptr.add(clen) = 0; }
-        count += 1;
-    }
-    let mut out = [0u8; VFS_PATH_MAX];
-    let mut pos = 0usize;
-    push_byte(&mut out, &mut pos, b'/')?;
-    let mut c = 0usize;
-    while c < count {
-        let comp_ref = unsafe { &*comps_ptr.add(c) };
-        let clen = fixed_cstr_len(comp_ref);
-        let mut j = 0usize;
-        while j < clen {
-            let b = unsafe { arr_get(comp_ref, j) };
-            push_byte(&mut out, &mut pos, b)?;
-            j += 1;
-        }
-        if c + 1 < count { push_byte(&mut out, &mut pos, b'/')?; }
-        c += 1;
+        append_component(&mut out, &mut pos, input, start, clen)?;
     }
     Ok(out)
 }
@@ -198,13 +198,13 @@ fn route(mounts: &[MountView; VFS_MAX_MOUNTS], input: &[u8]) -> Result<RouteOut,
 
 #[no_mangle]
 pub extern "C" fn rabbitbone_rust_vfs_route(mounts: *const MountView, input: *const u8, input_len: usize, out: *mut RouteOut) -> i32 {
-    if mounts.is_null() || input.is_null() || out.is_null() || input_len == 0 || input_len > VFS_PATH_MAX { return -3; }
+    if mounts.is_null() || input.is_null() || out.is_null() || input_len == 0 || input_len > VFS_PATH_MAX { return VFS_ERR_INVAL; }
     let mounts_ref = unsafe { &*(mounts as *const [MountView; VFS_MAX_MOUNTS]) };
     let input_ref = unsafe { core::slice::from_raw_parts(input, input_len) };
     match route(mounts_ref, input_ref) {
         Ok(v) => { unsafe { *out = v; } 0 }
-        Err(RouteError::NoEntry) => -1,
-        Err(RouteError::Invalid) => -3,
+        Err(RouteError::NoEntry) => VFS_ERR_NOENT,
+        Err(RouteError::Invalid) => VFS_ERR_INVAL,
     }
 }
 
@@ -233,7 +233,20 @@ pub extern "C" fn rabbitbone_rust_vfs_route_selftest() -> bool {
     let rc_root = rabbitbone_rust_vfs_route(mounts.as_ptr(), disk_root.as_ptr(), disk_root.len(), &mut out as *mut RouteOut);
     if rc_root != 0 || out.mount_index != 1 || (unsafe { arr_get(&out.relative, 0) }) != b'/' || (unsafe { arr_get(&out.relative, 1) }) != 0 { return false; }
     let rel = b"relative/path\0";
-    if rabbitbone_rust_vfs_route(mounts.as_ptr(), rel.as_ptr(), rel.len(), &mut out as *mut RouteOut) != -3 { return false; }
+    if rabbitbone_rust_vfs_route(mounts.as_ptr(), rel.as_ptr(), rel.len(), &mut out as *mut RouteOut) != VFS_ERR_INVAL { return false; }
+    let escape = b"/../../etc\0";
+    if rabbitbone_rust_vfs_route(mounts.as_ptr(), escape.as_ptr(), escape.len(), &mut out as *mut RouteOut) != VFS_ERR_INVAL { return false; }
+    let mut many = [0u8; 96];
+    let mut pos = 0usize;
+    let mut n = 0usize;
+    while n < 40 {
+        unsafe { arr_set(&mut many, pos, b'/'); arr_set(&mut many, pos + 1, b'a'); }
+        pos += 2;
+        n += 1;
+    }
+    unsafe { arr_set(&mut many, pos, 0); }
+    if rabbitbone_rust_vfs_route(mounts.as_ptr(), many.as_ptr(), many.len(), &mut out as *mut RouteOut) != 0 { return false; }
+    if out.mount_index != 0 { return false; }
     let bad = b"\0";
-    rabbitbone_rust_vfs_route(mounts.as_ptr(), bad.as_ptr(), bad.len(), &mut out as *mut RouteOut) == -3
+    rabbitbone_rust_vfs_route(mounts.as_ptr(), bad.as_ptr(), bad.len(), &mut out as *mut RouteOut) == VFS_ERR_INVAL
 }

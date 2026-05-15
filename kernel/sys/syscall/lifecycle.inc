@@ -2,7 +2,11 @@ static void handle_release_resource(sys_handle_t *h);
 static bool handle_retain_resource(const sys_handle_t *h);
 static void close_handle(sys_handle_t *handles, usize h);
 static sys_file_t *file_by_id(u32 id);
-static sys_file_t *handle_file(sys_handle_t *h);
+static sys_file_t *file_acquire(u32 id);
+static void file_release(u32 id);
+static bool file_retain(u32 id);
+static void file_put(sys_file_t *f);
+static sys_file_t *handle_file_acquire(const sys_handle_t *h);
 static sys_pipe_t *alloc_pipe(void);
 static void release_pipe(sys_pipe_t *p);
 static bool copy_path_arg(u64 user_or_kernel_ptr, char *out);
@@ -133,8 +137,8 @@ static sys_file_t *file_by_id(u32 id) {
     return 0;
 }
 
-static sys_file_t *handle_file(sys_handle_t *h) {
+static sys_file_t *handle_file_acquire(const sys_handle_t *h) {
     if (!h || !h->used || h->kind != SYS_HANDLE_VFS || !h->file_id) return 0;
-    return file_by_id(h->file_id);
+    return file_acquire(h->file_id);
 }
 

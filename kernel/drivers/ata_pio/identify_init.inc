@@ -27,7 +27,7 @@ void ata_pio_init(void) {
     }
     if (sectors == 0) sectors = ((u32)identify_data[61] << 16) | identify_data[60];
     memset(&primary_master, 0, sizeof(primary_master));
-    strncpy(primary_master.name, "ata0", sizeof(primary_master.name) - 1);
+    strlcpy(primary_master.name, "ata0", sizeof(primary_master.name));
     primary_master.driver = "ata_pio";
     primary_master.sector_count = sectors;
     primary_master.sector_size = 512;

@@ -84,6 +84,39 @@ char *strncpy(char *dst, const char *src, usize n) {
     return dst;
 }
 
+
+usize strlcpy(char *dst, const char *src, usize size) {
+    if (!src) {
+        if (dst && size) dst[0] = 0;
+        return 0;
+    }
+    usize slen = strlen(src);
+    if (!dst || size == 0) return slen;
+    usize copy = slen;
+    if (copy >= size) copy = size - 1u;
+    if (copy) memcpy(dst, src, copy);
+    dst[copy] = 0;
+    return slen;
+}
+
+usize strlcat(char *dst, const char *src, usize size) {
+    if (!src) return dst ? strnlen(dst, size) : 0;
+    usize dlen = strnlen(dst, size);
+    usize slen = strlen(src);
+    if (!dst || dlen >= size) return size + slen;
+    usize room = size - dlen;
+    usize copy = slen;
+    if (copy >= room) copy = room - 1u;
+    if (copy) memcpy(dst + dlen, src, copy);
+    dst[dlen + copy] = 0;
+    return dlen + slen;
+}
+
+void memzero_explicit(void *ptr, usize len) {
+    volatile u8 *p = (volatile u8 *)ptr;
+    while (len--) *p++ = 0;
+}
+
 char *strchr(const char *s, int c) {
     if (!s) return 0;
     while (*s) {

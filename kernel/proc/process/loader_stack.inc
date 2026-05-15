@@ -231,8 +231,8 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
         p->session_id = current_proc.session_id ? current_proc.session_id : current_proc.result.pid;
     }
     process_inherit_cred(p);
-    if (current_proc.active && current_proc.cwd[0]) strncpy(p->cwd, current_proc.cwd, sizeof(p->cwd) - 1u);
-    else strncpy(p->cwd, "/", sizeof(p->cwd) - 1u);
+    if (current_proc.active && current_proc.cwd[0]) strlcpy(p->cwd, current_proc.cwd, sizeof(p->cwd));
+    else strlcpy(p->cwd, "/", sizeof(p->cwd));
     p->result.pid = alloc_user_pid();
     if (!p->result.pid) { vmm_space_destroy(&p->space); memset(p, 0, sizeof(*p)); return PROC_ERR_BUSY; }
     if (!p->process_group) p->process_group = p->result.pid;
@@ -249,9 +249,9 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     process_exec_plan_t plan;
     process_status_t st = resolve_exec_plan(p, path, argc, argv, &plan);
     if (st == PROC_OK) {
-        strncpy(p->result.name, plan.image_path, sizeof(p->result.name) - 1u);
+        strlcpy(p->result.name, plan.image_path, sizeof(p->result.name));
     } else {
-        strncpy(p->result.name, path, sizeof(p->result.name) - 1u);
+        strlcpy(p->result.name, path, sizeof(p->result.name));
     }
 
     u64 entry = 0;
@@ -298,7 +298,7 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->signal_blocked = current_proc.signal_blocked;
     memcpy(dst->signal_actions, current_proc.signal_actions, sizeof(dst->signal_actions));
     dst->cred = current_proc.cred;
-    strncpy(dst->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(dst->cwd) - 1u);
+    strlcpy(dst->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(dst->cwd));
     dst->wait_pid = 0;
     dst->wait_out_ptr = 0;
     dst->wake_tick = 0;
@@ -316,8 +316,8 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
 
     process_exec_plan_t plan;
     process_status_t st = resolve_exec_plan(dst, path, argc, argv, &plan);
-    if (st == PROC_OK) strncpy(dst->result.name, plan.image_path, sizeof(dst->result.name) - 1u);
-    else strncpy(dst->result.name, path, sizeof(dst->result.name) - 1u);
+    if (st == PROC_OK) strlcpy(dst->result.name, plan.image_path, sizeof(dst->result.name));
+    else strlcpy(dst->result.name, path, sizeof(dst->result.name));
 
     u64 entry = 0;
     if (st == PROC_OK) st = load_elf_image(dst, plan.image_path, &entry);

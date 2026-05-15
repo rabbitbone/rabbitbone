@@ -42,7 +42,7 @@ static vfs_status_t op_rename(vfs_mount_t *mnt, const char *old_path, const char
         ++new_parent->obj->nlink;
     }
     n->next = 0;
-    strncpy(n->name, new_leaf, sizeof(n->name) - 1u);
+    strlcpy(n->name, new_leaf, sizeof(n->name));
     n->name[sizeof(n->name) - 1u] = 0;
     attach_child(new_parent, n);
     st = VFS_OK;

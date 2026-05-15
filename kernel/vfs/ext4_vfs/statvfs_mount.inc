@@ -73,7 +73,7 @@ vfs_status_t ext4_vfs_mount_first_linux_partition(const char *path) {
             kfree(ctx);
             continue;
         }
-        strncpy(ctx->source, dev->name, sizeof(ctx->source) - 1u);
+        strlcpy(ctx->source, dev->name, sizeof(ctx->source));
         ext4_vfs_repair_at_mount(ctx);
         vfs_status_t vs = vfs_mount(path, "ext4", &ops, ctx, true);
         if (vs != VFS_OK) {

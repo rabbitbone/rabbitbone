@@ -140,7 +140,7 @@ static bool sys_current_cred(rabbitbone_credinfo_t *out) {
     out->egid = RABBITBONE_GID_ROOT;
     out->is_admin = 1u;
     out->sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
-    strncpy(out->user, "root", sizeof(out->user) - 1u);
+    strlcpy(out->user, "root", sizeof(out->user));
     return true;
 }
 
@@ -287,7 +287,7 @@ static void init_stdio_handles(sys_handle_t *handles) {
     handles[RABBITBONE_STDIN].type = VFS_NODE_DEV;
     handles[RABBITBONE_STDIN].fs_id = 0x434F4E53u;
     handles[RABBITBONE_STDIN].inode = RABBITBONE_STDIN;
-    strncpy(handles[RABBITBONE_STDIN].path, "console:[stdin]", sizeof(handles[RABBITBONE_STDIN].path) - 1u);
+    strlcpy(handles[RABBITBONE_STDIN].path, "console:[stdin]", sizeof(handles[RABBITBONE_STDIN].path));
 
     memset(&handles[RABBITBONE_STDOUT], 0, sizeof(handles[RABBITBONE_STDOUT]));
     handles[RABBITBONE_STDOUT].used = true;
@@ -295,7 +295,7 @@ static void init_stdio_handles(sys_handle_t *handles) {
     handles[RABBITBONE_STDOUT].type = VFS_NODE_DEV;
     handles[RABBITBONE_STDOUT].fs_id = 0x434F4E53u;
     handles[RABBITBONE_STDOUT].inode = RABBITBONE_STDOUT;
-    strncpy(handles[RABBITBONE_STDOUT].path, "console:[stdout]", sizeof(handles[RABBITBONE_STDOUT].path) - 1u);
+    strlcpy(handles[RABBITBONE_STDOUT].path, "console:[stdout]", sizeof(handles[RABBITBONE_STDOUT].path));
 
     memset(&handles[RABBITBONE_STDERR], 0, sizeof(handles[RABBITBONE_STDERR]));
     handles[RABBITBONE_STDERR].used = true;
@@ -303,6 +303,6 @@ static void init_stdio_handles(sys_handle_t *handles) {
     handles[RABBITBONE_STDERR].type = VFS_NODE_DEV;
     handles[RABBITBONE_STDERR].fs_id = 0x434F4E53u;
     handles[RABBITBONE_STDERR].inode = RABBITBONE_STDERR;
-    strncpy(handles[RABBITBONE_STDERR].path, "console:[stderr]", sizeof(handles[RABBITBONE_STDERR].path) - 1u);
+    strlcpy(handles[RABBITBONE_STDERR].path, "console:[stderr]", sizeof(handles[RABBITBONE_STDERR].path));
 }
 

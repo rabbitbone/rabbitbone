@@ -56,7 +56,7 @@ static bool clone_current_address_space(active_process_t *child) {
     child->signal_frame_addr = 0;
     memcpy(child->signal_actions, current_proc.signal_actions, sizeof(child->signal_actions));
     child->cred = current_proc.cred;
-    strncpy(child->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(child->cwd) - 1u);
+    strlcpy(child->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(child->cwd));
     child->result = current_proc.result;
     child->result.pid = alloc_user_pid();
     if (!child->result.pid) return false;

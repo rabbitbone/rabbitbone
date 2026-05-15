@@ -96,7 +96,7 @@ static void fill_info_from_result(process_info_t *info, const process_result_t *
     info->fault_vector = r->fault_vector;
     info->fault_rip = r->fault_rip;
     info->fault_addr = r->fault_addr;
-    strncpy(info->name, r->name, sizeof(info->name) - 1u);
+    strlcpy(info->name, r->name, sizeof(info->name));
 }
 
 static void record_process_result(const process_result_t *r, process_status_t status, u64 started, u64 finished) {
@@ -127,7 +127,7 @@ static void process_init_root_cred(rabbitbone_credinfo_t *cred) {
     cred->is_admin = 1u;
     cred->sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
     cred->umask = 022u;
-    strncpy(cred->user, "root", sizeof(cred->user) - 1u);
+    strlcpy(cred->user, "root", sizeof(cred->user));
 }
 
 static void process_inherit_cred(active_process_t *p) {
@@ -352,7 +352,7 @@ bool process_set_current_user(u32 uid, u32 gid, const char *name, bool admin) {
     current_proc.cred.is_admin = admin ? 1u : 0u;
     current_proc.cred.sudo_ttl = RABBITBONE_SUDO_DEFAULT_TTL_TICKS;
     current_proc.cred.umask = 022u;
-    strncpy(current_proc.cred.user, name, sizeof(current_proc.cred.user) - 1u);
+    strlcpy(current_proc.cred.user, name, sizeof(current_proc.cred.user));
     (void)sync_current_to_slot();
     return true;
 }

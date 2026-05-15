@@ -77,7 +77,7 @@ static ramfs_node_t *dentry_create(ramfs_t *fs, const char *name, vfs_node_type_
     if (!n) return 0;
     n->obj = object_create(fs, type);
     if (!n->obj) { kfree(n); return 0; }
-    strncpy(n->name, name ? name : "", sizeof(n->name) - 1u);
+    strlcpy(n->name, name ? name : "", sizeof(n->name));
     ++fs->node_count;
     return n;
 }
@@ -86,7 +86,7 @@ static ramfs_node_t *dentry_alias_create(ramfs_t *fs, const char *name, ramfs_ob
     if (!ramfs_can_add_node(fs) || !obj || obj->type == VFS_NODE_DIR || obj->nlink == 0xffffffffu) return 0;
     ramfs_node_t *n = (ramfs_node_t *)kcalloc(1, sizeof(*n));
     if (!n) return 0;
-    strncpy(n->name, name ? name : "", sizeof(n->name) - 1u);
+    strlcpy(n->name, name ? name : "", sizeof(n->name));
     n->obj = obj;
     ++obj->nlink;
     ++fs->node_count;

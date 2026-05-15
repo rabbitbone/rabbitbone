@@ -62,7 +62,7 @@ syscall_result_t rabbitbone_sys_seek(u64 handle, u64 off64, u64 whence) {
     usize h = (usize)handle;
     i64 off = (i64)off64;
     if (!valid_handle(handles, h) || whence > RABBITBONE_SEEK_END || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
     u64 ff = spin_lock_irqsave(&f->lock);
     vfs_stat_t st;
@@ -81,12 +81,15 @@ syscall_result_t rabbitbone_sys_seek(u64 handle, u64 off64, u64 whence) {
     i64 next = 0;
     if (__builtin_add_overflow(base, off, &next) || next < 0) {
         spin_unlock_irqrestore(&f->lock, ff);
+        file_put(f);
         return err(VFS_ERR_INVAL);
     }
     f->offset = (u64)next;
     sync_handle_from_file(&handles[h], f);
+    i64 result = (i64)handles[h].offset;
     spin_unlock_irqrestore(&f->lock, ff);
-    return ok((i64)handles[h].offset);
+    file_put(f);
+    return ok(result);
 }
 
 syscall_result_t rabbitbone_sys_stat(u64 path_ptr, u64 stat_out) {
@@ -219,11 +222,11 @@ syscall_result_t rabbitbone_sys_ftruncate(u64 handle, u64 size) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS || size > SYSCALL_MAX_FILE_SIZE) return err(VFS_ERR_INVAL);
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
-    if (!open_flags_can_write(f->open_flags)) return err(VFS_ERR_PERM);
+    if (!open_flags_can_write(f->open_flags)) { file_put(f); return err(VFS_ERR_PERM); }
     u64 ff = spin_lock_irqsave(&f->lock);
-    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_ISDIR); }
+    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); file_put(f); return err(VFS_ERR_ISDIR); }
     vfs_status_t vs = vfs_truncate_ref(&f->ref, size);
     if (vs == VFS_OK) {
         vfs_stat_t st;
@@ -241,6 +244,7 @@ syscall_result_t rabbitbone_sys_ftruncate(u64 handle, u64 size) {
         sync_handle_from_file(&handles[h], f);
     }
     spin_unlock_irqrestore(&f->lock, ff);
+    file_put(f);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
@@ -248,11 +252,11 @@ syscall_result_t rabbitbone_sys_fpreallocate(u64 handle, u64 size) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS || size > SYSCALL_MAX_FILE_SIZE) return err(VFS_ERR_INVAL);
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
-    if (!open_flags_can_write(f->open_flags)) return err(VFS_ERR_PERM);
+    if (!open_flags_can_write(f->open_flags)) { file_put(f); return err(VFS_ERR_PERM); }
     u64 ff = spin_lock_irqsave(&f->lock);
-    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_ISDIR); }
+    if (f->type == VFS_NODE_DIR) { spin_unlock_irqrestore(&f->lock, ff); file_put(f); return err(VFS_ERR_ISDIR); }
     vfs_status_t vs = vfs_preallocate_ref(&f->ref, size);
     if (vs == VFS_OK) {
         vfs_stat_t st;
@@ -270,6 +274,7 @@ syscall_result_t rabbitbone_sys_fpreallocate(u64 handle, u64 size) {
         sync_handle_from_file(&handles[h], f);
     }
     spin_unlock_irqrestore(&f->lock, ff);
+    file_put(f);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
@@ -326,11 +331,12 @@ static syscall_result_t sys_fsync_common(u64 handle, bool data_only) {
     sys_handle_t *handles = active_handles();
     usize h = (usize)handle;
     if (!valid_handle(handles, h) || handles[h].kind != SYS_HANDLE_VFS) return err(VFS_ERR_INVAL);
-    sys_file_t *f = handle_file(&handles[h]);
+    sys_file_t *f = handle_file_acquire(&handles[h]);
     if (!f) return err(VFS_ERR_NOENT);
     u64 ff = spin_lock_irqsave(&f->lock);
     vfs_status_t vs = vfs_sync_ref(&f->ref, data_only);
     spin_unlock_irqrestore(&f->lock, ff);
+    file_put(f);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
 
@@ -360,8 +366,8 @@ syscall_result_t rabbitbone_sys_statvfs(u64 path_ptr, u64 out_ptr) {
     out.fs_id = st.fs_id;
     out.flags = st.flags;
     out.max_name_len = st.max_name_len;
-    strncpy(out.mount_path, st.mount_path, sizeof(out.mount_path) - 1u);
-    strncpy(out.fs_name, st.fs_name, sizeof(out.fs_name) - 1u);
+    strlcpy(out.mount_path, st.mount_path, sizeof(out.mount_path));
+    strlcpy(out.fs_name, st.fs_name, sizeof(out.fs_name));
     return copy_out_buf(out_ptr, &out, sizeof(out)) ? ok(0) : err(VFS_ERR_INVAL);
 }
 

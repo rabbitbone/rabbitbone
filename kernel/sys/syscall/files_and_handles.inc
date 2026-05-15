@@ -1,13 +1,14 @@
-static bool file_retain(u32 id) {
+static sys_file_t *file_acquire(u32 id) {
+    if (!id) return 0;
     u64 flags = spin_lock_irqsave(&file_table_lock);
     sys_file_t *f = file_by_id(id);
     if (!f || f->refs == 0xffffffffu) {
         spin_unlock_irqrestore(&file_table_lock, flags);
-        return false;
+        return 0;
     }
     ++f->refs;
     spin_unlock_irqrestore(&file_table_lock, flags);
-    return true;
+    return f;
 }
 
 static void file_release(u32 id) {
@@ -30,6 +31,15 @@ static void file_release(u32 id) {
     }
     spin_unlock_irqrestore(&file_table_lock, flags);
     if (release_ref) vfs_release_ref(&ref_to_release);
+}
+
+static bool file_retain(u32 id) {
+    return file_acquire(id) != 0;
+}
+
+static void file_put(sys_file_t *f) {
+    if (!f) return;
+    file_release(f->id);
 }
 
 static bool file_id_in_use_locked(u32 id) {
@@ -104,7 +114,7 @@ static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32
             files[i].used = true;
             files[i].id = id;
             files[i].refs = 1u;
-            strncpy(files[i].path, path, sizeof(files[i].path) - 1u);
+            strlcpy(files[i].path, path, sizeof(files[i].path));
             files[i].offset = (open_flags & RABBITBONE_O_APPEND) ? st->size : 0;
             files[i].open_flags = open_flags;
             files[i].type = st->type;
@@ -129,12 +139,12 @@ static void sync_handle_from_file(sys_handle_t *h, const sys_file_t *f) {
     h->inode = f->inode;
     h->fs_id = f->fs_id;
     h->offset = f->offset;
-    strncpy(h->path, f->path, sizeof(h->path) - 1u);
+    strlcpy(h->path, f->path, sizeof(h->path));
 }
 
 static void refresh_handle_stat(sys_handle_t *h) {
     if (!h || !h->used || h->kind != SYS_HANDLE_VFS) return;
-    sys_file_t *f = handle_file(h);
+    sys_file_t *f = handle_file_acquire(h);
     if (!f) return;
     vfs_stat_t st;
     if (vfs_stat_ref(&f->ref, &st) == VFS_OK) {
@@ -148,6 +158,7 @@ static void refresh_handle_stat(sys_handle_t *h) {
         sync_handle_from_file(h, f);
         spin_unlock_irqrestore(&f->lock, flags);
     }
+    file_put(f);
 }
 
 static i64 alloc_handle(sys_handle_t *handles, const char *path, const vfs_stat_t *st, u32 open_flags) {

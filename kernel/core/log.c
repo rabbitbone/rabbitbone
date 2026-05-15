@@ -67,7 +67,7 @@ void log_enable_heap_ring(void) {
     for (u32 i = 0; i < copy_count; ++i) {
         const char *src = ring_line((old_start + i) % ring_lines);
         char *dst = new_ring + (usize)i * LOG_HEAP_LINE_LEN;
-        strncpy(dst, src, LOG_HEAP_LINE_LEN - 1u);
+        strlcpy(dst, src, LOG_HEAP_LINE_LEN);
         dst[LOG_HEAP_LINE_LEN - 1u] = 0;
     }
 
@@ -91,7 +91,7 @@ void log_write(log_level_t level, const char *component, const char *fmt, ...) {
     ksnprintf(line, sizeof(line), "[%s] %s: %s\n", log_level_name(level), component ? component : "kernel", msg);
     u64 flags = spin_lock_irqsave(&log_lock);
     char *dst = ring_line(write_index);
-    strncpy(dst, line, ring_line_len - 1u);
+    strlcpy(dst, line, ring_line_len);
     dst[ring_line_len - 1u] = 0;
     write_index = (write_index + 1u) % ring_lines;
     if (total_lines < ring_lines) ++total_lines;

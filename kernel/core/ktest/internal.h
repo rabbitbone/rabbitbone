@@ -121,7 +121,7 @@ static bool ktest_cleanup_collect_cb(const vfs_dirent_t *e, void *ctx) {
         b->overflow = true;
         return false;
     }
-    strncpy(b->names[b->count], e->name, VFS_NAME_MAX - 1u);
+    strlcpy(b->names[b->count], e->name, VFS_NAME_MAX);
     b->names[b->count][VFS_NAME_MAX - 1u] = 0;
     b->types[b->count] = e->type;
     ++b->count;
