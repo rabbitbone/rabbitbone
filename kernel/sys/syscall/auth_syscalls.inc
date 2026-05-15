@@ -6,6 +6,11 @@ typedef struct sys_user_record {
     bool admin;
 } sys_user_record_t;
 
+/*
+ * Live-only demo credentials. This table is intentionally static until
+ * Rabbitbone grows persistent account storage outside of the kernel image.
+ * Treat it as a bootstrap/userland exercise, not as a production auth boundary.
+ */
 static const sys_user_record_t auth_users[] = {
     { "root", "root", RABBITBONE_UID_ROOT, RABBITBONE_GID_ROOT, true },
     { "rabbitbone", "rabbitbone", RABBITBONE_UID_RABBITBONE, RABBITBONE_GID_USERS, true },

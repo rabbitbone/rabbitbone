@@ -135,6 +135,23 @@ static void mount_release(vfs_mount_t *mnt) {
     spin_unlock_irqrestore(&mounts_lock, flags);
 }
 
+static bool mount_release_by_fs_id(u32 fs_id, u32 generation) {
+    if (fs_id == 0 || generation == 0) return false;
+    u64 flags = spin_lock_irqsave(&mounts_lock);
+    bool released = false;
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
+        if (mounts[i].ops && mounts[i].fs_id == fs_id && mounts[i].generation == generation) {
+            if (mounts[i].active_refs) {
+                --mounts[i].active_refs;
+                released = true;
+            }
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&mounts_lock, flags);
+    return released;
+}
+
 static vfs_mount_t *route_mount(vfs_route_t *route) {
     if (!route || !route->found) return 0;
     return mount_acquire_index(route->mount_index, route->mount_generation);

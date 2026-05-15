@@ -104,6 +104,24 @@ static bool process_vma_is_shared_anon(const user_vma_t *v) {
            (v->flags & RABBITBONE_MAP_SHARED) != 0 && v->file_id != USER_SHARED_ANON_INVALID;
 }
 
+static bool process_vma_is_file_backed(const user_vma_t *v) {
+    return v && v->kind == USER_VMA_MMAP && (v->flags & RABBITBONE_MAP_ANON) == 0 &&
+           v->file_ref.fs_id != 0 && v->file_ref.mount_generation != 0 && v->file_ref.inode != 0;
+}
+
+static bool process_retain_vma_backing(const user_vma_t *v) {
+    if (!v) return false;
+    if (process_vma_is_shared_anon(v)) return shared_anon_retain(v->file_id);
+    if (process_vma_is_file_backed(v)) return vfs_retain_ref(&v->file_ref);
+    return true;
+}
+
+static void process_release_vma_backing(const user_vma_t *v) {
+    if (!v) return;
+    if (process_vma_is_shared_anon(v)) shared_anon_release(v->file_id);
+    else if (process_vma_is_file_backed(v)) vfs_release_ref(&v->file_ref);
+}
+
 static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt) {
     if (!p) return false;
     const user_vma_t *v = process_find_vma_for_page_const(p, page_virt);
@@ -164,11 +182,9 @@ static bool shared_anon_materialize(u32 id, u32 page_index, uptr *phys_out) {
     return true;
 }
 
-static void process_release_shared_vmas(active_process_t *p) {
+static void process_release_vma_backings(active_process_t *p) {
     if (!p) return;
-    for (usize i = 0; i < p->vma_count; ++i) {
-        if (process_vma_is_shared_anon(&p->vmas[i])) shared_anon_release(p->vmas[i].file_id);
-    }
+    for (usize i = 0; i < p->vma_count; ++i) process_release_vma_backing(&p->vmas[i]);
 }
 
 static void release_mappings(active_process_t *p) {
@@ -190,7 +206,7 @@ static void release_mappings(active_process_t *p) {
      * memset or explicitly reinitialize result.mapped_pages before loading a
      * new image.
      */
-    process_release_shared_vmas(p);
+    process_release_vma_backings(p);
     p->mapping_count = 0;
     p->vma_count = 0;
     p->mmap_cursor = USER_MMAP_BASE;
@@ -270,7 +286,10 @@ static process_status_t process_add_vma_backed(active_process_t *p, uptr start, 
     v.file_offset = file_offset;
     v.file_size = file_size;
     v.file_id = file_backed || shared_anon ? file_id : USER_MMAP_FILE_BACKING_NONE;
-    if (file_backed) v.file_ref = *file_ref;
+    if (file_backed) {
+        v.file_ref = *file_ref;
+        if (!vfs_retain_ref(&v.file_ref)) return PROC_ERR_NOMEM;
+    }
     usize pos = 0;
     while (pos < p->vma_count && p->vmas[pos].start < start) ++pos;
     for (usize i = p->vma_count; i > pos; --i) p->vmas[i] = p->vmas[i - 1u];
@@ -285,7 +304,7 @@ static process_status_t process_add_vma(active_process_t *p, uptr start, uptr en
 
 static void process_remove_vma_at(active_process_t *p, usize idx) {
     if (!p || idx >= p->vma_count) return;
-    if (process_vma_is_shared_anon(&p->vmas[idx])) shared_anon_release(p->vmas[idx].file_id);
+    process_release_vma_backing(&p->vmas[idx]);
     for (usize i = idx + 1u; i < p->vma_count; ++i) p->vmas[i - 1u] = p->vmas[i];
     --p->vma_count;
 }
@@ -315,16 +334,11 @@ static process_status_t process_split_vma_at(active_process_t *p, usize idx, upt
         u64 delta = (u64)(cut - old_start);
         if (__builtin_add_overflow(right.file_offset, delta, &right.file_offset)) return PROC_ERR_RANGE;
     }
-    bool retained_shared = false;
-    if (process_vma_is_shared_anon(&right)) {
-        if (!shared_anon_retain(right.file_id)) return PROC_ERR_RANGE;
-        retained_shared = true;
-    }
+    if (!process_retain_vma_backing(&right)) return PROC_ERR_RANGE;
     v->end = cut;
     for (usize i = p->vma_count; i > idx + 1u; --i) p->vmas[i] = p->vmas[i - 1u];
     p->vmas[idx + 1u] = right;
     ++p->vma_count;
-    (void)retained_shared;
     return PROC_OK;
 }
 
@@ -553,6 +567,7 @@ static uptr process_find_free_mmap_range(active_process_t *p, usize size) {
 static process_status_t process_status_from_vfs(vfs_status_t vs) {
     if (vs == VFS_OK) return PROC_OK;
     if (vs == VFS_ERR_NOMEM || vs == VFS_ERR_NOSPC) return PROC_ERR_NOMEM;
+    if (vs == VFS_ERR_BUSY) return PROC_ERR_BUSY;
     if (vs == VFS_ERR_PERM) return PROC_ERR_FAULT;
     if (vs == VFS_ERR_INVAL) return PROC_ERR_INVAL;
     if (vs == VFS_ERR_NOENT || vs == VFS_ERR_ISDIR || vs == VFS_ERR_NOTDIR) return PROC_ERR_RANGE;

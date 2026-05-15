@@ -14,6 +14,7 @@ typedef struct devfs_entry {
     const char *name;
     dev_kind_t kind;
     u32 inode;
+    u32 mode;
 } devfs_entry_t;
 
 typedef struct devfs_state {
@@ -22,12 +23,12 @@ typedef struct devfs_state {
 } devfs_state_t;
 
 static const devfs_entry_t entries[] = {
-    { "null", DEV_NULL, 1 },
-    { "zero", DEV_ZERO, 2 },
-    { "prng", DEV_PRNG, 3 },
-    { "urandom_insecure", DEV_PRNG, 4 },
-    { "kmsg", DEV_KMSG, 5 },
-    { "tty", DEV_TTY, 6 },
+    { "null", DEV_NULL, 1, 0666u },
+    { "zero", DEV_ZERO, 2, 0444u },
+    { "prng", DEV_PRNG, 3, 0444u },
+    { "urandom_insecure", DEV_PRNG, 4, 0444u },
+    { "kmsg", DEV_KMSG, 5, 0600u },
+    { "tty", DEV_TTY, 6, 0666u },
 };
 
 static devfs_entry_t const *find_entry(const char *path) {
@@ -62,7 +63,7 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
     if (!e) return VFS_ERR_NOENT;
     memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_DEV;
-    out->mode = 0666; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
+    out->mode = e->mode; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
     out->inode = e->inode;
     out->fs_id = mnt->fs_id;
     return VFS_OK;
@@ -179,7 +180,7 @@ vfs_status_t devfs_mount(void) {
     if (!state) return VFS_ERR_NOMEM;
     spinlock_init(&state->prng_lock);
     state->prng_state = 0xA6E5A6E5D00D1234ull ^ pit_ticks();
-    KLOG(LOG_WARN, "devfs", "/dev/prng and /dev/urandom_insecure are deterministic non-cryptographic PRNG devices");
+    KLOG(LOG_WARN, "devfs", "/dev/prng and /dev/urandom_insecure are deterministic non-cryptographic demo PRNG devices; do not use for secrets");
     vfs_status_t st = vfs_mount("/dev", "devfs", &ops, state, true);
     if (st != VFS_OK) kfree(state);
     return st;

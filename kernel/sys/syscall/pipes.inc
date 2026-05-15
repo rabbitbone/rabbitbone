@@ -54,9 +54,22 @@ static pipe_write_status_t pipe_write_bytes(sys_pipe_t *p, const u8 *src, usize 
     return PIPE_WRITE_OK;
 }
 
-static usize pipe_read_bytes(sys_pipe_t *p, u8 *dst, usize len) {
-    if (!p || !p->data || !dst || !len) return 0;
+typedef enum pipe_read_status {
+    PIPE_READ_OK = 0,
+    PIPE_READ_EMPTY = 1,
+    PIPE_READ_EOF = 2,
+    PIPE_READ_INVAL = 3,
+} pipe_read_status_t;
+
+static pipe_read_status_t pipe_read_bytes(sys_pipe_t *p, u8 *dst, usize len, usize *read_out) {
+    if (read_out) *read_out = 0;
+    if (!p || !p->data || !dst || !len) return PIPE_READ_INVAL;
     u64 flags = spin_lock_irqsave(&p->lock);
+    if (p->len == 0) {
+        pipe_read_status_t st = p->write_refs == 0 ? PIPE_READ_EOF : PIPE_READ_EMPTY;
+        spin_unlock_irqrestore(&p->lock, flags);
+        return st;
+    }
     if (len > p->len) len = p->len;
     for (usize i = 0; i < len; ++i) {
         dst[i] = p->data[p->read_pos];
@@ -64,8 +77,9 @@ static usize pipe_read_bytes(sys_pipe_t *p, u8 *dst, usize len) {
         --p->len;
     }
     p->total_read += len;
+    if (read_out) *read_out = len;
     spin_unlock_irqrestore(&p->lock, flags);
-    return len;
+    return PIPE_READ_OK;
 }
 
 static void pipe_snapshot(sys_pipe_t *p, rabbitbone_pipeinfo_t *info) {

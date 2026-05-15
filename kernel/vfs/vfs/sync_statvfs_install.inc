@@ -138,6 +138,7 @@ const char *vfs_status_name(vfs_status_t st) {
         case VFS_ERR_NOSPC: return "no-space";
         case VFS_ERR_NOTEMPTY: return "not-empty";
         case VFS_ERR_UNSUPPORTED: return "unsupported";
+        case VFS_ERR_BUSY: return "busy";
         default: return "unknown";
     }
 }

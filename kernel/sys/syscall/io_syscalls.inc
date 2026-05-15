@@ -11,7 +11,7 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
             if ((mode & RABBITBONE_TTY_MODE_ECHO) && c >= 32) console_putc(c);
             if ((mode & RABBITBONE_TTY_MODE_ECHO) && c == '\n') console_putc('\n');
             u64 ptr = 0;
-            if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, &c, 1u)) return err(VFS_ERR_INVAL);
+            if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, &c, 1u)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             ++total;
             if ((mode & RABBITBONE_TTY_MODE_CANON) && c == '\n') break;
         }
@@ -24,11 +24,15 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
         while (total < len) {
             usize n = len - total;
             if (n > sizeof(chunk)) n = sizeof(chunk);
-            usize got = pipe_read_bytes(p, chunk, n);
+            usize got = 0;
+            pipe_read_status_t pst = pipe_read_bytes(p, chunk, n, &got);
+            if (pst == PIPE_READ_EMPTY) return total ? ok((i64)total) : err(VFS_ERR_BUSY);
+            if (pst == PIPE_READ_EOF) break;
+            if (pst == PIPE_READ_INVAL) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             if (!got) break;
             u64 ptr = 0;
-            if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got)) return err(VFS_ERR_INVAL);
-            if (__builtin_add_overflow(handles[h].offset, (u64)got, &handles[h].offset)) return err(VFS_ERR_INVAL);
+            if (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
+            if (__builtin_add_overflow(handles[h].offset, (u64)got, &handles[h].offset)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             total += got;
             if (got < n) break;
         }
@@ -43,14 +47,21 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
         usize n = len - total;
         if (n > sizeof(chunk)) n = sizeof(chunk);
         usize got = 0;
+        u64 start_offset = 0;
         u64 ff = spin_lock_irqsave(&f->lock);
-        vfs_status_t vs = vfs_read_ref(&f->ref, f->offset, chunk, n, &got);
-        if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return err(vs); }
-        u64 ptr = 0;
-        if (got && (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got))) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_INVAL); }
+        start_offset = f->offset;
+        vfs_status_t vs = vfs_read_ref(&f->ref, start_offset, chunk, n, &got);
+        if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return total ? ok((i64)total) : err(vs); }
         u64 new_offset = 0;
-        if (__builtin_add_overflow(f->offset, (u64)got, &new_offset)) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_INVAL); }
-        f->offset = new_offset;
+        bool offset_ok = !__builtin_add_overflow(start_offset, (u64)got, &new_offset);
+        spin_unlock_irqrestore(&f->lock, ff);
+        if (!offset_ok) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
+        u64 ptr = 0;
+        if (got && (!add_user_ptr(user_buf, total, &ptr) || !copy_out_buf(ptr, chunk, got))) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
+        ff = spin_lock_irqsave(&f->lock);
+        if (f->offset == start_offset) f->offset = new_offset;
+        else if (!__builtin_add_overflow(f->offset, (u64)got, &new_offset)) f->offset = new_offset;
+        else { spin_unlock_irqrestore(&f->lock, ff); return total ? ok((i64)total) : err(VFS_ERR_INVAL); }
         sync_handle_from_file(&handles[h], f);
         spin_unlock_irqrestore(&f->lock, ff);
         total += got;
@@ -69,7 +80,7 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
             usize n = len - total;
             if (n > sizeof(chunk)) n = sizeof(chunk);
             u64 ptr = 0;
-            if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
+            if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             console_write_n((const char *)chunk, n);
             total += n;
         }
@@ -83,13 +94,13 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
             usize n = len - total;
             if (n > sizeof(chunk)) n = sizeof(chunk);
             u64 ptr = 0;
-            if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
+            if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             usize wrote = 0;
             pipe_write_status_t pst = pipe_write_bytes(p, chunk, n, &wrote);
             if (pst == PIPE_WRITE_CLOSED) return total ? ok((i64)total) : err(VFS_ERR_IO);
-            if (pst == PIPE_WRITE_INVAL) return err(VFS_ERR_INVAL);
+            if (pst == PIPE_WRITE_INVAL) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             if (!wrote) break;
-            if (__builtin_add_overflow(handles[h].offset, (u64)wrote, &handles[h].offset)) return err(VFS_ERR_INVAL);
+            if (__builtin_add_overflow(handles[h].offset, (u64)wrote, &handles[h].offset)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
             total += wrote;
             if (wrote < n || pst == PIPE_WRITE_FULL) break;
         }
@@ -104,7 +115,7 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
         usize n = len - total;
         if (n > sizeof(chunk)) n = sizeof(chunk);
         u64 ptr = 0;
-        if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return err(VFS_ERR_INVAL);
+        if (!add_user_ptr(user_buf, total, &ptr) || !copy_in_buf(chunk, ptr, n)) return total ? ok((i64)total) : err(VFS_ERR_INVAL);
         usize wrote = 0;
         u64 ff = spin_lock_irqsave(&f->lock);
         if (f->open_flags & RABBITBONE_O_APPEND) {
@@ -112,11 +123,11 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
             if (vfs_stat_ref(&f->ref, &ast) == VFS_OK) f->size = ast.size;
             f->offset = f->size;
         }
-        if (f->offset > SYSCALL_MAX_FILE_SIZE || (u64)n > SYSCALL_MAX_FILE_SIZE - f->offset) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_INVAL); }
+        if (f->offset > SYSCALL_MAX_FILE_SIZE || (u64)n > SYSCALL_MAX_FILE_SIZE - f->offset) { spin_unlock_irqrestore(&f->lock, ff); return total ? ok((i64)total) : err(VFS_ERR_INVAL); }
         vfs_status_t vs = vfs_write_ref(&f->ref, f->offset, chunk, n, &wrote);
-        if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return err(vs); }
+        if (vs != VFS_OK) { spin_unlock_irqrestore(&f->lock, ff); return total ? ok((i64)total) : err(vs); }
         u64 new_offset = 0;
-        if (__builtin_add_overflow(f->offset, (u64)wrote, &new_offset) || new_offset > SYSCALL_MAX_FILE_SIZE) { spin_unlock_irqrestore(&f->lock, ff); return err(VFS_ERR_INVAL); }
+        if (__builtin_add_overflow(f->offset, (u64)wrote, &new_offset) || new_offset > SYSCALL_MAX_FILE_SIZE) { spin_unlock_irqrestore(&f->lock, ff); return total ? ok((i64)total) : err(VFS_ERR_INVAL); }
         f->offset = new_offset;
         if (f->offset > f->size) f->size = f->offset;
         sync_handle_from_file(&handles[h], f);
@@ -140,7 +151,7 @@ syscall_result_t rabbitbone_sys_write_console(u64 ptr, u64 len64) {
         usize step = n - done;
         if (step > sizeof(chunk)) step = sizeof(chunk);
         u64 cptr = 0;
-        if (!add_user_ptr(ptr, done, &cptr) || !copy_in_buf(chunk, cptr, step)) return err(VFS_ERR_INVAL);
+        if (!add_user_ptr(ptr, done, &cptr) || !copy_in_buf(chunk, cptr, step)) return done ? ok((i64)done) : err(VFS_ERR_INVAL);
         console_write_n(chunk, step);
         done += step;
     }

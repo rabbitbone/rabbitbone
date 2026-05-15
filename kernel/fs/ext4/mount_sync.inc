@@ -1,3 +1,55 @@
+static ext4_status_t ext4_block_bitmap_is_free(ext4_mount_t *mnt, u64 block, bool *free_out) {
+    if (!mnt || !free_out || block >= mnt->blocks_count || mnt->blocks_per_group == 0) return EXT4_ERR_RANGE;
+    u32 group = (u32)(block / mnt->blocks_per_group);
+    u32 bit = (u32)(block % mnt->blocks_per_group);
+    if (group >= mnt->group_count) return EXT4_ERR_RANGE;
+    ext4_group_desc_disk_t gd;
+    ext4_status_t st = read_group_desc(mnt, group, &gd);
+    if (st != EXT4_OK) return st;
+    u8 *bm = ext4_tmp_block(mnt);
+    if (!bm) return EXT4_ERR_NO_MEMORY;
+    st = read_block(mnt, group_block_bitmap(&gd), bm);
+    if (st == EXT4_OK) *free_out = !bitmap_get(bm, bit);
+    ext4_tmp_block_free(bm);
+    return st;
+}
+
+static ext4_status_t ext4_journal_area_is_free(ext4_mount_t *mnt, u64 first, u32 count, bool *free_out) {
+    if (!mnt || !free_out || count == 0) return EXT4_ERR_RANGE;
+    *free_out = false;
+    for (u32 i = 0; i < count; ++i) {
+        u64 block = first + i;
+        if (block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+        bool one_free = false;
+        ext4_status_t st = ext4_block_bitmap_is_free(mnt, block, &one_free);
+        if (st != EXT4_OK) return st;
+        if (!one_free) return EXT4_OK;
+    }
+    *free_out = true;
+    return EXT4_OK;
+}
+
+static ext4_status_t ext4_journal_area_has_rabbitbone_marker(ext4_mount_t *mnt, u64 first, bool *owned_out) {
+    if (!mnt || !owned_out || first + 1u >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    *owned_out = false;
+    u8 *block = ext4_tmp_block(mnt);
+    if (!block) return EXT4_ERR_NO_MEMORY;
+    ext4_status_t st = read_block(mnt, first, block);
+    if (st == EXT4_OK) {
+        rabbitbone_ext4_journal_record_t jr;
+        memcpy(&jr, block, sizeof(jr));
+        u64 old_first = mnt->journal_first_block;
+        u32 old_blocks = mnt->journal_blocks;
+        mnt->journal_first_block = first;
+        mnt->journal_blocks = 2u;
+        *owned_out = journal_record_header_valid(mnt, &jr);
+        mnt->journal_first_block = old_first;
+        mnt->journal_blocks = old_blocks;
+    }
+    ext4_tmp_block_free(block);
+    return st;
+}
+
 static u64 default_partition_sectors(block_device_t *dev, u64 partition_lba) {
     if (!dev || dev->sector_count == 0) return 0;
     if (partition_lba >= dev->sector_count) return 0;
@@ -28,9 +80,12 @@ ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 par
         if (!checked_mul_u64(partition_sectors, 512u, &part_bytes)) return EXT4_ERR_RANGE;
         if (fs_bytes > part_bytes) return EXT4_ERR_RANGE;
     }
+    u32 compat = le32(sb.s_feature_compat);
     u32 incompat = le32(sb.s_feature_incompat);
-    u32 supported = EXT4_FEATURE_INCOMPAT_FILETYPE | EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT;
-    if ((incompat & ~supported) != 0) return EXT4_ERR_UNSUPPORTED;
+    u32 ro_compat = le32(sb.s_feature_ro_compat);
+    if ((compat & ~EXT4_FEATURE_COMPAT_SUPPORTED) != 0) return EXT4_ERR_UNSUPPORTED;
+    if ((incompat & ~EXT4_FEATURE_INCOMPAT_SUPPORTED) != 0) return EXT4_ERR_UNSUPPORTED;
+    if ((ro_compat & ~EXT4_FEATURE_RO_COMPAT_SUPPORTED) != 0) return EXT4_ERR_UNSUPPORTED;
     out->dev = dev;
     out->partition_lba = partition_lba;
     out->partition_sectors = partition_sectors;
@@ -60,20 +115,33 @@ ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 par
     write_cache_discard_clean_mount(out);
 
     if (out->blocks_count > first_data + 8u) {
-        out->journal_blocks = 2u;
-        out->journal_first_block = out->blocks_count - out->journal_blocks;
-        out->journal_ready = false;
-        st = ext4_recover(out, 0);
+        u64 journal_first = out->blocks_count - 2u;
+        bool journal_area_free = false;
+        st = ext4_journal_area_is_free(out, journal_first, 2u, &journal_area_free);
         if (st != EXT4_OK) return st;
-        for (u32 i = 0; i < out->journal_blocks; ++i) {
-            st = reserve_block_if_free(out, out->journal_first_block + i);
+        bool journal_owned = false;
+        if (!journal_area_free) {
+            st = ext4_journal_area_has_rabbitbone_marker(out, journal_first, &journal_owned);
             if (st != EXT4_OK) return st;
         }
-        out->journal_ready = true;
-        st = ext4_recount_free_counters(out);
-        if (st != EXT4_OK) return st;
-        st = journal_clear(out);
-        if (st != EXT4_OK) return st;
+        if (journal_area_free || journal_owned) {
+            out->journal_blocks = 2u;
+            out->journal_first_block = journal_first;
+            out->journal_ready = false;
+            if (journal_area_free) {
+                for (u32 i = 0; i < out->journal_blocks; ++i) {
+                    st = reserve_block_if_free(out, out->journal_first_block + i);
+                    if (st != EXT4_OK) return st;
+                }
+            }
+            st = ext4_recover(out, 0);
+            if (st != EXT4_OK) return st;
+            out->journal_ready = true;
+            st = ext4_recount_free_counters(out);
+            if (st != EXT4_OK) return st;
+            st = journal_clear(out);
+            if (st != EXT4_OK) return st;
+        }
     }
     if (out->sb.s_checksum == 0 || out->sb.s_checksum != super_checksum(&out->sb)) {
         st = write_super(out);

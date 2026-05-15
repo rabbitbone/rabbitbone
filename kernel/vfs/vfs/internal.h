@@ -15,3 +15,16 @@ static u32 next_fs_id;
 static u32 next_mount_generation;
 static bool ready;
 
+#define VFS_MAX_PINNED_REFS 512u
+
+typedef struct vfs_ref_pin {
+    bool used;
+    u32 fs_id;
+    u32 mount_generation;
+    u32 inode;
+    u32 refs;
+} vfs_ref_pin_t;
+
+static vfs_ref_pin_t ref_pins[VFS_MAX_PINNED_REFS];
+static spinlock_t ref_pins_lock;
+

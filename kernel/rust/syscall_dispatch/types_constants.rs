@@ -120,6 +120,7 @@ pub enum DecodeError {
 
 const VFS_ERR_INVAL: i64 = -3;
 const VFS_ERR_UNSUPPORTED: i64 = -11;
+const VFS_ERR_BUSY: i64 = -12;
 const MAX_CONSOLE_WRITE: u64 = 65_536;
 const MAX_IO_BYTES: u64 = 1_048_576;
 const MAX_CREATE_BYTES: u64 = 65_536;

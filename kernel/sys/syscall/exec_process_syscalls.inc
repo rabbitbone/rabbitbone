@@ -7,7 +7,7 @@ static i64 process_status_to_vfs_error(process_status_t st) {
         case PROC_ERR_IO: return VFS_ERR_IO;
         case PROC_ERR_FORMAT: return VFS_ERR_IO;
         case PROC_ERR_FAULT: return VFS_ERR_IO;
-        case PROC_ERR_BUSY: return VFS_ERR_NOSPC;
+        case PROC_ERR_BUSY: return VFS_ERR_BUSY;
         default: return VFS_ERR_IO;
     }
 }
@@ -44,6 +44,7 @@ static bool copy_env_vector(u64 env_ptr, u32 envc, char storage[PROCESS_ENV_MAX]
 syscall_result_t rabbitbone_sys_spawn(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     const char *argv[] = { path };
     u32 pid = 0;
     process_status_t st;
@@ -60,6 +61,7 @@ syscall_result_t rabbitbone_sys_spawnv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     char storage[PROCESS_ARG_MAX][SYSCALL_PATH_MAX];
     const char *argv[PROCESS_ARG_MAX];
     memset(storage, 0, sizeof(storage));
@@ -80,6 +82,7 @@ syscall_result_t rabbitbone_sys_exec(u64 path_ptr) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     const char *argv[] = { path };
     process_status_t st = process_request_exec(path, 1, argv);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
@@ -90,6 +93,7 @@ syscall_result_t rabbitbone_sys_execv(u64 path_ptr, u64 argc64, u64 argv_ptr) {
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     char storage[PROCESS_ARG_MAX][SYSCALL_PATH_MAX];
     const char *argv[PROCESS_ARG_MAX];
     memset(storage, 0, sizeof(storage));
@@ -104,6 +108,7 @@ syscall_result_t rabbitbone_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u
     if (argc64 == 0 || argc64 > PROCESS_ARG_MAX || !argv_ptr || envc64 > PROCESS_ENV_MAX || (envc64 && !envp_ptr)) return err(VFS_ERR_INVAL);
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     char argv_storage[PROCESS_ARG_MAX][SYSCALL_PATH_MAX];
     const char *argv[PROCESS_ARG_MAX];
     char env_storage[PROCESS_ENV_MAX][SYSCALL_PATH_MAX];
@@ -121,6 +126,7 @@ syscall_result_t rabbitbone_sys_execve(u64 path_ptr, u64 argc64, u64 argv_ptr, u
 syscall_result_t rabbitbone_sys_chdir(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_dir(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t vs = vfs_stat(path, &st);
     if (vs != VFS_OK) return err(vs);

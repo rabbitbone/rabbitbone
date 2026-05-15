@@ -9,6 +9,7 @@ syscall_result_t rabbitbone_sys_dup(u64 handle) {
         if (!handles[i].used) { nh = (i64)i; break; }
     }
     if (nh < 0) { handle_release_resource(&cloned); return err(VFS_ERR_NOSPC); }
+    if (!handle_table_can_add_kind(handles, (usize)nh, cloned.kind)) { handle_release_resource(&cloned); return err(VFS_ERR_NOSPC); }
     cloned.used = true;
     handles[(usize)nh] = cloned;
     return ok(nh);
@@ -29,6 +30,7 @@ syscall_result_t rabbitbone_sys_dup2(u64 src_handle, u64 target_handle, u64 flag
     sys_handle_t cloned = handles[src];
     cloned.used = true;
     cloned.flags = flags;
+    if (!handle_table_can_add_kind(handles, target, cloned.kind)) return err(VFS_ERR_NOSPC);
     if (!handle_retain_resource(&cloned)) return err(VFS_ERR_NOENT);
     if (handles[target].used) close_handle(handles, target);
     handles[target] = cloned;

@@ -2,6 +2,10 @@
 
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
+## 0.0.3.1
+
+- Bumped the kernel version and syscall ABI to `0.0.3.1` / `0x00000301`.
+- Added GitHub community health files and repository contribution templates.
 
 ## 0.0.3.0
 

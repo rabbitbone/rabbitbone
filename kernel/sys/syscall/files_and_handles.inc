@@ -12,6 +12,9 @@ static bool file_retain(u32 id) {
 
 static void file_release(u32 id) {
     if (!id) return;
+    vfs_node_ref_t ref_to_release;
+    bool release_ref = false;
+    memset(&ref_to_release, 0, sizeof(ref_to_release));
     u64 flags = spin_lock_irqsave(&file_table_lock);
     sys_file_t *f = file_by_id(id);
     if (!f) {
@@ -20,8 +23,13 @@ static void file_release(u32 id) {
     }
     if (f->refs == 0) PANIC("open-file object double close");
     --f->refs;
-    if (f->refs == 0) memset(f, 0, sizeof(*f));
+    if (f->refs == 0) {
+        ref_to_release = f->ref;
+        release_ref = true;
+        memset(f, 0, sizeof(*f));
+    }
     spin_unlock_irqrestore(&file_table_lock, flags);
+    if (release_ref) vfs_release_ref(&ref_to_release);
 }
 
 static bool file_id_in_use_locked(u32 id) {
@@ -59,16 +67,40 @@ static usize count_pipe_endpoints(const sys_handle_t *handles) {
     return count;
 }
 
+static bool handle_kind_is_pipe_endpoint(u32 kind) {
+    return kind == SYS_HANDLE_PIPE_READ || kind == SYS_HANDLE_PIPE_WRITE;
+}
+
+static bool handle_table_can_add_kind(const sys_handle_t *handles, usize target_fd, u32 kind) {
+    if (!handles || target_fd >= SYSCALL_MAX_HANDLES) return false;
+    if (kind == SYS_HANDLE_VFS) {
+        usize count = count_vfs_handles(handles);
+        if (handles[target_fd].used && handles[target_fd].kind == SYS_HANDLE_VFS && count > 0) --count;
+        return count < SYSCALL_FILE_PER_PROCESS_CAP;
+    }
+    if (handle_kind_is_pipe_endpoint(kind)) {
+        usize count = count_pipe_endpoints(handles);
+        if (handles[target_fd].used && handle_kind_is_pipe_endpoint(handles[target_fd].kind) && count > 0) --count;
+        return count < SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP;
+    }
+    return true;
+}
+
 static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32 open_flags) {
     if (!path || !st) return 0;
     vfs_node_ref_t ref;
     if (vfs_get_ref(path, &ref) != VFS_OK) return 0;
+    if (!vfs_retain_ref(&ref)) return 0;
     u64 flags = spin_lock_irqsave(&file_table_lock);
     for (usize i = 0; i < SYSCALL_FILE_CAP; ++i) {
         if (!files[i].used) {
             memset(&files[i], 0, sizeof(files[i]));
             u32 id = alloc_file_id_locked();
-            if (!id) { spin_unlock_irqrestore(&file_table_lock, flags); return 0; }
+            if (!id) {
+                spin_unlock_irqrestore(&file_table_lock, flags);
+                vfs_release_ref(&ref);
+                return 0;
+            }
             files[i].used = true;
             files[i].id = id;
             files[i].refs = 1u;
@@ -86,6 +118,7 @@ static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32
         }
     }
     spin_unlock_irqrestore(&file_table_lock, flags);
+    vfs_release_ref(&ref);
     return 0;
 }
 
@@ -228,6 +261,7 @@ static bool snapshot_valid(void *snapshot, usize snapshot_size) {
 
 static bool install_owned_handle(sys_handle_t *handles, u32 target_fd, sys_handle_t *owned) {
     if (!handles || !owned || !owned->used || target_fd >= SYSCALL_MAX_HANDLES) return false;
+    if (!handle_table_can_add_kind(handles, target_fd, owned->kind)) return false;
     if (handles[target_fd].used) close_handle(handles, target_fd);
     handles[target_fd] = *owned;
     memset(owned, 0, sizeof(*owned));
@@ -237,7 +271,7 @@ static bool install_owned_handle(sys_handle_t *handles, u32 target_fd, sys_handl
 bool syscall_snapshot_open_vfs(void *snapshot, usize snapshot_size, u32 target_fd, const char *path, u32 flags, bool create_truncate) {
     if (!snapshot_valid(snapshot, snapshot_size) || !path || !*path || target_fd >= SYSCALL_MAX_HANDLES) return false;
     if (flags & ~RABBITBONE_FD_CLOEXEC) return false;
-    if (count_vfs_handles((const sys_handle_t *)snapshot) >= SYSCALL_FILE_PER_PROCESS_CAP) return false;
+    if (!handle_table_can_add_kind((const sys_handle_t *)snapshot, target_fd, SYS_HANDLE_VFS)) return false;
     char resolved[SYSCALL_PATH_MAX];
     if (!copy_path_arg((u64)(uptr)path, resolved)) return false;
     if (create_truncate) {
@@ -266,13 +300,17 @@ bool syscall_snapshot_pipe_between(void *writer_snapshot, usize writer_size, u32
     if (!snapshot_valid(writer_snapshot, writer_size) || !snapshot_valid(reader_snapshot, reader_size)) return false;
     if (writer_fd >= SYSCALL_MAX_HANDLES || reader_fd >= SYSCALL_MAX_HANDLES) return false;
     if (writer_snapshot == reader_snapshot && writer_fd == reader_fd) return false;
-    usize writer_pipe_count = count_pipe_endpoints((const sys_handle_t *)writer_snapshot);
-    usize reader_pipe_count = count_pipe_endpoints((const sys_handle_t *)reader_snapshot);
     if (writer_snapshot == reader_snapshot) {
-        if (writer_pipe_count + 2u > SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP) return false;
+        sys_handle_t probe[SYSCALL_MAX_HANDLES];
+        memcpy(probe, writer_snapshot, sizeof(probe));
+        if (!handle_table_can_add_kind(probe, reader_fd, SYS_HANDLE_PIPE_READ)) return false;
+        memset(&probe[reader_fd], 0, sizeof(probe[reader_fd]));
+        probe[reader_fd].used = true;
+        probe[reader_fd].kind = SYS_HANDLE_PIPE_READ;
+        if (!handle_table_can_add_kind(probe, writer_fd, SYS_HANDLE_PIPE_WRITE)) return false;
     } else {
-        if (writer_pipe_count + 1u > SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP) return false;
-        if (reader_pipe_count + 1u > SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP) return false;
+        if (!handle_table_can_add_kind((const sys_handle_t *)writer_snapshot, writer_fd, SYS_HANDLE_PIPE_WRITE)) return false;
+        if (!handle_table_can_add_kind((const sys_handle_t *)reader_snapshot, reader_fd, SYS_HANDLE_PIPE_READ)) return false;
     }
     sys_pipe_t *p = alloc_pipe();
     if (!p) return false;

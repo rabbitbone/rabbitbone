@@ -248,5 +248,5 @@ bool memory_selftest(void) {
     if (!ok) return false;
     memory_stats_t after;
     memory_get_stats(&after);
-    return after.free_frames >= before.free_frames;
+    return after.free_frames == before.free_frames && after.used_bytes == before.used_bytes;
 }

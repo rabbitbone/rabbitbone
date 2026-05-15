@@ -31,6 +31,7 @@ typedef struct EFI_GUID {
 #define EFI_BUFFER_TOO_SMALL 0x8000000000000005ull
 #define EFI_NOT_FOUND 0x800000000000000Eull
 #define EFI_INVALID_PARAMETER 0x8000000000000002ull
+#define EFI_UNSUPPORTED 0x8000000000000003ull
 #define EFI_OUT_OF_RESOURCES 0x8000000000000009ull
 #define EFI_ERROR(x) (((x) & 0x8000000000000000ull) != 0)
 
@@ -309,12 +310,27 @@ static void put_status(const CHAR16 *prefix, EFI_STATUS st) {
 }
 
 
-static void enable_nxe(void) {
+static bool cpu_has_nxe(void) {
+    UINT32 eax = 0x80000000u;
+    UINT32 ebx = 0;
+    UINT32 ecx = 0;
+    UINT32 edx = 0;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    if (eax < 0x80000001u) return false;
+    eax = 0x80000001u;
+    ebx = ecx = edx = 0;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    return (edx & (1u << 20)) != 0;
+}
+
+static EFI_STATUS enable_nxe_checked(void) {
+    if (!cpu_has_nxe()) return EFI_UNSUPPORTED;
     UINT32 lo = 0;
     UINT32 hi = 0;
     __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xc0000080u));
     lo |= (1u << 11);
     __asm__ volatile("wrmsr" :: "c"(0xc0000080u), "a"(lo), "d"(hi) : "memory");
+    return EFI_SUCCESS;
 }
 
 static UINTN pages_for(UINT64 bytes) {
@@ -479,12 +495,12 @@ static void e820_sort_and_coalesce(rabbitbone_e820_entry_t *e820, UINTN *count) 
     *count = out;
 }
 
-static void fill_memory_map_bootinfo(rabbitbone_bootinfo_t *bootinfo, rabbitbone_e820_entry_t *e820,
+static bool fill_memory_map_bootinfo(rabbitbone_bootinfo_t *bootinfo, rabbitbone_e820_entry_t *e820,
                                      UINT8 *memory_map_storage, UINTN memory_map_size,
                                      UINTN descriptor_size) {
     if (!bootinfo || !e820 || !memory_map_storage || descriptor_size < sizeof(EFI_MEMORY_DESCRIPTOR)) {
         if (bootinfo) bootinfo->e820_count = 0;
-        return;
+        return false;
     }
     UINTN descriptor_count = memory_map_size / descriptor_size;
     UINTN out_count = 0;
@@ -493,10 +509,18 @@ static void fill_memory_map_bootinfo(rabbitbone_bootinfo_t *bootinfo, rabbitbone
         UINT64 length = 0;
         if (__builtin_mul_overflow(d->NumberOfPages, 4096ull, &length) || length == 0) continue;
         UINT32 type = e820_type_from_uefi(d->Type);
-        if (!e820_append_or_merge(e820, &out_count, d->PhysicalStart, length, type)) break;
+        if (!e820_append_or_merge(e820, &out_count, d->PhysicalStart, length, type)) {
+            bootinfo->e820_count = 0;
+            return false;
+        }
     }
     e820_sort_and_coalesce(e820, &out_count);
+    if (out_count > RABBITBONE_UEFI_MAX_MEMORY_MAP) {
+        bootinfo->e820_count = 0;
+        return false;
+    }
     bootinfo->e820_count = (u16)out_count;
+    return true;
 }
 
 static EFI_STATUS resize_memory_map_buffer(UINT8 **storage, UINTN *capacity, UINTN requested_size) {
@@ -566,6 +590,12 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     st = fs->OpenVolume(fs, &root);
     if (EFI_ERROR(st)) { put_status((CHAR16 *)L"OpenVolume failed: ", st); return st; }
 
+    if (!cpu_has_nxe()) {
+        (void)root->Close(root);
+        put_status((CHAR16 *)L"CPU NXE unsupported: ", EFI_UNSUPPORTED);
+        return EFI_UNSUPPORTED;
+    }
+
     void *kernel = 0;
     UINT64 kernel_size = 0;
     st = read_file_alloc(root, kernel_path, EFI_ALLOCATE_ADDRESS, EFI_LOADER_CODE, RABBITBONE_UEFI_KERNEL_BASE, RABBITBONE_UEFI_KERNEL_MAX_BYTES, &kernel, &kernel_size);
@@ -625,20 +655,26 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     st = get_memory_map_dynamic(&memory_map_storage, &memory_map_capacity, &memory_map_size,
                                 &map_key, &descriptor_size, &descriptor_version);
     if (EFI_ERROR(st)) { put_status((CHAR16 *)L"final GetMemoryMap failed: ", st); return st; }
-    fill_memory_map_bootinfo(bootinfo, e820, memory_map_storage, memory_map_size, descriptor_size);
+    if (!fill_memory_map_bootinfo(bootinfo, e820, memory_map_storage, memory_map_size, descriptor_size)) {
+        put_status((CHAR16 *)L"memory map too large: ", EFI_OUT_OF_RESOURCES);
+        return EFI_OUT_OF_RESOURCES;
+    }
     st = g_bs->ExitBootServices(ImageHandle, map_key);
     if (EFI_ERROR(st)) {
         st = get_memory_map_dynamic(&memory_map_storage, &memory_map_capacity, &memory_map_size,
                                     &map_key, &descriptor_size, &descriptor_version);
         if (!EFI_ERROR(st)) {
-            fill_memory_map_bootinfo(bootinfo, e820, memory_map_storage, memory_map_size, descriptor_size);
+            if (!fill_memory_map_bootinfo(bootinfo, e820, memory_map_storage, memory_map_size, descriptor_size)) {
+                put_status((CHAR16 *)L"memory map too large: ", EFI_OUT_OF_RESOURCES);
+                return EFI_OUT_OF_RESOURCES;
+            }
             st = g_bs->ExitBootServices(ImageHandle, map_key);
         }
         if (EFI_ERROR(st)) return st;
     }
 
     __asm__ volatile("cli" ::: "memory");
-    enable_nxe();
+    (void)enable_nxe_checked();
     ((kernel_entry_t)(uptr)RABBITBONE_UEFI_KERNEL_BASE)(bootinfo);
     for (;;) __asm__ volatile("hlt");
     return EFI_SUCCESS;

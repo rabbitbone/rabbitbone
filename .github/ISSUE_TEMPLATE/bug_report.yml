@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible Rabbitbone problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve Rabbitbone. Please include enough detail to reproduce the issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: List the commands, VM steps, or shell commands needed to reproduce it.
+      placeholder: |
+        1. Run ...
+        2. Boot ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Rabbitbone version or commit
+      placeholder: 0.0.3.1 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host OS, compiler versions, Rust version, VM, and firmware mode.
+      placeholder: Windows 11, clang ..., Rust 1.94.1, VMware UEFI
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Paste relevant build, test, serial, kernel, or VMware output.
+      render: text

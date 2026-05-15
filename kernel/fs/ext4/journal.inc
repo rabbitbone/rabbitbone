@@ -10,11 +10,36 @@ static bool ext4_block_is_journal(const ext4_mount_t *mnt, u64 block) {
     return mnt && mnt->journal_blocks && block >= mnt->journal_first_block && block < mnt->journal_first_block + mnt->journal_blocks;
 }
 
+static void journal_make_idle_record(ext4_mount_t *mnt, rabbitbone_ext4_journal_record_t *jr) {
+    memset(jr, 0, sizeof(*jr));
+    jr->magic = RABBITBONE_EXT4_JOURNAL_MAGIC;
+    jr->version = 1u;
+    jr->state = 0u;
+    jr->seq = mnt ? mnt->journal_seq : 0u;
+    jr->block_size = mnt ? (u32)mnt->block_size : 0u;
+    jr->header_crc = journal_header_crc(jr);
+}
+
+static bool journal_record_header_valid(ext4_mount_t *mnt, const rabbitbone_ext4_journal_record_t *jr) {
+    if (!mnt || !jr) return false;
+    rabbitbone_ext4_journal_record_t copy;
+    memcpy(&copy, jr, sizeof(copy));
+    u32 want = journal_header_crc(&copy);
+    if (jr->magic != RABBITBONE_EXT4_JOURNAL_MAGIC || jr->version != 1u || jr->header_crc != want) return false;
+    if (jr->block_size != (u32)mnt->block_size) return false;
+    if (jr->state == 0u) return true;
+    if (jr->state == 1u && jr->target_block < mnt->blocks_count && !ext4_block_is_journal(mnt, jr->target_block)) return true;
+    return false;
+}
+
 static ext4_status_t journal_clear(ext4_mount_t *mnt) {
     if (!mnt || !mnt->journal_blocks) return EXT4_OK;
     u8 *block = ext4_tmp_block(mnt);
     if (!block) return EXT4_ERR_NO_MEMORY;
     memset(block, 0, (usize)mnt->block_size);
+    rabbitbone_ext4_journal_record_t jr;
+    journal_make_idle_record(mnt, &jr);
+    memcpy(block, &jr, sizeof(jr));
     ext4_status_t st = raw_write_block(mnt, mnt->journal_first_block, block);
     ext4_tmp_block_free(block);
     return st;

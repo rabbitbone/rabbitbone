@@ -164,6 +164,37 @@ static bool sys_can_read_stat(const vfs_stat_t *st) { return sys_cred_can_access
 static bool sys_can_write_stat(const vfs_stat_t *st) { return sys_cred_can_access_stat(st, 02u); }
 static bool sys_can_exec_stat(const vfs_stat_t *st) { return sys_cred_can_access_stat(st, 01u); }
 
+static bool sys_can_traverse_path(const char *path, bool include_leaf_dir) {
+    if (!path || path[0] != '/') return false;
+    vfs_stat_t st;
+    if (vfs_stat("/", &st) != VFS_OK || st.type != VFS_NODE_DIR || !sys_can_exec_stat(&st)) return false;
+    if (path[1] == 0) return true;
+
+    char cur[SYSCALL_PATH_MAX];
+    memset(cur, 0, sizeof(cur));
+    cur[0] = '/';
+    usize cur_len = 1u;
+    const char *p = path + 1u;
+    while (*p) {
+        const char *slash = strchr(p, '/');
+        usize comp_len = slash ? (usize)(slash - p) : strlen(p);
+        bool leaf = slash == 0;
+        if (comp_len == 0 || cur_len + comp_len + 1u >= sizeof(cur)) return false;
+        if (leaf && !include_leaf_dir) break;
+        if (cur_len > 1u) cur[cur_len++] = '/';
+        memcpy(cur + cur_len, p, comp_len);
+        cur_len += comp_len;
+        cur[cur_len] = 0;
+        if (vfs_stat(cur, &st) != VFS_OK || st.type != VFS_NODE_DIR || !sys_can_exec_stat(&st)) return false;
+        if (leaf) break;
+        p = slash + 1u;
+    }
+    return true;
+}
+
+static bool sys_can_traverse_parent(const char *path) { return sys_can_traverse_path(path, false); }
+static bool sys_can_traverse_dir(const char *path) { return sys_can_traverse_path(path, true); }
+
 static bool sys_parent_path(char *out, usize out_size, const char *path) {
     if (!out || out_size == 0 || !path || !path[0]) return false;
     usize n = strnlen(path, SYSCALL_PATH_MAX);
@@ -177,11 +208,52 @@ static bool sys_parent_path(char *out, usize out_size, const char *path) {
 }
 
 static bool sys_can_modify_parent(const char *path) {
+    if (!sys_can_traverse_parent(path)) return false;
     char parent[SYSCALL_PATH_MAX];
     if (!sys_parent_path(parent, sizeof(parent), path)) return false;
     vfs_stat_t st;
     if (vfs_stat(parent, &st) != VFS_OK || st.type != VFS_NODE_DIR) return false;
     return sys_can_write_stat(&st) && sys_can_exec_stat(&st);
+}
+
+static bool sys_sticky_dir_allows_child_removal(const char *path, bool allow_missing_child) {
+    char parent[SYSCALL_PATH_MAX];
+    if (!sys_parent_path(parent, sizeof(parent), path)) return false;
+
+    vfs_stat_t parent_st;
+    if (vfs_stat(parent, &parent_st) != VFS_OK || parent_st.type != VFS_NODE_DIR) return false;
+    if ((parent_st.mode & 01000u) == 0) return true;
+
+    vfs_stat_t child_st;
+    vfs_status_t child_status = vfs_lstat(path, &child_st);
+    if (child_status == VFS_ERR_NOENT && allow_missing_child) return true;
+    if (child_status != VFS_OK) return false;
+
+    rabbitbone_credinfo_t c;
+    if (!sys_current_cred(&c)) return false;
+    if (c.euid == RABBITBONE_UID_ROOT) return true;
+    return c.euid == child_st.uid || c.euid == parent_st.uid;
+}
+
+static bool sys_can_unlink_path(const char *path) {
+    return sys_can_modify_parent(path) && sys_sticky_dir_allows_child_removal(path, false);
+}
+
+static bool sys_can_rename_paths(const char *old_path, const char *new_path) {
+    if (!sys_can_modify_parent(old_path) || !sys_can_modify_parent(new_path)) return false;
+    if (!sys_sticky_dir_allows_child_removal(old_path, false)) return false;
+    if (!sys_sticky_dir_allows_child_removal(new_path, true)) return false;
+    return true;
+}
+
+static bool sys_can_create_hardlink_to(const vfs_stat_t *st) {
+    if (!st || st->type == VFS_NODE_DIR) return false;
+    rabbitbone_credinfo_t c;
+    if (!sys_current_cred(&c)) return false;
+    if (c.euid == RABBITBONE_UID_ROOT) return true;
+    if (c.euid != st->uid) return false;
+    if ((st->mode & 06000u) != 0) return false;
+    return sys_can_read_stat(st);
 }
 
 static bool open_flags_valid(u32 flags) {

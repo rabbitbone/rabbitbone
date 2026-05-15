@@ -1,8 +1,12 @@
 # Rabbitbone status
 
-Rabbitbone is currently at `0.0.3.0`.
+Rabbitbone is currently at `0.0.3.1`.
 
 The system now boots as a UEFI x86_64 live ISO. The default image contains a freestanding `EFI/BOOT/BOOTX64.EFI` loader, the Rabbitbone kernel, and a live root disk image. The loader reads the kernel and root image from the ISO EFI system partition, converts the UEFI memory map into bootinfo v2, passes the root image as a boot module, passes the UEFI GOP framebuffer metadata, exits boot services, and jumps into the independent kernel. The kernel registers that module as a writable RAM-backed block device, maps the framebuffer for VMware's graphical console, probes its MBR Linux partition, mounts the seeded EXT4 filesystem at `/disk0`, and starts `/disk0/sbin/init` with `/disk0/bin/rbsh` as the shell path.
+
+## 0.0.3.1 status
+
+Rabbitbone 0.0.3.1 is a repository maintenance release over 0.0.3.0. The runtime status below remains the current implementation baseline.
 
 ## 0.0.3.0 status
 

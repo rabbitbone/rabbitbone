@@ -1,6 +1,7 @@
 syscall_result_t rabbitbone_sys_open(u64 path_ptr, u64 flags64) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || flags64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     u32 flags = (u32)flags64;
     if (!open_flags_valid(flags)) return err(VFS_ERR_INVAL);
 
@@ -91,6 +92,7 @@ syscall_result_t rabbitbone_sys_seek(u64 handle, u64 off64, u64 whence) {
 syscall_result_t rabbitbone_sys_stat(u64 path_ptr, u64 stat_out) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || !stat_out) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t vs = vfs_stat(path, &st);
     if (vs != VFS_OK) return err(vs);
@@ -100,6 +102,7 @@ syscall_result_t rabbitbone_sys_stat(u64 path_ptr, u64 stat_out) {
 syscall_result_t rabbitbone_sys_lstat(u64 path_ptr, u64 stat_out) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || !stat_out) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t vs = vfs_lstat(path, &st);
     if (vs != VFS_OK) return err(vs);
@@ -119,6 +122,7 @@ syscall_result_t rabbitbone_sys_symlink(u64 target_ptr, u64 link_path_ptr) {
 syscall_result_t rabbitbone_sys_readlink(u64 path_ptr, u64 out_ptr, u64 size64) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || (!out_ptr && size64)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     if (size64 > SYSCALL_PATH_MAX) return err(VFS_ERR_INVAL);
     char target[SYSCALL_PATH_MAX];
     usize got = 0;
@@ -131,6 +135,11 @@ syscall_result_t rabbitbone_sys_link(u64 old_path_ptr, u64 new_path_ptr) {
     char old_path[SYSCALL_PATH_MAX];
     char new_path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(old_path_ptr, old_path) || !copy_path_arg(new_path_ptr, new_path)) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(old_path)) return err(VFS_ERR_PERM);
+    vfs_stat_t old_st;
+    vfs_status_t sv = vfs_lstat(old_path, &old_st);
+    if (sv != VFS_OK) return err(sv);
+    if (!sys_can_create_hardlink_to(&old_st)) return err(VFS_ERR_PERM);
     if (!sys_can_modify_parent(new_path)) return err(VFS_ERR_PERM);
     vfs_status_t vs = vfs_link(old_path, new_path);
     return vs == VFS_OK ? ok(0) : err(vs);
@@ -175,7 +184,7 @@ syscall_result_t rabbitbone_sys_mkdir(u64 path_ptr) {
 syscall_result_t rabbitbone_sys_unlink(u64 path_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path)) return err(VFS_ERR_INVAL);
-    if (!sys_can_modify_parent(path)) return err(VFS_ERR_PERM);
+    if (!sys_can_unlink_path(path)) return err(VFS_ERR_PERM);
     vfs_status_t vs = vfs_unlink(path);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
@@ -184,6 +193,7 @@ syscall_result_t rabbitbone_sys_unlink(u64 path_ptr) {
 syscall_result_t rabbitbone_sys_truncate(u64 path_ptr, u64 size) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || size > SYSCALL_MAX_FILE_SIZE) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t sv = vfs_stat(path, &st);
     if (sv != VFS_OK) return err(sv);
@@ -195,6 +205,7 @@ syscall_result_t rabbitbone_sys_truncate(u64 path_ptr, u64 size) {
 syscall_result_t rabbitbone_sys_preallocate(u64 path_ptr, u64 size) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || size > SYSCALL_MAX_FILE_SIZE) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t sv = vfs_stat(path, &st);
     if (sv != VFS_OK) return err(sv);
@@ -265,7 +276,7 @@ syscall_result_t rabbitbone_sys_rename(u64 old_path_ptr, u64 new_path_ptr) {
     char old_path[SYSCALL_PATH_MAX];
     char new_path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(old_path_ptr, old_path) || !copy_path_arg(new_path_ptr, new_path)) return err(VFS_ERR_INVAL);
-    if (!sys_can_modify_parent(old_path) || !sys_can_modify_parent(new_path)) return err(VFS_ERR_PERM);
+    if (!sys_can_rename_paths(old_path, new_path)) return err(VFS_ERR_PERM);
     vfs_status_t vs = vfs_rename(old_path, new_path);
     return vs == VFS_OK ? ok(0) : err(vs);
 }
@@ -283,10 +294,12 @@ syscall_result_t rabbitbone_sys_install_commit(u64 staged_path_ptr, u64 final_pa
 
 syscall_result_t rabbitbone_sys_chmod(u64 path_ptr, u64 mode64) {
     char path[SYSCALL_PATH_MAX];
-    if (!copy_path_arg(path_ptr, path) || mode64 > 07777u) return err(VFS_ERR_INVAL);
+    if (!copy_path_arg(path_ptr, path) || mode64 > 01777u || (mode64 & 06000u) != 0) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_stat_t st;
     vfs_status_t sv = vfs_stat(path, &st);
     if (sv != VFS_OK) return err(sv);
+    if ((mode64 & 01000u) != 0 && st.type != VFS_NODE_DIR) return err(VFS_ERR_INVAL);
     rabbitbone_credinfo_t c;
     if (!sys_current_cred(&c)) return err(VFS_ERR_INVAL);
     if (c.euid != RABBITBONE_UID_ROOT && c.euid != st.uid) return err(VFS_ERR_PERM);
@@ -297,6 +310,7 @@ syscall_result_t rabbitbone_sys_chmod(u64 path_ptr, u64 mode64) {
 syscall_result_t rabbitbone_sys_chown(u64 path_ptr, u64 uid64, u64 gid64) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || uid64 > 0xffffffffull || gid64 > 0xffffffffull) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     if (!sys_cred_root()) return err(VFS_ERR_PERM);
     vfs_status_t vs = vfs_chown(path, (u32)uid64, (u32)gid64);
     return vs == VFS_OK ? ok(0) : err(vs);
@@ -330,6 +344,7 @@ syscall_result_t rabbitbone_sys_fdatasync(u64 handle) {
 syscall_result_t rabbitbone_sys_statvfs(u64 path_ptr, u64 out_ptr) {
     char path[SYSCALL_PATH_MAX];
     if (!copy_path_arg(path_ptr, path) || !out_ptr) return err(VFS_ERR_INVAL);
+    if (!sys_can_traverse_parent(path)) return err(VFS_ERR_PERM);
     vfs_statvfs_t st;
     vfs_status_t vs = vfs_statvfs(path, &st);
     if (vs != VFS_OK) return err(vs);

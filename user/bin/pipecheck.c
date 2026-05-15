@@ -106,9 +106,12 @@ int main(int argc, char **argv) {
     au_memset(buf, 0, sizeof(buf));
     if (au_read((au_i64)fds[0], buf, sizeof(msg) - 1u) != (au_i64)(sizeof(msg) - 1u)) return 16;
     if (!same_bytes(buf, msg, sizeof(msg) - 1u)) return 17;
-    if (au_read((au_i64)fds[0], buf, 1) != 0) return 18;
+    if (au_read((au_i64)fds[0], buf, 1) != RABBITBONE_ERR_BUSY) return 18;
     if (au_read((au_i64)fds[1], buf, 1) >= 0) return 19;
     if (au_write((au_i64)fds[0], msg, 1) >= 0) return 20;
+    if (au_close((au_i64)fds[1]) != 0) return 58;
+    if (au_read((au_i64)fds[0], buf, 1) != 0) return 59;
+    if (au_close((au_i64)fds[0]) != 0) return 60;
     unsigned int hupfds[2] = {0, 0};
     if (au_pipe(hupfds) != 0) return 31;
     if (au_close((au_i64)hupfds[1]) != 0) return 32;

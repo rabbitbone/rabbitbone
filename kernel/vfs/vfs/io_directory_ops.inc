@@ -113,6 +113,18 @@ vfs_status_t vfs_unlink(const char *path) {
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
     if (!mnt->ops->unlink) { mount_release(mnt); return VFS_ERR_UNSUPPORTED; }
+    vfs_stat_t target_st;
+    memset(&target_st, 0, sizeof(target_st));
+    if (mnt->ops->lstat) rs = mnt->ops->lstat(mnt, route.relative, &target_st);
+    else if (mnt->ops->stat) rs = mnt->ops->stat(mnt, route.relative, &target_st);
+    else rs = VFS_ERR_UNSUPPORTED;
+    if (rs != VFS_OK) { mount_release(mnt); return rs; }
+    vfs_node_ref_t target_ref;
+    fill_ref_from_stat(&target_ref, route.normalized, &target_st, &route);
+    if (vfs_ref_is_busy(&target_ref) && (target_st.type == VFS_NODE_DIR || target_st.nlink <= 1u)) {
+        mount_release(mnt);
+        return VFS_ERR_BUSY;
+    }
     rs = mnt->ops->unlink(mnt, route.relative);
     mount_release(mnt);
     return rs;
@@ -156,6 +168,22 @@ vfs_status_t vfs_rename(const char *old_path, const char *new_path) {
     if (!mnt) return VFS_ERR_NOENT;
     if (!mnt->writable) { mount_release(mnt); return VFS_ERR_PERM; }
     if (!mnt->ops->rename) { mount_release(mnt); return VFS_ERR_UNSUPPORTED; }
+    vfs_stat_t dst_st;
+    memset(&dst_st, 0, sizeof(dst_st));
+    if (mnt->ops->lstat) rs = mnt->ops->lstat(mnt, new_route.relative, &dst_st);
+    else if (mnt->ops->stat) rs = mnt->ops->stat(mnt, new_route.relative, &dst_st);
+    else rs = VFS_ERR_UNSUPPORTED;
+    if (rs == VFS_OK) {
+        vfs_node_ref_t dst_ref;
+        fill_ref_from_stat(&dst_ref, new_route.normalized, &dst_st, &new_route);
+        if (vfs_ref_is_busy(&dst_ref) && (dst_st.type == VFS_NODE_DIR || dst_st.nlink <= 1u)) {
+            mount_release(mnt);
+            return VFS_ERR_BUSY;
+        }
+    } else if (rs != VFS_ERR_NOENT) {
+        mount_release(mnt);
+        return rs;
+    }
     rs = mnt->ops->rename(mnt, old_route.relative, new_route.relative);
     mount_release(mnt);
     return rs;

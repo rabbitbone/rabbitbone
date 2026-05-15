@@ -72,7 +72,11 @@ static bool clone_current_address_space(active_process_t *child) {
     child->vma_count = current_proc.vma_count;
     memcpy(child->vmas, current_proc.vmas, sizeof(current_proc.vmas));
     for (usize vi = 0; vi < child->vma_count; ++vi) {
-        if (process_vma_is_shared_anon(&child->vmas[vi]) && !shared_anon_retain(child->vmas[vi].file_id)) return false;
+        if (!process_retain_vma_backing(&child->vmas[vi])) {
+            for (usize r = 0; r < vi; ++r) process_release_vma_backing(&child->vmas[r]);
+            child->vma_count = 0;
+            return false;
+        }
     }
     child->mmap_cursor = current_proc.mmap_cursor;
     child->heap_base = current_proc.heap_base;

@@ -117,8 +117,23 @@ static syscall_result_t kctl_copy_text(u64 out_ptr, u64 out_len64, const char *t
 }
 
 static bool kctl_root_required(u32 op) {
-    return op == RABBITBONE_KCTL_OP_KTEST || op == RABBITBONE_KCTL_OP_LOGS || op == RABBITBONE_KCTL_OP_PANIC ||
-           op == RABBITBONE_KCTL_OP_REBOOT || op == RABBITBONE_KCTL_OP_HALT;
+    switch (op) {
+        case RABBITBONE_KCTL_OP_VMM:
+        case RABBITBONE_KCTL_OP_KTEST:
+        case RABBITBONE_KCTL_OP_LOGS:
+        case RABBITBONE_KCTL_OP_PCI:
+        case RABBITBONE_KCTL_OP_ACPI:
+        case RABBITBONE_KCTL_OP_APIC:
+        case RABBITBONE_KCTL_OP_HPET:
+        case RABBITBONE_KCTL_OP_SMP:
+        case RABBITBONE_KCTL_OP_BOOT:
+        case RABBITBONE_KCTL_OP_PANIC:
+        case RABBITBONE_KCTL_OP_REBOOT:
+        case RABBITBONE_KCTL_OP_HALT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 arg_ptr) {

@@ -23,6 +23,7 @@ typedef enum vfs_status {
     VFS_ERR_NOSPC = -9,
     VFS_ERR_NOTEMPTY = -10,
     VFS_ERR_UNSUPPORTED = -11,
+    VFS_ERR_BUSY = -12,
 } vfs_status_t;
 
 typedef enum vfs_node_type {
@@ -133,6 +134,9 @@ vfs_status_t vfs_readlink(const char *path, char *buffer, usize size, usize *rea
 vfs_status_t vfs_symlink(const char *target, const char *link_path);
 vfs_status_t vfs_link(const char *old_path, const char *new_path);
 vfs_status_t vfs_get_ref(const char *path, vfs_node_ref_t *out);
+bool vfs_retain_ref(const vfs_node_ref_t *ref);
+void vfs_release_ref(const vfs_node_ref_t *ref);
+bool vfs_ref_is_busy(const vfs_node_ref_t *ref);
 vfs_status_t vfs_stat_ref(const vfs_node_ref_t *ref, vfs_stat_t *out);
 vfs_status_t vfs_read(const char *path, u64 offset, void *buffer, usize size, usize *read_out);
 vfs_status_t vfs_read_ref(const vfs_node_ref_t *ref, u64 offset, void *buffer, usize size, usize *read_out);
