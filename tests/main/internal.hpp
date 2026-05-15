@@ -5,6 +5,7 @@
 #include <rabbitbone/console.h>
 #include <rabbitbone/crc32.h>
 #include <rabbitbone/ext4.h>
+#include <rabbitbone/format.h>
 #include <rabbitbone/libc.h>
 #include <rabbitbone/mbr.h>
 #include <rabbitbone/kmem.h>

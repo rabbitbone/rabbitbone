@@ -9,6 +9,18 @@ static bool copy_string_arg(u64 user_or_kernel_ptr, char *out, usize max_len) {
     return true;
 }
 
+static char *copy_string_arg_heap(u64 user_or_kernel_ptr, usize max_len) {
+    if (max_len == 0 || max_len > 4096u) return 0;
+    char *out = (char *)kmalloc(max_len);
+    if (!out) return 0;
+    memset(out, 0, max_len);
+    if (!copy_string_arg(user_or_kernel_ptr, out, max_len)) {
+        kfree(out);
+        return 0;
+    }
+    return out;
+}
+
 static bool syscall_path_chars_valid(const char *path) {
     if (!path || !path[0]) return false;
     usize comp_len = 0;

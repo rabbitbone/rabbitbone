@@ -7,6 +7,7 @@ static bool split_parent_path(const char *path, char *parent, usize parent_cap, 
     while (slash > 0 && path[slash - 1] != '/') --slash;
     usize name_len = len - slash;
     if (name_len == 0 || name_len > EXT4_NAME_LEN || name_len >= name_cap) return false;
+    if (!ext4_name_bytes_valid(path + slash, name_len, false)) return false;
     memcpy(name, path + slash, name_len);
     name[name_len] = 0;
     if (slash <= 1) {
@@ -63,7 +64,7 @@ static ext4_status_t htree_load(ext4_mount_t *mnt, const ext4_inode_disk_t *dir,
     rabbitbone_htree_entry_t *entries = (rabbitbone_htree_entry_t *)(hdr + 1);
     if (le32(hdr->magic) != RABBITBONE_EXT4_HTREE_MAGIC || le16(hdr->version) != RABBITBONE_EXT4_HTREE_VERSION || le16(hdr->entry_size) != sizeof(rabbitbone_htree_entry_t)) return EXT4_ERR_CORRUPT;
     if (le32(hdr->dir_ino) == 0) return EXT4_ERR_CORRUPT;
-    if (le16(hdr->entries) > le16(hdr->max_entries) || le16(hdr->max_entries) > htree_capacity(mnt)) return EXT4_ERR_CORRUPT;
+    if (le16(hdr->max_entries) == 0 || le16(hdr->entries) > le16(hdr->max_entries) || le16(hdr->max_entries) > htree_capacity(mnt)) return EXT4_ERR_CORRUPT;
     if (hdr->checksum && hdr->checksum != htree_checksum(mnt, hdr, entries)) return EXT4_ERR_CORRUPT;
     *hdr_out = hdr;
     *entries_out = entries;
@@ -86,17 +87,22 @@ static bool htree_entry_name_matches(ext4_mount_t *mnt, const ext4_inode_disk_t 
     bool ok = false;
     if (read_block(mnt, phys, block) != EXT4_OK) goto out;
     u16 off = le16(he->offset);
-    if ((usize)off + 8u > mnt->block_size) goto out;
+    usize min_end = 0;
+    if (!checked_add_usize((usize)off, 8u, &min_end) || min_end > mnt->block_size) goto out;
     const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + off);
     u16 rec_len = le16(de->rec_len);
-    if (rec_len < 8u || (usize)off + rec_len > mnt->block_size) goto out;
-    ok = de->inode == he->inode && de->name_len == name_len && 8u + name_len <= rec_len && memcmp(de->name, name, name_len) == 0;
+    usize rec_end = 0;
+    if (rec_len < 8u || !checked_add_usize((usize)off, rec_len, &rec_end) || rec_end > mnt->block_size) goto out;
+    ok = de->inode == he->inode && de->file_type == he->file_type && de->name_len == name_len &&
+         ext4_name_bytes_valid(de->name, de->name_len, true) && 8u + name_len <= rec_len &&
+         memcmp(de->name, name, name_len) == 0;
 out:
     ext4_tmp_block_free(block);
     return ok;
 }
 
 static __attribute__((noinline)) ext4_status_t htree_lookup(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out) {
+    if (!ext4_name_cstr_valid(name, true)) return EXT4_ERR_RANGE;
     usize name_len = strlen(name);
     u32 h = htree_hash_name(name, name_len);
     u8 *index_block = ext4_tmp_block(mnt);
@@ -128,6 +134,7 @@ static void htree_insert_sorted(rabbitbone_htree_entry_t *entries, u16 *count, r
 }
 
 static __attribute__((noinline)) ext4_status_t htree_append_record(ext4_mount_t *mnt, ext4_inode_disk_t *dir, u32 dir_ino, const char *name, u32 child_ino, u8 type, u32 logical, usize offset) {
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     if (logical > 0xffffu || offset > 0xffffu) return EXT4_ERR_UNSUPPORTED;
     u8 *index_block = ext4_tmp_block(mnt);
     if (!index_block) return EXT4_ERR_NO_MEMORY;
@@ -158,7 +165,8 @@ static __attribute__((noinline)) ext4_status_t htree_build(ext4_mount_t *mnt, u3
     if ((le32(dir->i_flags) & EXT4_INDEX_FL) != 0) return EXT4_OK;
     u16 cap = htree_capacity(mnt);
     if (cap == 0) return EXT4_ERR_UNSUPPORTED;
-    if (div_round_up_u64(ext4_inode_size(dir), mnt->block_size) > 0xffffu) return EXT4_ERR_UNSUPPORTED;
+    u32 build_block_count = 0;
+    if (!ext4_block_count_u32_checked(mnt, ext4_inode_size(dir), &build_block_count) || build_block_count > 0xffffu) return EXT4_ERR_UNSUPPORTED;
     u64 idx_block = 0;
     ext4_status_t st = alloc_block(mnt, &idx_block);
     if (st != EXT4_OK) return st;
@@ -181,11 +189,13 @@ static __attribute__((noinline)) ext4_status_t htree_build(ext4_mount_t *mnt, u3
     hdr->dir_ino = dir_ino;
     u16 count = 0;
     u64 size = ext4_inode_size(dir);
-    for (u64 off = 0; off < size; off += mnt->block_size) {
-        u64 logical64 = off / mnt->block_size;
-        if (logical64 > 0xffffffffull) { result = EXT4_ERR_RANGE; goto fail; }
+    u32 block_count = 0;
+    if (!ext4_block_count_u32_checked(mnt, size, &block_count)) { result = EXT4_ERR_RANGE; goto fail; }
+    for (u32 logical = 0; logical < block_count; ++logical) {
+        u64 off = 0;
+        if (!ext4_logical_offset_checked(mnt, logical, &off)) { result = EXT4_ERR_RANGE; goto fail; }
         u64 phys = 0;
-        st = inode_block_for_write(mnt, dir, (u32)logical64, &phys, false, false, false);
+        st = inode_block_for_write(mnt, dir, logical, &phys, false, false, false);
         if (st != EXT4_OK) continue;
         st = read_block(mnt, phys, block);
         if (st != EXT4_OK) { result = st; goto fail; }
@@ -193,22 +203,22 @@ static __attribute__((noinline)) ext4_status_t htree_build(ext4_mount_t *mnt, u3
         while (p + 8u <= mnt->block_size) {
             const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + p);
             u16 rec_len = le16(de->rec_len);
-            if (rec_len < 8u || p + rec_len > mnt->block_size) { result = EXT4_ERR_CORRUPT; goto fail; }
-            if (de->inode && de->name_len && !(de->name_len == 1u && de->name[0] == '.') && !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) {
+            usize next = 0;
+            if (rec_len < 8u || !checked_add_usize(p, rec_len, &next) || next > mnt->block_size) { result = EXT4_ERR_CORRUPT; goto fail; }
+            if (de->inode && de->name_len && ext4_name_bytes_valid(de->name, de->name_len, true) && !(de->name_len == 1u && de->name[0] == '.') && !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) {
                 if (count >= cap) { result = EXT4_ERR_UNSUPPORTED; goto fail; }
                 rabbitbone_htree_entry_t e;
                 memset(&e, 0, sizeof(e));
                 e.hash = htree_hash_name(de->name, de->name_len);
                 e.inode = le32(de->inode);
-                u64 logical64 = off / mnt->block_size;
-                if (logical64 > 0xffffu || p > 0xffffu) { result = EXT4_ERR_UNSUPPORTED; goto fail; }
-                e.logical_block = (u16)logical64;
+                if (logical > 0xffffu || p > 0xffffu) { result = EXT4_ERR_UNSUPPORTED; goto fail; }
+                e.logical_block = (u16)logical;
                 e.offset = (u16)p;
                 e.name_len = de->name_len;
                 e.file_type = de->file_type;
                 htree_insert_sorted(entries, &count, e);
             }
-            p += rec_len;
+            p = next;
         }
     }
     hdr->entries = count;
@@ -238,25 +248,26 @@ out:
 }
 
 static ext4_status_t htree_note_add(ext4_mount_t *mnt, u32 dir_ino, ext4_inode_disk_t *dir, const char *name, u32 child_ino, u8 type, u32 logical, usize offset) {
-    if (!mnt || !dir || !name || ext4_name_is_dot_or_dotdot(name)) return EXT4_OK;
+    if (!mnt || !dir || !name || !ext4_name_cstr_valid(name, false)) return EXT4_OK;
     if ((le32(dir->i_flags) & EXT4_INDEX_FL) == 0) {
         u32 count = 0;
         u64 size = ext4_inode_size(dir);
         u8 *block = ext4_tmp_block(mnt);
         if (!block) return EXT4_ERR_NO_MEMORY;
-        for (u64 off = 0; off < size; off += mnt->block_size) {
-            u64 logical64 = off / mnt->block_size;
-            if (logical64 > 0xffffffffull) { ext4_tmp_block_free(block); return EXT4_ERR_RANGE; }
+        u32 block_count = 0;
+        if (!ext4_block_count_u32_checked(mnt, size, &block_count)) { ext4_tmp_block_free(block); return EXT4_ERR_RANGE; }
+        for (u32 logical = 0; logical < block_count; ++logical) {
             u64 phys = 0;
-            if (inode_block_for_write(mnt, dir, (u32)logical64, &phys, false, false, false) != EXT4_OK) continue;
+            if (inode_block_for_write(mnt, dir, logical, &phys, false, false, false) != EXT4_OK) continue;
             if (read_block(mnt, phys, block) != EXT4_OK) continue;
             usize p = 0;
             while (p + 8u <= mnt->block_size) {
                 const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + p);
                 u16 rec_len = le16(de->rec_len);
-                if (rec_len < 8u || p + rec_len > mnt->block_size) break;
-                if (de->inode && de->name_len && !(de->name_len == 1u && de->name[0] == '.') && !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) ++count;
-                p += rec_len;
+                usize next = 0;
+                if (rec_len < 8u || !checked_add_usize(p, rec_len, &next) || next > mnt->block_size) break;
+                if (de->inode && de->name_len && ext4_name_bytes_valid(de->name, de->name_len, true) && !(de->name_len == 1u && de->name[0] == '.') && !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) ++count;
+                p = next;
             }
         }
         ext4_tmp_block_free(block);
@@ -270,6 +281,7 @@ static ext4_status_t htree_note_add(ext4_mount_t *mnt, u32 dir_ino, ext4_inode_d
 
 static ext4_status_t htree_remove_name(ext4_mount_t *mnt, ext4_inode_disk_t *dir, const char *name, u32 logical, usize offset) {
     if (!mnt || !dir || !name || (le32(dir->i_flags) & EXT4_INDEX_FL) == 0) return EXT4_OK;
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     if (logical > 0xffffu || offset > 0xffffu) return EXT4_ERR_UNSUPPORTED;
     u8 *index_block = ext4_tmp_block(mnt);
     if (!index_block) return EXT4_ERR_NO_MEMORY;
@@ -303,11 +315,11 @@ static ext4_status_t htree_count_live_entries(ext4_mount_t *mnt, ext4_inode_disk
     u8 *block = ext4_tmp_block(mnt);
     if (!block) return EXT4_ERR_NO_MEMORY;
     ext4_status_t result = EXT4_OK;
-    for (u64 off = 0; off < size; off += mnt->block_size) {
-        u64 logical64 = off / mnt->block_size;
-        if (logical64 > 0xffffffffull) { result = EXT4_ERR_RANGE; goto out; }
+    u32 block_count = 0;
+    if (!ext4_block_count_u32_checked(mnt, size, &block_count)) { result = EXT4_ERR_RANGE; goto out; }
+    for (u32 logical = 0; logical < block_count; ++logical) {
         u64 phys = 0;
-        ext4_status_t st = inode_block_for_write(mnt, dir, (u32)logical64, &phys, false, false, false);
+        ext4_status_t st = inode_block_for_write(mnt, dir, logical, &phys, false, false, false);
         if (st != EXT4_OK) continue;
         st = read_block(mnt, phys, block);
         if (st != EXT4_OK) { result = st; goto out; }
@@ -315,11 +327,12 @@ static ext4_status_t htree_count_live_entries(ext4_mount_t *mnt, ext4_inode_disk
         while (p + 8u <= mnt->block_size) {
             const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + p);
             u16 rec_len = le16(de->rec_len);
-            if (rec_len < 8u || p + rec_len > mnt->block_size) { result = EXT4_ERR_CORRUPT; goto out; }
-            if (de->inode && de->name_len &&
+            usize next = 0;
+            if (rec_len < 8u || !checked_add_usize(p, rec_len, &next) || next > mnt->block_size) { result = EXT4_ERR_CORRUPT; goto out; }
+            if (de->inode && de->name_len && ext4_name_bytes_valid(de->name, de->name_len, true) &&
                 !(de->name_len == 1u && de->name[0] == '.') &&
                 !(de->name_len == 2u && de->name[0] == '.' && de->name[1] == '.')) ++*count_out;
-            p += rec_len;
+            p = next;
         }
     }
 out:

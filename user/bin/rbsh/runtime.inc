@@ -62,13 +62,28 @@ static int sh_save_fd(sh_fd_save_t *s, unsigned int fd) {
     return s->active != 0;
 }
 
+static void sh_close_saved_redirs(sh_fd_save_t saves[3]) {
+    if (!saves) return;
+    for (int i = 2; i >= 0; --i) {
+        if (!saves[i].active) continue;
+        if (saves[i].saved > (au_i64)RABBITBONE_STDERR) (void)au_close(saves[i].saved);
+        saves[i].active = 0;
+    }
+}
+
 static int sh_save_shell_redirs(const sh_stage_t *stage, sh_fd_save_t saves[3]) {
     if (!stage || !saves) return 0;
     au_memset(saves, 0, sizeof(sh_fd_save_t) * 3u);
     for (unsigned int i = 0; i < stage->redir_count; ++i) {
         unsigned int fd = stage->redirs[i].fd;
-        if (fd > RABBITBONE_STDERR) return 0;
-        if (!saves[fd].active && !sh_save_fd(&saves[fd], fd)) return 0;
+        if (fd > RABBITBONE_STDERR) {
+            sh_close_saved_redirs(saves);
+            return 0;
+        }
+        if (!saves[fd].active && !sh_save_fd(&saves[fd], fd)) {
+            sh_close_saved_redirs(saves);
+            return 0;
+        }
     }
     return 1;
 }

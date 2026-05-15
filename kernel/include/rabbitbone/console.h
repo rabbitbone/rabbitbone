@@ -21,6 +21,8 @@ const char *console_theme_name(u32 id);
 bool console_set_theme(u32 id);
 void console_apply_theme(void);
 void console_panic_begin(void);
+typedef void (*rabbitbone_vprintf_emit_fn)(const char *s, usize n, void *ctx);
+int kvprintf_emit_buffered(rabbitbone_vprintf_emit_fn emit, void *ctx, char *chunk, usize chunk_cap, const char *fmt, __builtin_va_list ap);
 int kprintf(const char *fmt, ...);
 int ksnprintf(char *buf, usize cap, const char *fmt, ...);
 int kvsnprintf(char *buf, usize cap, const char *fmt, __builtin_va_list ap);

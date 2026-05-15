@@ -234,6 +234,7 @@ static void release_process_slot(active_process_t *p) {
     syscall_forget_pid(p->result.pid);
     release_process_fd_snapshot(p);
     release_mappings(p);
+    process_drop_vmas(p);
     if (p->space.pml4_physical) vmm_space_destroy(&p->space);
     memset(p, 0, sizeof(*p));
 }
@@ -416,6 +417,7 @@ bool process_validate_user_range(uptr user, usize size, bool write) {
     while (done < size) {
         uptr addr = 0;
         if (__builtin_add_overflow(user, (uptr)done, &addr)) return false;
+        if (!process_user_access_allowed_at(&current_proc, addr, write, false)) return false;
         uptr phys = 0;
         u64 flags = 0;
         if (!vmm_space_translate(&current_proc.space, addr, &phys, &flags)) {

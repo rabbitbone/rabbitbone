@@ -1,6 +1,7 @@
 #include <rabbitbone/log.h>
 #include <rabbitbone/console.h>
 #include <rabbitbone/drivers.h>
+#include <rabbitbone/format.h>
 #include <rabbitbone/kmem.h>
 #include <rabbitbone/libc.h>
 #include <rabbitbone/spinlock.h>
@@ -80,33 +81,83 @@ void log_enable_heap_ring(void) {
     spin_unlock_irqrestore(&log_lock, flags);
 }
 
-void log_write(log_level_t level, const char *component, const char *fmt, ...) {
-    char msg[320];
-    __builtin_va_list ap;
-    __builtin_va_start(ap, fmt);
-    kvsnprintf(msg, sizeof(msg), fmt, ap);
-    __builtin_va_end(ap);
-
-    char line[LOG_HEAP_LINE_LEN];
-    ksnprintf(line, sizeof(line), "[%s] %s: %s\n", log_level_name(level), component ? component : "kernel", msg);
+void log_vwrite(log_level_t level, const char *component, const char *fmt, __builtin_va_list ap) {
     u64 flags = spin_lock_irqsave(&log_lock);
     char *dst = ring_line(write_index);
-    strlcpy(dst, line, ring_line_len);
+    rabbitbone_buf_out_t line;
+    rabbitbone_buf_init(&line, dst, ring_line_len);
+    rabbitbone_buf_appendf(&line, "[%s] %s: ", log_level_name(level), component ? component : "kernel");
+    rabbitbone_buf_vappendf(&line, fmt ? fmt : "", ap);
+    rabbitbone_buf_append_raw(&line, "\n");
+
     dst[ring_line_len - 1u] = 0;
     write_index = (write_index + 1u) % ring_lines;
     if (total_lines < ring_lines) ++total_lines;
-    if (level >= console_min_level) console_write(line);
-    else if (level >= serial_min_level) serial_write(line);
+    if (level >= console_min_level) console_write(dst);
+    else if (level >= serial_min_level) serial_write(dst);
     spin_unlock_irqrestore(&log_lock, flags);
 }
 
-void log_dump_ring(void (*writer)(const char *line)) {
+void log_write(log_level_t level, const char *component, const char *fmt, ...) {
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    log_vwrite(level, component, fmt, ap);
+    __builtin_va_end(ap);
+}
+
+void log_dump_ring_ctx(log_line_writer_ctx_fn writer, void *ctx) {
     if (!writer) return;
     u64 flags = spin_lock_irqsave(&log_lock);
     u32 start = total_lines == ring_lines ? write_index : 0u;
     for (u32 i = 0; i < total_lines; ++i) {
         u32 idx = (start + i) % ring_lines;
-        writer(ring_line(idx));
+        writer(ring_line(idx), ctx);
     }
     spin_unlock_irqrestore(&log_lock, flags);
+}
+
+void log_dump_ring_tail_ctx(log_line_writer_ctx_fn writer, void *ctx, usize max_bytes) {
+    if (!writer) return;
+    u64 flags = spin_lock_irqsave(&log_lock);
+    u32 count = total_lines;
+    u32 start = total_lines == ring_lines ? write_index : 0u;
+    u32 emit_count = 0;
+    usize used = 0;
+
+    if (count != 0 && max_bytes != 0) {
+        for (u32 n = 0; n < count; ++n) {
+            u32 logical = count - 1u - n;
+            u32 idx = (start + logical) % ring_lines;
+            usize len = strnlen(ring_line(idx), ring_line_len);
+            if (emit_count != 0 && len > max_bytes - used) break;
+            if (emit_count == 0 && len > max_bytes) {
+                emit_count = 1u;
+                break;
+            }
+            used += len;
+            ++emit_count;
+            if (used >= max_bytes) break;
+        }
+    }
+
+    u32 first = count >= emit_count ? count - emit_count : 0u;
+    for (u32 i = first; i < count; ++i) {
+        u32 idx = (start + i) % ring_lines;
+        writer(ring_line(idx), ctx);
+    }
+    spin_unlock_irqrestore(&log_lock, flags);
+}
+
+typedef struct log_dump_compat_ctx {
+    log_line_writer_fn writer;
+} log_dump_compat_ctx_t;
+
+static void log_dump_compat_line(const char *line, void *ctx) {
+    log_dump_compat_ctx_t *compat = (log_dump_compat_ctx_t *)ctx;
+    if (compat && compat->writer) compat->writer(line);
+}
+
+void log_dump_ring(log_line_writer_fn writer) {
+    log_dump_compat_ctx_t compat = { writer };
+    log_dump_ring_ctx(log_dump_compat_line, &compat);
 }

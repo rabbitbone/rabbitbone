@@ -7,7 +7,11 @@ static u32 journal_header_crc(rabbitbone_ext4_journal_record_t *jr) {
 }
 
 static bool ext4_block_is_journal(const ext4_mount_t *mnt, u64 block) {
-    return mnt && mnt->journal_blocks && block >= mnt->journal_first_block && block < mnt->journal_first_block + mnt->journal_blocks;
+    if (!mnt || !mnt->journal_blocks) return false;
+    u64 journal_end = 0;
+    if (!checked_add_u64(mnt->journal_first_block, mnt->journal_blocks, &journal_end)) return true;
+    if (mnt->journal_first_block >= mnt->blocks_count || journal_end > mnt->blocks_count) return true;
+    return block >= mnt->journal_first_block && block < journal_end;
 }
 
 static void journal_make_idle_record(ext4_mount_t *mnt, rabbitbone_ext4_journal_record_t *jr) {
@@ -66,7 +70,12 @@ static ext4_status_t journal_commit_ordered_block(ext4_mount_t *mnt, u64 target,
     if (!header_block) return EXT4_ERR_NO_MEMORY;
     memset(header_block, 0, (usize)mnt->block_size);
     memcpy(header_block, &jr, sizeof(jr));
-    ext4_status_t st = raw_write_block(mnt, mnt->journal_first_block + 1u, buffer);
+    u64 payload_block = 0;
+    if (!checked_add_u64(mnt->journal_first_block, 1u, &payload_block) || payload_block >= mnt->blocks_count) {
+        ext4_tmp_block_free(header_block);
+        return raw_write_block(mnt, target, buffer);
+    }
+    ext4_status_t st = raw_write_block(mnt, payload_block, buffer);
     if (st == EXT4_OK) st = raw_write_block(mnt, mnt->journal_first_block, header_block);
     if (st == EXT4_OK) st = raw_write_block(mnt, target, buffer);
     ext4_tmp_block_free(header_block);

@@ -119,17 +119,29 @@ static bool sig_eq(const char a[4], const char b[4]) {
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
 }
 
+static bool acpi_span_has(const u8 *p, const u8 *end, usize len) {
+    return p && end && p <= end && (usize)(end - p) >= len;
+}
+
 static const acpi_rsdp_v2_t *scan_rsdp_range(uptr start, uptr end) {
-    for (uptr p = RABBITBONE_ALIGN_UP(start, 16u); p + sizeof(acpi_rsdp_v1_t) <= end; p += 16u) {
-        if (!phys_range_identity_mapped(p, sizeof(acpi_rsdp_v1_t))) continue;
+    uptr p = 0;
+    u64 aligned = 0;
+    if (start >= end || !rabbitbone_align_up_u64_checked((u64)start, 16u, &aligned) || (uptr)aligned != aligned) return 0;
+    p = (uptr)aligned;
+    for (;;) {
+        uptr candidate_end = 0;
+        if (__builtin_add_overflow(p, (uptr)sizeof(acpi_rsdp_v1_t), &candidate_end) || candidate_end > end) break;
+        if (!phys_range_identity_mapped(p, sizeof(acpi_rsdp_v1_t))) goto next;
         const acpi_rsdp_v2_t *r = (const acpi_rsdp_v2_t *)p;
-        if (memcmp(r->v1.signature, ACPI_RSDP_SIG, 8u) != 0) continue;
-        if (!checksum_ok(&r->v1, sizeof(acpi_rsdp_v1_t))) continue;
+        if (memcmp(r->v1.signature, ACPI_RSDP_SIG, 8u) != 0) goto next;
+        if (!checksum_ok(&r->v1, sizeof(acpi_rsdp_v1_t))) goto next;
         if (r->v1.revision >= 2u) {
-            if (r->length < sizeof(acpi_rsdp_v2_t) || r->length > 4096u) continue;
-            if (!phys_range_identity_mapped((uptr)r, r->length) || !checksum_ok(r, r->length)) continue;
+            if (r->length < sizeof(acpi_rsdp_v2_t) || r->length > 4096u) goto next;
+            if (!phys_range_identity_mapped((uptr)r, r->length) || !checksum_ok(r, r->length)) goto next;
         }
         return r;
+next:
+        if (__builtin_add_overflow(p, (uptr)16u, &p)) break;
     }
     return 0;
 }
@@ -193,9 +205,9 @@ static void parse_madt(void) {
     acpi_info.lapic_address = m->lapic_address;
     const u8 *p = m->entries;
     const u8 *end = (const u8 *)m + m->h.length;
-    while (p + sizeof(acpi_madt_entry_header_t) <= end) {
+    while (acpi_span_has(p, end, sizeof(acpi_madt_entry_header_t))) {
         const acpi_madt_entry_header_t *eh = (const acpi_madt_entry_header_t *)p;
-        if (eh->length < sizeof(*eh) || p + eh->length > end) break;
+        if (eh->length < sizeof(*eh) || !acpi_span_has(p, end, eh->length)) break;
         if (eh->type == 0 && eh->length >= sizeof(acpi_madt_lapic_t)) {
             const acpi_madt_lapic_t *e = (const acpi_madt_lapic_t *)p;
             if (acpi_info.cpu_count < ACPI_MAX_CPUS) {

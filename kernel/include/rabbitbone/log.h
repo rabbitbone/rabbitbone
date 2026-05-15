@@ -15,8 +15,13 @@ typedef enum log_level {
 
 void log_init(void);
 void log_enable_heap_ring(void);
+void log_vwrite(log_level_t level, const char *component, const char *fmt, __builtin_va_list ap);
 void log_write(log_level_t level, const char *component, const char *fmt, ...);
-void log_dump_ring(void (*writer)(const char *line));
+typedef void (*log_line_writer_fn)(const char *line);
+typedef void (*log_line_writer_ctx_fn)(const char *line, void *ctx);
+void log_dump_ring_ctx(log_line_writer_ctx_fn writer, void *ctx);
+void log_dump_ring_tail_ctx(log_line_writer_ctx_fn writer, void *ctx, usize max_bytes);
+void log_dump_ring(log_line_writer_fn writer);
 const char *log_level_name(log_level_t level);
 
 #define KLOG(level, component, fmt, ...) log_write((level), (component), (fmt), ##__VA_ARGS__)

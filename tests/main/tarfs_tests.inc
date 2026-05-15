@@ -32,19 +32,26 @@ static void host_tar_fix_checksum(std::vector<u8> &img) {
     host_tar_octal(img.data() + 148, 8, sum);
 }
 
+static void host_tar_header_at(std::vector<u8> &img, std::size_t off, const char *name, std::size_t size) {
+    memset(img.data() + off, 0, 512);
+    memcpy(img.data() + off, name, strlen(name));
+    host_tar_octal(img.data() + off + 100, 8, 0644);
+    host_tar_octal(img.data() + off + 108, 8, 0);
+    host_tar_octal(img.data() + off + 116, 8, 0);
+    host_tar_octal(img.data() + off + 124, 12, size);
+    host_tar_octal(img.data() + off + 136, 12, 1);
+    memset(img.data() + off + 148, ' ', 8);
+    img[off + 156] = '0';
+    memcpy(img.data() + off + 257, "ustar", 5);
+    memcpy(img.data() + off + 263, "00", 2);
+    unsigned sum = 0;
+    for (std::size_t i = 0; i < 512; ++i) sum += img[off + i];
+    host_tar_octal(img.data() + off + 148, 8, sum);
+}
+
 static void host_tar_header(std::vector<u8> &img, const char *name, std::size_t size) {
     memset(img.data(), 0, img.size());
-    memcpy(img.data(), name, strlen(name));
-    host_tar_octal(img.data() + 100, 8, 0644);
-    host_tar_octal(img.data() + 108, 8, 0);
-    host_tar_octal(img.data() + 116, 8, 0);
-    host_tar_octal(img.data() + 124, 12, size);
-    host_tar_octal(img.data() + 136, 12, 1);
-    memset(img.data() + 148, ' ', 8);
-    img[156] = '0';
-    memcpy(img.data() + 257, "ustar", 5);
-    memcpy(img.data() + 263, "00", 2);
-    host_tar_fix_checksum(img);
+    host_tar_header_at(img, 0, name, size);
 }
 
 static void test_tarfs_bounds() {
@@ -54,6 +61,19 @@ static void test_tarfs_bounds() {
     tarfs_t *ok = tarfs_open(img.data(), img.size());
     require(ok != nullptr, "tarfs valid image opens");
     tarfs_destroy(ok);
+    std::vector<u8> dot_path(2048);
+    host_tar_header(dot_path, "./file.txt", 4);
+    memcpy(dot_path.data() + 512, "data", 4);
+    tarfs_t *dot_ok = tarfs_open(dot_path.data(), dot_path.size());
+    require(dot_ok != nullptr, "tarfs accepts current-directory prefixed archive paths");
+    tarfs_destroy(dot_ok);
+    std::vector<u8> dot_conflict(3072);
+    host_tar_header_at(dot_conflict, 0, "file.txt", 0);
+    host_tar_header_at(dot_conflict, 512, "./file.txt", 0);
+    require(tarfs_open(dot_conflict.data(), dot_conflict.size()) == nullptr, "tarfs canonicalizes ./ paths before conflict checks");
+    std::vector<u8> dot_root(2048);
+    host_tar_header(dot_root, ".", 0);
+    require(tarfs_open(dot_root.data(), dot_root.size()) == nullptr, "tarfs rejects root-only current-directory entries");
     std::vector<u8> zero = img;
     memset(zero.data() + 148, '0', 8);
     require(tarfs_open(zero.data(), zero.size()) == nullptr, "tarfs rejects zero checksum");

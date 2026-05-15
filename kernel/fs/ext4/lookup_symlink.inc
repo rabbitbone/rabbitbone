@@ -11,8 +11,7 @@ static bool find_dir_cb(const ext4_dirent_t *entry, void *ctxp) {
 
 ext4_status_t ext4_find_in_dir(ext4_mount_t *mnt, const ext4_inode_disk_t *dir, const char *name, u32 *ino_out, u8 *type_out) {
     if (!mnt || !dir || !name || !ino_out) return EXT4_ERR_RANGE;
-    usize name_len = strnlen(name, EXT4_NAME_LEN + 1u);
-    if (name_len == 0 || name_len > EXT4_NAME_LEN) return EXT4_ERR_RANGE;
+    if (!ext4_name_cstr_valid(name, true)) return EXT4_ERR_RANGE;
     if (!ext4_inode_is_dir(dir)) return EXT4_ERR_NOT_DIR;
     if ((le32(dir->i_flags) & EXT4_INDEX_FL) != 0) {
         ext4_status_t hs = htree_lookup(mnt, dir, name, ino_out, type_out);
@@ -116,6 +115,7 @@ static ext4_status_t ext4_lookup_path_ex(ext4_mount_t *mnt, const char *path, ex
             st = ext4_read_symlink_inode(mnt, &next, target, sizeof(target) - 1u, &got);
             if (st != EXT4_OK) return st;
             target[got] = 0;
+            if (!ext4_symlink_target_valid(target, got)) return EXT4_ERR_RANGE;
             char combined[VFS_PATH_MAX];
             if (!ext4_compose_symlink_path(cur_path, target, cursor, combined, sizeof(combined))) return EXT4_ERR_RANGE;
             return ext4_lookup_path_ex(mnt, combined, inode_out, ino_out, follow_final, depth + 1u);

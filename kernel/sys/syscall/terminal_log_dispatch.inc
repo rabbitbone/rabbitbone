@@ -7,6 +7,14 @@ syscall_result_t rabbitbone_sys_exit(u64 code) {
     return ok((i64)code);
 }
 
+static void sanitize_user_log_message(char *msg) {
+    if (!msg) return;
+    for (usize i = 0; msg[i]; ++i) {
+        unsigned char c = (unsigned char)msg[i];
+        if ((c < 0x20u && c != '\t') || c == 0x7fu) msg[i] = '?';
+    }
+}
+
 syscall_result_t rabbitbone_sys_fork(void) {
     if (!process_async_scheduler_active()) return err(VFS_ERR_UNSUPPORTED);
     if (!process_request_fork()) return err(VFS_ERR_NOMEM);
@@ -49,16 +57,19 @@ static bool user_log_permit(u32 pid, u32 *suppressed_out) {
 }
 
 syscall_result_t rabbitbone_sys_log(u64 msg_ptr) {
-    char msg[160];
-    if (!copy_string_arg(msg_ptr, msg, sizeof(msg))) return err(VFS_ERR_INVAL);
+    enum { USER_LOG_MSG_MAX = 160 };
+    char *msg = copy_string_arg_heap(msg_ptr, USER_LOG_MSG_MAX);
+    if (!msg) return err(VFS_ERR_INVAL);
+    sanitize_user_log_message(msg);
     u32 pid = process_current_pid();
     u32 suppressed = 0;
-    if (!user_log_permit(pid, &suppressed)) return ok(0);
+    if (!user_log_permit(pid, &suppressed)) { kfree(msg); return ok(0); }
     process_info_t info;
     const char *name = "kernel";
     if (process_current_info(&info) && info.name[0]) name = info.name;
     if (suppressed) KLOG(LOG_WARN, "usersys", "pid=%u name=%s suppressed=%u log messages", pid, name, suppressed);
     KLOG(LOG_INFO, "usersys", "pid=%u name=%s %s", pid, name, msg);
+    kfree(msg);
     return ok(0);
 }
 

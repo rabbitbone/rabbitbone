@@ -1,5 +1,5 @@
 syscall_result_t rabbitbone_sys_signal(u64 sig64, u64 handler64) {
-    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    if (sig64 == 0 || sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
     rabbitbone_sigaction_t act;
     rabbitbone_sigaction_t old;
     memset(&act, 0, sizeof(act));
@@ -11,7 +11,7 @@ syscall_result_t rabbitbone_sys_signal(u64 sig64, u64 handler64) {
 }
 
 syscall_result_t rabbitbone_sys_sigaction(u64 sig64, u64 act_ptr, u64 old_ptr) {
-    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    if (sig64 == 0 || sig64 >= RABBITBONE_NSIG || (!act_ptr && !old_ptr)) return err(VFS_ERR_INVAL);
     rabbitbone_sigaction_t act;
     rabbitbone_sigaction_t old;
     rabbitbone_sigaction_t *actp = 0;
@@ -29,7 +29,7 @@ syscall_result_t rabbitbone_sys_sigaction(u64 sig64, u64 act_ptr, u64 old_ptr) {
 }
 
 syscall_result_t rabbitbone_sys_sigprocmask(u64 how64, u64 set_ptr, u64 old_ptr) {
-    if (how64 > RABBITBONE_SIG_SETMASK) return err(VFS_ERR_INVAL);
+    if (how64 > RABBITBONE_SIG_SETMASK || (!set_ptr && !old_ptr)) return err(VFS_ERR_INVAL);
     u64 set = 0;
     u64 old = 0;
     u64 *setp = 0;
@@ -54,21 +54,26 @@ syscall_result_t rabbitbone_sys_sigpending(u64 out_ptr) {
 
 static bool sys_decode_pid_arg(u64 raw, u32 *out) {
     if (!out) return false;
-    if (raw <= 0xffffffffull) { *out = (u32)raw; return true; }
-    if (raw >= 0xffffffff80000000ull) { *out = (u32)raw; return true; }
+    if (raw <= 0xffffffffull) {
+        if (raw == 0x80000000ull) return false;
+        *out = (u32)raw;
+        return true;
+    }
+    if (raw >= 0xffffffff80000001ull) { *out = (u32)raw; return true; }
     return false;
 }
 
 syscall_result_t rabbitbone_sys_kill(u64 pid64, u64 sig64) {
     u32 pid = 0;
-    if (!sys_decode_pid_arg(pid64, &pid) || sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    if (!sys_decode_pid_arg(pid64, &pid) || sig64 == 0 || sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
     process_status_t st = process_signal_send(pid, (u32)sig64);
     if (st == PROC_ERR_FAULT) return err(VFS_ERR_PERM);
+    if (st == PROC_ERR_INVAL) return err(VFS_ERR_NOENT);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }
 
 syscall_result_t rabbitbone_sys_raise(u64 sig64) {
-    if (sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
+    if (sig64 == 0 || sig64 >= RABBITBONE_NSIG) return err(VFS_ERR_INVAL);
     process_status_t st = process_signal_raise((u32)sig64);
     return st == PROC_OK ? ok(0) : err(process_status_to_vfs_error(st));
 }

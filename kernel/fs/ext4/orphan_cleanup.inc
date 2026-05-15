@@ -4,7 +4,9 @@ static ext4_status_t free_extent_array_blocks(ext4_mount_t *mnt, const ext4_exte
         u64 start = extent_start_block(&ext[i]);
         u32 len = extent_len_blocks(&ext[i]);
         for (u32 j = 0; j < len; ++j) {
-            ext4_status_t st = free_block(mnt, start + j);
+            u64 data_block = 0;
+            if (!checked_add_u64(start, j, &data_block)) return EXT4_ERR_RANGE;
+            ext4_status_t st = free_block(mnt, data_block);
             if (st != EXT4_OK) return st;
         }
     }

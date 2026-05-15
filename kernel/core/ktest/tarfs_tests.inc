@@ -41,7 +41,7 @@ static void test_tarfs_module(void) {
         suite_end();
         return;
     }
-    tar_header_write(image, "boot/test.txt", data, sizeof(data) - 1u);
+    tar_header_write(image, "./boot/./test.txt", data, sizeof(data) - 1u);
     tarfs_t *fs = tarfs_open(image, 2048u);
     check(fs != 0, "tarfs opens ustar image");
     if (fs) {
@@ -53,7 +53,7 @@ static void test_tarfs_module(void) {
             char buf[32];
             usize got = 0;
             memset(buf, 0, sizeof(buf));
-            check(vfs_read("/tar-test/boot/test.txt", 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && strcmp(buf, data) == 0, "tarfs file read through VFS");
+            check(vfs_read("/tar-test/boot/test.txt", 0, buf, sizeof(buf) - 1u, &got) == VFS_OK && strcmp(buf, data) == 0, "tarfs canonicalizes ./ components and reads through VFS");
             seen_name_ctx_t seen = { "test.txt", false };
             check(vfs_list("/tar-test/boot", list_seen_name, &seen) == VFS_OK && seen.seen, "tarfs directory list");
             check(vfs_write("/tar-test/boot/test.txt", 0, "x", 1u, 0) == VFS_ERR_PERM, "tarfs is read-only in VFS");
@@ -94,6 +94,29 @@ static void test_tarfs_module(void) {
     } else {
         skip("tarfs prefix conflict malformed image test");
         skip("tarfs directory payload malformed image test");
+    }
+
+
+    u8 *policy = (u8 *)kcalloc(1, 4096u);
+    if (policy) {
+        tar_header_write(policy, "./", "", 0u);
+        policy[156] = '5';
+        tar_finalize_checksum(policy);
+        check(tarfs_open(policy, 2048u) == 0, "tarfs rejects root-only ./ entry");
+
+        memset(policy, 0, 4096u);
+        tar_header_write(policy, "same.txt", "a", 1u);
+        tar_header_write(policy + 1024u, "./same.txt", "b", 1u);
+        check(tarfs_open(policy, 4096u) == 0, "tarfs rejects canonical duplicate names");
+
+        memset(policy, 0, 4096u);
+        tar_header_write(policy, "bad\\name", "x", 1u);
+        check(tarfs_open(policy, 2048u) == 0, "tarfs rejects unsafe archive name bytes");
+        kfree(policy);
+    } else {
+        skip("tarfs root-only ./ malformed image test");
+        skip("tarfs canonical duplicate malformed image test");
+        skip("tarfs unsafe name malformed image test");
     }
 
     tarfs_t *parent_fs = tarfs_open(image, 2048u);

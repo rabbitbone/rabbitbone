@@ -228,6 +228,13 @@ static void process_release_vma_backings(active_process_t *p) {
     for (usize i = 0; i < p->vma_count; ++i) process_release_vma_backing(&p->vmas[i]);
 }
 
+static void process_drop_vmas(active_process_t *p) {
+    if (!p) return;
+    process_release_vma_backings(p);
+    memset(p->vmas, 0, sizeof(p->vmas));
+    p->vma_count = 0;
+}
+
 static void release_mappings(active_process_t *p) {
     if (!p) return;
     for (usize i = 0; i < p->mapping_count; ++i) {
@@ -433,6 +440,15 @@ static void release_mapping_at(active_process_t *p, usize idx) {
     p->result.mapped_pages = p->mapping_count;
 }
 
+static bool process_align_up_page_checked(uptr value, uptr *out) {
+    if (!out) return false;
+    u64 aligned = 0;
+    if (!rabbitbone_align_up_u64_checked((u64)value, PAGE_SIZE, &aligned)) return false;
+    if ((uptr)aligned != aligned) return false;
+    *out = (uptr)aligned;
+    return true;
+}
+
 static process_status_t process_init_heap_for(active_process_t *p, usize first_mapping) {
     if (!p || first_mapping > p->mapping_count) return PROC_ERR_INVAL;
     uptr image_end = USER_IMAGE_BASE;
@@ -444,7 +460,7 @@ static process_status_t process_init_heap_for(active_process_t *p, usize first_m
     uptr heap_base = 0;
     uptr heap_limit = 0;
     if (__builtin_add_overflow(image_end, (uptr)(USER_HEAP_GAP_PAGES * PAGE_SIZE), &heap_base)) return PROC_ERR_RANGE;
-    heap_base = RABBITBONE_ALIGN_UP(heap_base, PAGE_SIZE);
+    if (!process_align_up_page_checked(heap_base, &heap_base)) return PROC_ERR_RANGE;
     if (__builtin_add_overflow(heap_base, (uptr)(USER_HEAP_MAX_PAGES * PAGE_SIZE), &heap_limit)) return PROC_ERR_RANGE;
     if (!user_addr_range_valid(heap_base, 0) || !user_addr_range_valid(heap_limit - 1u, 1u)) return PROC_ERR_RANGE;
     uptr lowest_stack_base = USER_STACK_TOP - ((uptr)USER_STACK_ASLR_PAGES + USER_STACK_PAGES + USER_STACK_GUARD_PAGES) * PAGE_SIZE;
@@ -508,8 +524,9 @@ static process_status_t process_set_brk_for(active_process_t *p, uptr new_break,
         return PROC_OK;
     }
     if (new_break < p->heap_base || new_break > p->heap_limit) return PROC_ERR_RANGE;
-    uptr old_end = RABBITBONE_ALIGN_UP(p->heap_break, PAGE_SIZE);
-    uptr new_end = RABBITBONE_ALIGN_UP(new_break, PAGE_SIZE);
+    uptr old_end = 0;
+    uptr new_end = 0;
+    if (!process_align_up_page_checked(p->heap_break, &old_end) || !process_align_up_page_checked(new_break, &new_end)) return PROC_ERR_RANGE;
     if (new_end > old_end) {
         uptr v = old_end;
         for (; v < new_end; v += PAGE_SIZE) {
@@ -570,8 +587,10 @@ static bool process_normalize_user_len(uptr addr, usize length, uptr *start_out,
     uptr start = RABBITBONE_ALIGN_DOWN(addr, PAGE_SIZE);
     uptr raw_end = 0;
     if (__builtin_add_overflow(addr, (uptr)length, &raw_end)) return false;
-    uptr end = RABBITBONE_ALIGN_UP(raw_end, PAGE_SIZE);
-    if (end <= start || !user_addr_range_valid(start, (usize)(end - start))) return false;
+    u64 aligned_end = 0;
+    if (!rabbitbone_align_up_u64_checked((u64)raw_end, PAGE_SIZE, &aligned_end)) return false;
+    uptr end = (uptr)aligned_end;
+    if ((u64)end != aligned_end || end <= start || !user_addr_range_valid(start, (usize)(end - start))) return false;
     if (start_out) *start_out = start;
     if (end_out) *end_out = end;
     return true;
@@ -587,12 +606,13 @@ static uptr process_find_free_mmap_range(active_process_t *p, usize size) {
             uptr end = 0;
             if (__builtin_add_overflow(candidate, (uptr)size, &end) || end > arena_end) break;
             bool conflict = false;
-            uptr next = candidate + PAGE_SIZE;
+            uptr next = 0;
+            if (__builtin_add_overflow(candidate, (uptr)PAGE_SIZE, &next)) break;
             for (usize i = 0; i < p->vma_count; ++i) {
                 const user_vma_t *v = &p->vmas[i];
                 if (process_vma_ranges_overlap(candidate, end, v->start, v->end)) {
                     conflict = true;
-                    next = RABBITBONE_ALIGN_UP(v->end, PAGE_SIZE);
+                    if (!process_align_up_page_checked(v->end, &next)) return 0;
                     break;
                 }
             }
@@ -625,11 +645,23 @@ static const user_vma_t *process_find_vma_for_page_const(const active_process_t 
     return 0;
 }
 
-static bool process_vma_access_allowed(const user_vma_t *v, bool write, bool instruction_fetch) {
-    if (!v || v->kind != USER_VMA_MMAP) return false;
+static bool process_vma_prot_allows(const user_vma_t *v, bool write, bool instruction_fetch) {
+    if (!v) return false;
     if (instruction_fetch) return (v->prot & RABBITBONE_PROT_EXEC) != 0;
     if (write) return (v->prot & RABBITBONE_PROT_WRITE) != 0;
     return (v->prot & (RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE)) != 0;
+}
+
+static bool process_vma_access_allowed(const user_vma_t *v, bool write, bool instruction_fetch) {
+    if (!v || v->kind != USER_VMA_MMAP) return false;
+    return process_vma_prot_allows(v, write, instruction_fetch);
+}
+
+static bool process_user_access_allowed_at(active_process_t *p, uptr addr, bool write, bool instruction_fetch) {
+    if (!p || !p->active || !user_addr_range_valid(addr, 1u)) return false;
+    uptr page_virt = RABBITBONE_ALIGN_DOWN(addr, PAGE_SIZE);
+    const user_vma_t *v = process_find_vma_for_page_const(p, page_virt);
+    return process_vma_prot_allows(v, write, instruction_fetch);
 }
 
 static process_status_t map_user_file_page(active_process_t *p, uptr virt, u64 flags, const vfs_node_ref_t *file_ref, u64 file_size, u64 file_offset) {
@@ -731,7 +763,8 @@ process_status_t process_current_mmap(uptr requested, usize length, u32 prot, u3
         if (!start) start = process_find_free_mmap_range(&current_proc, size);
         if (!start) return PROC_ERR_NOMEM;
     }
-    uptr end = start + (uptr)size;
+    uptr end = 0;
+    if (__builtin_add_overflow(start, (uptr)size, &end)) return PROC_ERR_RANGE;
     u32 stored_flags = flags;
     u32 backing_id = USER_MMAP_FILE_BACKING_NONE;
     if (is_anon && is_shared) {

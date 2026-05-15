@@ -20,6 +20,27 @@ static u64 signal_sanitized_mask(u64 m) {
     return m;
 }
 
+static void process_signal_exec_reset(active_process_t *p) {
+    if (!p) return;
+    p->signal_pending = 0;
+    p->signal_in_handler = false;
+    p->signal_frame_addr = 0;
+    p->signal_blocked = signal_sanitized_mask(p->signal_blocked);
+    for (u32 sig = 1; sig < RABBITBONE_NSIG; ++sig) {
+        if (signal_unmaskable(sig)) {
+            memset(&p->signal_actions[sig], 0, sizeof(p->signal_actions[sig]));
+            continue;
+        }
+        if (p->signal_actions[sig].handler == RABBITBONE_SIG_IGN) {
+            p->signal_actions[sig].mask = 0;
+            p->signal_actions[sig].flags = 0;
+            p->signal_actions[sig].restorer = 0;
+            continue;
+        }
+        memset(&p->signal_actions[sig], 0, sizeof(p->signal_actions[sig]));
+    }
+}
+
 static u32 process_next_deliverable_signal(const active_process_t *p) {
     if (!p) return 0;
     u64 pending = p->signal_pending;
@@ -110,7 +131,7 @@ process_status_t process_signal_send(u32 pid, u32 sig) {
         if (any) return PROC_OK;
         return denied ? PROC_ERR_FAULT : PROC_ERR_INVAL;
     }
-    if ((i32)pid < 0) {
+    if (pid & 0x80000000u) {
         if (pid == 0xffffffffu) {
             if (current_proc.active) {
                 if (process_signal_sender_can_target(&current_proc, sig)) any |= process_signal_queue_one(&current_proc, sig);
@@ -123,7 +144,8 @@ process_status_t process_signal_send(u32 pid, u32 sig) {
             if (any) return PROC_OK;
             return denied ? PROC_ERR_FAULT : PROC_ERR_INVAL;
         }
-        u32 pgid = (u32)(-(i32)pid);
+        if (pid == 0x80000000u) return PROC_ERR_INVAL;
+        u32 pgid = (~pid) + 1u;
         if (!pgid) return PROC_ERR_INVAL;
         if (current_proc.active && current_proc.process_group == pgid) {
             if (process_signal_sender_can_target(&current_proc, sig)) any |= process_signal_queue_one(&current_proc, sig);
@@ -144,13 +166,18 @@ process_status_t process_signal_send(u32 pid, u32 sig) {
 
 process_status_t process_signal_raise(u32 sig) { return current_proc.active ? process_signal_send(current_proc.result.pid, sig) : PROC_ERR_INVAL; }
 
+static bool process_signal_user_code_pointer_valid(uptr ptr) {
+    return ptr != 0 && user_addr_range_valid(ptr, 1u) && process_user_access_allowed_at(&current_proc, ptr, false, true);
+}
+
 process_status_t process_signal_set_action(u32 sig, const rabbitbone_sigaction_t *act, rabbitbone_sigaction_t *oldact) {
     if (!current_proc.active || !signal_valid(sig)) return PROC_ERR_INVAL;
     if ((sig == RABBITBONE_SIGKILL || sig == RABBITBONE_SIGSTOP) && act) return PROC_ERR_INVAL;
     if (act && (act->flags & ~RABBITBONE_SA_RESTART) != 0) return PROC_ERR_INVAL;
     if (act && act->handler > 1) {
         if (!act->restorer) return PROC_ERR_INVAL;
-        if (!user_addr_range_valid((uptr)act->handler, 1u) || !user_addr_range_valid((uptr)act->restorer, 1u)) return PROC_ERR_RANGE;
+        if (!process_signal_user_code_pointer_valid((uptr)act->handler) ||
+            !process_signal_user_code_pointer_valid((uptr)act->restorer)) return PROC_ERR_RANGE;
     }
     process_signal_action_t *a = &current_proc.signal_actions[sig];
     if (oldact) {
@@ -172,13 +199,13 @@ process_status_t process_signal_set_action(u32 sig, const rabbitbone_sigaction_t
 
 process_status_t process_signal_mask(u32 how, const u64 *set, u64 *oldset) {
     if (!current_proc.active) return PROC_ERR_INVAL;
+    if (set && how != RABBITBONE_SIG_BLOCK && how != RABBITBONE_SIG_UNBLOCK && how != RABBITBONE_SIG_SETMASK) return PROC_ERR_INVAL;
     if (oldset) *oldset = current_proc.signal_blocked;
     if (set) {
         u64 m = signal_sanitized_mask(*set);
         if (how == RABBITBONE_SIG_BLOCK) current_proc.signal_blocked |= m;
         else if (how == RABBITBONE_SIG_UNBLOCK) current_proc.signal_blocked &= ~m;
-        else if (how == RABBITBONE_SIG_SETMASK) current_proc.signal_blocked = m;
-        else return PROC_ERR_INVAL;
+        else current_proc.signal_blocked = m;
     }
     return sync_current_to_slot() ? PROC_OK : PROC_ERR_INVAL;
 }
@@ -198,8 +225,11 @@ static bool process_signal_make_frame(active_process_t *p, cpu_regs_t *regs, u32
     frame.old_mask = p->signal_blocked;
     frame.signal = sig;
     frame.saved_regs = *regs;
-    uptr frame_addr = ((regs->rsp - sizeof(frame) - 8u) & ~(uptr)0xfull) + 8u;
-    if (!user_addr_range_valid(frame_addr, sizeof(frame))) return false;
+    uptr frame_unaligned = 0;
+    if (regs->rsp < (u64)sizeof(frame) + 16u) return false;
+    frame_unaligned = (uptr)(regs->rsp - (u64)sizeof(frame) - 8u);
+    uptr frame_addr = (frame_unaligned & ~(uptr)0xfull) + 8u;
+    if (frame_addr > regs->rsp || !user_addr_range_valid(frame_addr, sizeof(frame))) return false;
     if (!copy_to_process_user_space(p, frame_addr, &frame, sizeof(frame))) return false;
     regs->rip = a->handler;
     regs->rdi = sig;
@@ -262,7 +292,8 @@ bool process_signal_return(uptr frame_addr, cpu_regs_t *regs) {
     process_signal_frame_t frame;
     if (!process_copy_from_user(&frame, frame_addr, sizeof(frame))) return false;
     if (frame.magic != PROCESS_SIGNAL_FRAME_MAGIC || frame.restorer == 0) return false;
-    if (!user_addr_range_valid((uptr)frame.saved_regs.rip, 1u) || !user_addr_range_valid((uptr)frame.saved_regs.rsp, 1u)) return false;
+    if (!process_signal_user_code_pointer_valid((uptr)frame.saved_regs.rip) ||
+        !user_addr_range_valid((uptr)frame.saved_regs.rsp, 1u)) return false;
     current_proc.signal_blocked = signal_sanitized_mask(frame.old_mask);
     current_proc.signal_in_handler = false;
     current_proc.signal_frame_addr = 0;
@@ -347,15 +378,16 @@ void process_format_signals(char *out, usize cap) {
 
 void process_format_jobs(char *out, usize cap) {
     if (!out || cap == 0) return;
-    usize len = 0;
-    len += (usize)ksnprintf(out + len, len < cap ? cap - len : 0, "jobs: fg=%u session=%u\n", tty_foreground_pgrp, tty_session_id);
+    rabbitbone_buf_out_t bo;
+    rabbitbone_buf_init(&bo, out, cap);
+    rabbitbone_buf_appendf(&bo, "jobs: fg=%u session=%u\n", tty_foreground_pgrp, tty_session_id);
     if (!async_slots) return;
-    for (usize i = 0; i < PROCESS_ASYNC_CAP && len + 1u < cap; ++i) {
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) {
         active_process_t *p = &async_slots[i];
         if (!p->active) continue;
-        len += (usize)ksnprintf(out + len, len < cap ? cap - len : 0, "  pid=%u ppid=%u pgrp=%u sid=%u state=%s flags=0x%x pending=0x%llx name=%s\n",
-                                p->result.pid, p->parent_pid, p->process_group, p->session_id,
-                                process_state_name((u32)p->state), p->signal_flags,
-                                (unsigned long long)p->signal_pending, p->result.name);
+        rabbitbone_buf_appendf(&bo, "  pid=%u ppid=%u pgrp=%u sid=%u state=%s flags=0x%x pending=0x%llx name=%s\n",
+                               p->result.pid, p->parent_pid, p->process_group, p->session_id,
+                               process_state_name((u32)p->state), p->signal_flags,
+                               (unsigned long long)p->signal_pending, p->result.name);
     }
 }

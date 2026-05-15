@@ -45,16 +45,23 @@ static int sh_builtin_kctl(int argc, char **argv) {
         sh_err(": no arguments expected\n");
         return 2;
     }
-    char out[RABBITBONE_KCTL_OUT_MAX];
-    au_memset(out, 0, sizeof(out));
-    au_i64 r = au_kctl(op, out, sizeof(out), arg);
+    char *out = (char *)malloc(RABBITBONE_KCTL_OUT_MAX);
+    if (!out) {
+        sh_err(argv[0]);
+        sh_err(": out of memory\n");
+        return 1;
+    }
+    au_memset(out, 0, RABBITBONE_KCTL_OUT_MAX);
+    au_i64 r = au_kctl(op, out, RABBITBONE_KCTL_OUT_MAX, arg);
     if (r < 0) {
         sh_err(argv[0]);
         if (r == -8) sh_err(": permission denied; use sudo\n");
         else if (r == -11) sh_err(": unsupported by kernel\n");
         else sh_err(": syscall failed\n");
+        free(out);
         return r == -8 ? 126 : 1;
     }
     if (out[0]) sh_puts(out);
+    free(out);
     return 0;
 }

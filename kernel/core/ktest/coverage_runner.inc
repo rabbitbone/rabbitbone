@@ -29,6 +29,7 @@ bool ktest_run_all(void) {
     test_boot_memory_vmm_heap();
     test_vfs_ramfs_devfs();
     test_tarfs_module();
+    test_hardening_regressions();
     test_block_mbr_ext4();
     test_syscall_task_timer_elf();
     test_user_processes();

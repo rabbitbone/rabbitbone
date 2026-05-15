@@ -18,8 +18,8 @@ static ext4_status_t ext4_journal_area_is_free(ext4_mount_t *mnt, u64 first, u32
     if (!mnt || !free_out || count == 0) return EXT4_ERR_RANGE;
     *free_out = false;
     for (u32 i = 0; i < count; ++i) {
-        u64 block = first + i;
-        if (block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+        u64 block = 0;
+        if (!checked_add_u64(first, i, &block) || block >= mnt->blocks_count) return EXT4_ERR_RANGE;
         bool one_free = false;
         ext4_status_t st = ext4_block_bitmap_is_free(mnt, block, &one_free);
         if (st != EXT4_OK) return st;
@@ -30,7 +30,8 @@ static ext4_status_t ext4_journal_area_is_free(ext4_mount_t *mnt, u64 first, u32
 }
 
 static ext4_status_t ext4_journal_area_has_rabbitbone_marker(ext4_mount_t *mnt, u64 first, bool *owned_out) {
-    if (!mnt || !owned_out || first + 1u >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    u64 payload_block = 0;
+    if (!mnt || !owned_out || !checked_add_u64(first, 1u, &payload_block) || payload_block >= mnt->blocks_count) return EXT4_ERR_RANGE;
     *owned_out = false;
     u8 *block = ext4_tmp_block(mnt);
     if (!block) return EXT4_ERR_NO_MEMORY;
@@ -130,7 +131,9 @@ ext4_status_t ext4_mount_bounded(block_device_t *dev, u64 partition_lba, u64 par
             out->journal_ready = false;
             if (journal_area_free) {
                 for (u32 i = 0; i < out->journal_blocks; ++i) {
-                    st = reserve_block_if_free(out, out->journal_first_block + i);
+                    u64 reserve_block = 0;
+                    if (!checked_add_u64(out->journal_first_block, i, &reserve_block)) return EXT4_ERR_RANGE;
+                    st = reserve_block_if_free(out, reserve_block);
                     if (st != EXT4_OK) return st;
                 }
             }

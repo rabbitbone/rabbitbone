@@ -128,8 +128,10 @@ static ext4_status_t validate_extent_array_allocations(ext4_mount_t *mnt, const 
         u64 end64 = 0;
         if (!checked_add_u64(start, len, &end64) || end64 > mnt->blocks_count) return EXT4_ERR_RANGE;
         for (u32 j = 0; j < len; ++j) {
+            u64 data_block = 0;
+            if (!checked_add_u64(start, j, &data_block)) return EXT4_ERR_RANGE;
             bool allocated = false;
-            ext4_status_t st = block_bitmap_is_allocated(mnt, start + j, &allocated);
+            ext4_status_t st = block_bitmap_is_allocated(mnt, data_block, &allocated);
             if (st != EXT4_OK) return st;
             if (!allocated) { ++report->errors; return EXT4_ERR_CORRUPT; }
             ++report->extent_data_blocks;

@@ -96,6 +96,34 @@ static bool handle_table_can_add_kind(const sys_handle_t *handles, usize target_
     return true;
 }
 
+static void handle_table_remove_target_from_counts(const sys_handle_t *handles, usize fd, usize *vfs_count, usize *pipe_count) {
+    if (!handles || fd >= SYSCALL_MAX_HANDLES || !handles[fd].used) return;
+    if (handles[fd].kind == SYS_HANDLE_VFS) {
+        if (vfs_count && *vfs_count > 0) --*vfs_count;
+        return;
+    }
+    if (handle_kind_is_pipe_endpoint(handles[fd].kind) && pipe_count && *pipe_count > 0) --*pipe_count;
+}
+
+static void handle_table_add_kind_to_counts(u32 kind, usize *vfs_count, usize *pipe_count) {
+    if (kind == SYS_HANDLE_VFS) {
+        if (vfs_count) ++*vfs_count;
+        return;
+    }
+    if (handle_kind_is_pipe_endpoint(kind) && pipe_count) ++*pipe_count;
+}
+
+static bool handle_table_can_replace_two_kinds(const sys_handle_t *handles, usize first_fd, u32 first_kind, usize second_fd, u32 second_kind) {
+    if (!handles || first_fd >= SYSCALL_MAX_HANDLES || second_fd >= SYSCALL_MAX_HANDLES || first_fd == second_fd) return false;
+    usize vfs_count = count_vfs_handles(handles);
+    usize pipe_count = count_pipe_endpoints(handles);
+    handle_table_remove_target_from_counts(handles, first_fd, &vfs_count, &pipe_count);
+    handle_table_remove_target_from_counts(handles, second_fd, &vfs_count, &pipe_count);
+    handle_table_add_kind_to_counts(first_kind, &vfs_count, &pipe_count);
+    handle_table_add_kind_to_counts(second_kind, &vfs_count, &pipe_count);
+    return vfs_count <= SYSCALL_FILE_PER_PROCESS_CAP && pipe_count <= SYSCALL_PIPE_PER_PROCESS_ENDPOINT_CAP;
+}
+
 static sys_file_t *alloc_file_object(const char *path, const vfs_stat_t *st, u32 open_flags) {
     if (!path || !st) return 0;
     vfs_node_ref_t ref;
@@ -312,13 +340,8 @@ bool syscall_snapshot_pipe_between(void *writer_snapshot, usize writer_size, u32
     if (writer_fd >= SYSCALL_MAX_HANDLES || reader_fd >= SYSCALL_MAX_HANDLES) return false;
     if (writer_snapshot == reader_snapshot && writer_fd == reader_fd) return false;
     if (writer_snapshot == reader_snapshot) {
-        sys_handle_t probe[SYSCALL_MAX_HANDLES];
-        memcpy(probe, writer_snapshot, sizeof(probe));
-        if (!handle_table_can_add_kind(probe, reader_fd, SYS_HANDLE_PIPE_READ)) return false;
-        memset(&probe[reader_fd], 0, sizeof(probe[reader_fd]));
-        probe[reader_fd].used = true;
-        probe[reader_fd].kind = SYS_HANDLE_PIPE_READ;
-        if (!handle_table_can_add_kind(probe, writer_fd, SYS_HANDLE_PIPE_WRITE)) return false;
+        if (!handle_table_can_replace_two_kinds((const sys_handle_t *)writer_snapshot, reader_fd, SYS_HANDLE_PIPE_READ,
+                                                writer_fd, SYS_HANDLE_PIPE_WRITE)) return false;
     } else {
         if (!handle_table_can_add_kind((const sys_handle_t *)writer_snapshot, writer_fd, SYS_HANDLE_PIPE_WRITE)) return false;
         if (!handle_table_can_add_kind((const sys_handle_t *)reader_snapshot, reader_fd, SYS_HANDLE_PIPE_READ)) return false;

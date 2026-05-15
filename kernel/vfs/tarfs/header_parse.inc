@@ -27,6 +27,10 @@ static bool tar_type_supported(char typeflag) {
     return typeflag == 0 || typeflag == '0' || typeflag == '5';
 }
 
+static bool tar_align_512_checked(usize value, usize *out) {
+    return rabbitbone_align_up_usize_checked(value, 512u, out);
+}
+
 static bool tar_name_byte_allowed(char c) {
     unsigned char uc = (unsigned char)c;
     return uc >= 0x20u && uc != 0x7fu && c != '\\';
@@ -34,6 +38,7 @@ static bool tar_name_byte_allowed(char c) {
 
 static bool tar_name_invalid(const char *s, usize n) {
     if (!s || n == 0 || s[0] == '/') return true;
+    bool saw_real_component = false;
     usize i = 0;
     while (i < n && s[i]) {
         while (i < n && s[i] == '/') ++i;
@@ -43,10 +48,12 @@ static bool tar_name_invalid(const char *s, usize n) {
             ++i;
         }
         usize len = i - start;
-        if (len == 1u && s[start] == '.') return true;
+        if (len == 0) continue;
+        if (len == 1u && s[start] == '.') continue;
         if (len == 2u && s[start] == '.' && s[start + 1u] == '.') return true;
+        saw_real_component = true;
     }
-    return false;
+    return !saw_real_component;
 }
 
 static bool block_empty(const u8 *p) {
@@ -100,7 +107,8 @@ static bool header_path(const tar_header_t *h, char *out, usize out_size) {
     memcpy(tmp + pos, h->name, nl);
     pos += nl;
     tmp[pos] = 0;
-    return path_normalize(tmp, out, out_size);
+    if (!path_normalize(tmp, out, out_size)) return false;
+    return strcmp(out, "/") != 0;
 }
 
 tarfs_t *tarfs_open(const void *image, usize size) {
@@ -117,8 +125,8 @@ tarfs_t *tarfs_open(const void *image, usize size) {
         usize fsize = 0;
         if (!tar_octal(h->size, sizeof(h->size), &fsize)) { kfree(fs); return 0; }
         if (h->typeflag == '5' && fsize != 0) { kfree(fs); return 0; }
-        usize aligned = RABBITBONE_ALIGN_UP(fsize, 512u);
-        if (aligned < fsize || off > size - 512u || aligned > size - off - 512u) { kfree(fs); return 0; }
+        usize aligned = 0;
+        if (!tar_align_512_checked(fsize, &aligned) || off > size - 512u || aligned > size - off - 512u) { kfree(fs); return 0; }
         ++count;
         off += 512u + aligned;
     }
@@ -133,8 +141,8 @@ tarfs_t *tarfs_open(const void *image, usize size) {
         usize fsize = 0;
         if (!tar_octal(h->size, sizeof(h->size), &fsize)) { kfree(fs->entries); kfree(fs); return 0; }
         if (h->typeflag == '5' && fsize != 0) { kfree(fs->entries); kfree(fs); return 0; }
-        usize aligned = RABBITBONE_ALIGN_UP(fsize, 512u);
-        if (aligned < fsize || off > size - 512u || aligned > size - off - 512u) { kfree(fs->entries); kfree(fs); return 0; }
+        usize aligned = 0;
+        if (!tar_align_512_checked(fsize, &aligned) || off > size - 512u || aligned > size - off - 512u) { kfree(fs->entries); kfree(fs); return 0; }
         tarfs_entry_t *e = &fs->entries[fs->count];
         if (!header_path(h, e->path, sizeof(e->path))) { kfree(fs->entries); kfree(fs); return 0; }
         e->type = h->typeflag == '5' ? VFS_NODE_DIR : VFS_NODE_FILE;

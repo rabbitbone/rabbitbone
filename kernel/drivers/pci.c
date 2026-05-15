@@ -4,6 +4,7 @@
 #include <rabbitbone/log.h>
 #include <rabbitbone/console.h>
 #include <rabbitbone/kmem.h>
+#include <rabbitbone/format.h>
 
 #define PCI_CONFIG_ADDRESS 0xcf8u
 #define PCI_CONFIG_DATA    0xcfcu
@@ -13,8 +14,10 @@ static pci_device_t *pci_devices;
 static usize pci_devices_count;
 static bool pci_scanned;
 
-static bool pci_cfg_valid(u8 dev, u8 func, u8 offset) {
-    return dev < 32u && func < 8u && offset <= 0xfcu;
+static bool pci_cfg_valid_width(u8 dev, u8 func, u8 offset, u8 width) {
+    if (dev >= 32u || func >= 8u || (width != 1u && width != 2u && width != 4u)) return false;
+    if ((u32)offset + (u32)width > 256u) return false;
+    return ((u32)offset & ((u32)width - 1u)) == 0;
 }
 
 static u32 pci_addr(u8 bus, u8 dev, u8 func, u8 offset) {
@@ -22,29 +25,31 @@ static u32 pci_addr(u8 bus, u8 dev, u8 func, u8 offset) {
 }
 
 u32 pci_config_read32(u8 bus, u8 dev, u8 func, u8 offset) {
-    if (!pci_cfg_valid(dev, func, offset)) return 0xffffffffu;
+    if (!pci_cfg_valid_width(dev, func, offset, 4u)) return 0xffffffffu;
     outl(PCI_CONFIG_ADDRESS, pci_addr(bus, dev, func, offset));
     return inl(PCI_CONFIG_DATA);
 }
 
 u16 pci_config_read16(u8 bus, u8 dev, u8 func, u8 offset) {
-    u32 v = pci_config_read32(bus, dev, func, offset);
+    if (!pci_cfg_valid_width(dev, func, offset, 2u)) return 0xffffu;
+    u32 v = pci_config_read32(bus, dev, func, (u8)(offset & 0xfcu));
     return (u16)((v >> ((offset & 2u) * 8u)) & 0xffffu);
 }
 
 u8 pci_config_read8(u8 bus, u8 dev, u8 func, u8 offset) {
-    u32 v = pci_config_read32(bus, dev, func, offset);
+    if (!pci_cfg_valid_width(dev, func, offset, 1u)) return 0xffu;
+    u32 v = pci_config_read32(bus, dev, func, (u8)(offset & 0xfcu));
     return (u8)((v >> ((offset & 3u) * 8u)) & 0xffu);
 }
 
 void pci_config_write32(u8 bus, u8 dev, u8 func, u8 offset, u32 value) {
-    if (!pci_cfg_valid(dev, func, offset)) return;
+    if (!pci_cfg_valid_width(dev, func, offset, 4u)) return;
     outl(PCI_CONFIG_ADDRESS, pci_addr(bus, dev, func, offset));
     outl(PCI_CONFIG_DATA, value);
 }
 
 void pci_config_write16(u8 bus, u8 dev, u8 func, u8 offset, u16 value) {
-    if (!pci_cfg_valid(dev, func, offset)) return;
+    if (!pci_cfg_valid_width(dev, func, offset, 2u)) return;
     u32 aligned = offset & 0xfcu;
     u32 old = pci_config_read32(bus, dev, func, (u8)aligned);
     u32 shift = (u32)(offset & 2u) * 8u;
@@ -168,36 +173,21 @@ const pci_device_t *pci_find_class(u8 class_code, u8 subclass, u8 prog_if, usize
     return 0;
 }
 
-static void append_raw(char *out, usize out_len, usize *used, const char *s) {
-    if (!out || !out_len || !used || !s || *used >= out_len) return;
-    while (*s && *used + 1u < out_len) out[(*used)++] = *s++;
-    out[*used < out_len ? *used : out_len - 1u] = 0;
-}
-
-static void appendf(char *out, usize out_len, usize *used, const char *fmt, ...) {
-    char tmp[192];
-    __builtin_va_list ap;
-    __builtin_va_start(ap, fmt);
-    kvsnprintf(tmp, sizeof(tmp), fmt, ap);
-    __builtin_va_end(ap);
-    append_raw(out, out_len, used, tmp);
-}
-
 void pci_format_devices(char *out, usize out_len) {
     if (!out || out_len == 0) return;
-    out[0] = 0;
-    usize used = 0;
-    appendf(out, out_len, &used, "pci: count=%llu scanned=%u\n", (unsigned long long)pci_devices_count, pci_scanned ? 1u : 0u);
+    rabbitbone_buf_out_t bo;
+    rabbitbone_buf_init(&bo, out, out_len);
+    rabbitbone_buf_appendf(&bo, "pci: count=%llu scanned=%u\n", (unsigned long long)pci_devices_count, pci_scanned ? 1u : 0u);
     if (!pci_devices) return;
     for (usize i = 0; i < pci_devices_count; ++i) {
         const pci_device_t *pd = &pci_devices[i];
-        appendf(out, out_len, &used, "  %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x irq=%u/%u caps=%u\n",
+        rabbitbone_buf_appendf(&bo, "  %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x irq=%u/%u caps=%u\n",
                 pd->bus, pd->device, pd->function, pd->vendor_id, pd->device_id, pd->class_code, pd->subclass, pd->prog_if,
                 pd->irq_line, pd->irq_pin, pd->cap_count);
         for (u8 b = 0; b < PCI_MAX_BARS; ++b) {
             const pci_bar_info_t *bar = &pd->bars[b];
             if (!bar->base && !bar->size) continue;
-            appendf(out, out_len, &used, "    bar%u base=0x%llx size=0x%llx flags=0x%x\n", b,
+            rabbitbone_buf_appendf(&bo, "    bar%u base=0x%llx size=0x%llx flags=0x%x\n", b,
                     (unsigned long long)bar->base, (unsigned long long)bar->size, bar->flags);
         }
     }

@@ -4,6 +4,7 @@
 #include "ktest/boot_memory_vmm_heap_tests.inc"
 #include "ktest/vfs_ramfs_devfs_tests.inc"
 #include "ktest/tarfs_tests.inc"
+#include "ktest/hardening_regression_tests.inc"
 #include "ktest/block_mbr_ext4_tests.inc"
 #include "ktest/syscall_task_timer_elf_tests.inc"
 #include "ktest/user_process_tests.inc"

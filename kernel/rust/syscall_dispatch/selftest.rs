@@ -93,8 +93,13 @@ pub extern "C" fn rabbitbone_rust_syscall_selftest() -> bool {
     if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Kill, SysArgs { a0: (-1i64) as u64, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Kill, SysArgs { a0: (-2i64) as u64, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 0xffff_ffffu64, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 0xffff_fffeu64, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 0x8000_0000u64, a1: crate::abi::RABBITBONE_SIGKILL as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Kill, SysArgs { a0: 0x0000_0001_0000_0000u64, a1: crate::abi::RABBITBONE_SIGTERM as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
     if validate_args(SyscallNo::Kill, SysArgs { a0: 1, a1: crate::abi::RABBITBONE_NSIG as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 0xffff_ffff_8000_0000, a1: crate::abi::RABBITBONE_SIGKILL as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_ok() { return false; }
+    if validate_args(SyscallNo::Kill, SysArgs { a0: 0xffff_ffff_ffff_ffff, a1: crate::abi::RABBITBONE_SIGKILL as u64, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Sigprocmask, SysArgs { a0: crate::abi::RABBITBONE_SIG_SETMASK as u64, a1: 0x10000, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Sigpending, SysArgs { a0: 0x10000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }
     if validate_args(SyscallNo::Tcsetpgrp, SysArgs { a0: 1, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 }).is_err() { return false; }

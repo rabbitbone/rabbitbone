@@ -50,11 +50,6 @@ unsafe fn mount_ref(mounts: &[MountView; VFS_MAX_MOUNTS], idx: usize) -> &MountV
     &*mounts.as_ptr().add(idx)
 }
 
-#[inline(always)]
-unsafe fn comps_byte_ptr(comps: *mut [u8; VFS_NAME_MAX], comp: usize) -> *mut u8 {
-    comps.add(comp) as *mut u8
-}
-
 fn cstr_len(buf: &[u8]) -> usize {
     let mut i = 0;
     let len = buf.len();
@@ -68,21 +63,33 @@ fn fixed_cstr_len<const N: usize>(buf: &[u8; N]) -> usize {
     i
 }
 
+#[inline(always)]
+fn route_component_byte_allowed(c: u8) -> bool {
+    c >= 0x20 && c != 0x7f && c != b'\\'
+}
+
 fn append_component(out: &mut [u8; VFS_PATH_MAX], pos: &mut usize, input: &[u8], start: usize, len: usize) -> Result<(), RouteError> {
     if len == 0 { return Ok(()); }
     if len >= VFS_NAME_MAX { return Err(RouteError::Invalid); }
     let slash = if *pos > 1 { 1usize } else { 0usize };
-    if *pos + slash + len >= VFS_PATH_MAX { return Err(RouteError::Invalid); }
+    let after_slash = match (*pos).checked_add(slash) { Some(v) => v, None => return Err(RouteError::Invalid) };
+    let end = match after_slash.checked_add(len) { Some(v) => v, None => return Err(RouteError::Invalid) };
+    if end >= VFS_PATH_MAX { return Err(RouteError::Invalid); }
+    let mut j = 0usize;
+    while j < len {
+        if !route_component_byte_allowed(unsafe { slice_get(input, start + j) }) { return Err(RouteError::Invalid); }
+        j += 1;
+    }
     if slash != 0 {
         unsafe { arr_set(out, *pos, b'/'); }
-        *pos += 1;
+        *pos = after_slash;
     }
-    let mut j = 0usize;
+    j = 0usize;
     while j < len {
         unsafe { arr_set(out, *pos + j, slice_get(input, start + j)); }
         j += 1;
     }
-    *pos += len;
+    *pos = end;
     unsafe { arr_set(out, *pos, 0); }
     Ok(())
 }
@@ -236,6 +243,8 @@ pub extern "C" fn rabbitbone_rust_vfs_route_selftest() -> bool {
     if rabbitbone_rust_vfs_route(mounts.as_ptr(), rel.as_ptr(), rel.len(), &mut out as *mut RouteOut) != VFS_ERR_INVAL { return false; }
     let escape = b"/../../etc\0";
     if rabbitbone_rust_vfs_route(mounts.as_ptr(), escape.as_ptr(), escape.len(), &mut out as *mut RouteOut) != VFS_ERR_INVAL { return false; }
+    let bad_byte = b"/disk0/bad\\name\0";
+    if rabbitbone_rust_vfs_route(mounts.as_ptr(), bad_byte.as_ptr(), bad_byte.len(), &mut out as *mut RouteOut) != VFS_ERR_INVAL { return false; }
     let mut many = [0u8; 96];
     let mut pos = 0usize;
     let mut n = 0usize;

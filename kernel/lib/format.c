@@ -11,15 +11,27 @@ void rabbitbone_buf_init(rabbitbone_buf_out_t *out, char *buf, usize cap) {
 
 void rabbitbone_buf_append_raw(rabbitbone_buf_out_t *out, const char *s) {
     if (!out || !out->buf || !out->cap || !s) return;
-    while (*s && out->used + 1u < out->cap) out->buf[out->used++] = *s++;
+    if (out->used >= out->cap) out->used = out->cap - 1u;
+    while (*s && out->used < out->cap - 1u) out->buf[out->used++] = *s++;
+    out->buf[out->used < out->cap ? out->used : out->cap - 1u] = 0;
+}
+
+void rabbitbone_buf_vappendf(rabbitbone_buf_out_t *out, const char *fmt, __builtin_va_list ap) {
+    if (!out || !out->buf || !out->cap || !fmt) return;
+    if (out->used >= out->cap) out->used = out->cap - 1u;
+    usize rem = out->cap - out->used;
+    int wrote = kvsnprintf(out->buf + out->used, rem, fmt, ap);
+    if (wrote <= 0) return;
+    usize add = (usize)wrote;
+    usize room = rem ? rem - 1u : 0u;
+    if (add > room) add = room;
+    out->used += add;
     out->buf[out->used < out->cap ? out->used : out->cap - 1u] = 0;
 }
 
 void rabbitbone_buf_appendf(rabbitbone_buf_out_t *out, const char *fmt, ...) {
-    char tmp[192];
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(tmp, sizeof(tmp), fmt, ap);
+    rabbitbone_buf_vappendf(out, fmt, ap);
     __builtin_va_end(ap);
-    rabbitbone_buf_append_raw(out, tmp);
 }

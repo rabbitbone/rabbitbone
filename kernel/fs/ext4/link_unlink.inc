@@ -12,7 +12,7 @@ ext4_status_t ext4_link(ext4_mount_t *mnt, const char *old_path, const char *new
     char parent_path[VFS_PATH_MAX];
     char name[EXT4_NAME_LEN + 1];
     if (!split_parent_path(new_path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
-    if (ext4_name_is_dot_or_dotdot(name)) return EXT4_ERR_RANGE;
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     ext4_inode_disk_t parent;
     u32 parent_ino = 0;
     st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);
@@ -26,7 +26,10 @@ ext4_status_t ext4_link(ext4_mount_t *mnt, const char *old_path, const char *new
     u8 file_type = ext4_inode_is_symlink(&inode) ? 7u : 1u;
     st = dir_add_entry(mnt, parent_ino, &parent, name, src_ino, file_type);
     if (st != EXT4_OK) return st;
-    inode.i_links_count = (u16)(links + 1u);
+    if (!ext4_links_inc_checked(&inode)) {
+        (void)dir_remove_entry(mnt, parent_ino, &parent, name, 0, 0);
+        return EXT4_ERR_RANGE;
+    }
     st = write_inode(mnt, src_ino, &inode);
     if (st != EXT4_OK) {
         (void)dir_remove_entry(mnt, parent_ino, &parent, name, 0, 0);
@@ -40,7 +43,7 @@ ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path) {
     char parent_path[VFS_PATH_MAX];
     char name[EXT4_NAME_LEN + 1];
     if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
-    if (ext4_name_is_dot_or_dotdot(name)) return EXT4_ERR_RANGE;
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     ext4_inode_disk_t parent;
     u32 parent_ino = 0;
     ext4_status_t st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);
@@ -64,8 +67,11 @@ ext4_status_t ext4_unlink(ext4_mount_t *mnt, const char *path) {
     st = dir_remove_entry(mnt, parent_ino, &parent, name, 0, 0);
     if (st != EXT4_OK) return st;
     bool parent_nlink_changed = false;
-    if (is_dir && le16(parent.i_links_count) > 0) {
-        parent.i_links_count = (u16)(le16(parent.i_links_count) - 1u);
+    if (is_dir) {
+        if (!ext4_links_dec_checked(&parent)) {
+            (void)dir_add_entry(mnt, parent_ino, &parent_before, name, ino, type);
+            return EXT4_ERR_CORRUPT;
+        }
         st = write_inode(mnt, parent_ino, &parent);
         if (st != EXT4_OK) {
             (void)dir_add_entry(mnt, parent_ino, &parent_before, name, ino, type);
@@ -106,7 +112,7 @@ static ext4_status_t drop_removed_link(ext4_mount_t *mnt, u32 ino, ext4_inode_di
     if (!is_dir) {
         u16 links = le16(inode->i_links_count);
         if (links > 1u) {
-            inode->i_links_count = (u16)(links - 1u);
+            if (!ext4_links_dec_checked(inode)) return EXT4_ERR_CORRUPT;
             return write_inode(mnt, ino, inode);
         }
     }

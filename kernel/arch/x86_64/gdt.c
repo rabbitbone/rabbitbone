@@ -44,6 +44,14 @@ static bool dynamic_stacks_installed;
 
 static uptr align_down16(uptr v) { return v & ~(uptr)0xfull; }
 
+static bool gdt_stack_top_checked(void *base, usize size, uptr *top_out) {
+    if (!base || !top_out) return false;
+    uptr sum = 0;
+    if (__builtin_add_overflow((uptr)base, (uptr)size, &sum)) return false;
+    *top_out = align_down16(sum);
+    return *top_out != 0;
+}
+
 static u64 make_tss_low(uptr base, u32 limit) {
     u64 desc = 0;
     desc |= (u64)(limit & 0xffffu);
@@ -104,6 +112,20 @@ bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
     memset(ist0, 0, ist_size);
     memset(ist1, 0, ist_size);
     memset(ist2, 0, ist_size);
+    uptr ring0_top = 0;
+    uptr ist0_top = 0;
+    uptr ist1_top = 0;
+    uptr ist2_top = 0;
+    if (!gdt_stack_top_checked(ring0, ring0_size, &ring0_top) ||
+        !gdt_stack_top_checked(ist0, ist_size, &ist0_top) ||
+        !gdt_stack_top_checked(ist1, ist_size, &ist1_top) ||
+        !gdt_stack_top_checked(ist2, ist_size, &ist2_top)) {
+        kfree(ist0);
+        kfree(ist1);
+        kfree(ist2);
+        kfree(ring0);
+        return false;
+    }
     dynamic_kernel_stack = ring0;
     dynamic_ist_stacks[0] = ist0;
     dynamic_ist_stacks[1] = ist1;
@@ -111,10 +133,10 @@ bool gdt_install_dynamic_stacks(usize ring0_size, usize ist_size) {
     dynamic_kernel_stack_size = ring0_size;
     dynamic_ist_stack_size = ist_size;
     dynamic_stacks_installed = true;
-    gdt_set_kernel_stack(align_down16((uptr)ring0 + ring0_size));
-    gdt_set_ist(1, align_down16((uptr)ist0 + ist_size));
-    gdt_set_ist(2, align_down16((uptr)ist1 + ist_size));
-    gdt_set_ist(3, align_down16((uptr)ist2 + ist_size));
+    gdt_set_kernel_stack(ring0_top);
+    gdt_set_ist(1, ist0_top);
+    gdt_set_ist(2, ist1_top);
+    gdt_set_ist(3, ist2_top);
     KLOG(LOG_INFO, "gdt", "installed heap-backed stacks rsp0=%p ist=%llu", (void *)tss.rsp0, (unsigned long long)ist_size);
     return true;
 }
@@ -133,10 +155,25 @@ void gdt_init(void) {
 
     tss.iopb_offset = sizeof(tss64_t);
     if (have_dynamic_stacks) {
-        gdt_set_kernel_stack(align_down16((uptr)dynamic_kernel_stack + dynamic_kernel_stack_size));
-        gdt_set_ist(1, align_down16((uptr)dynamic_ist_stacks[0] + dynamic_ist_stack_size));
-        gdt_set_ist(2, align_down16((uptr)dynamic_ist_stacks[1] + dynamic_ist_stack_size));
-        gdt_set_ist(3, align_down16((uptr)dynamic_ist_stacks[2] + dynamic_ist_stack_size));
+        uptr ring0_top = 0;
+        uptr ist0_top = 0;
+        uptr ist1_top = 0;
+        uptr ist2_top = 0;
+        if (gdt_stack_top_checked(dynamic_kernel_stack, dynamic_kernel_stack_size, &ring0_top) &&
+            gdt_stack_top_checked(dynamic_ist_stacks[0], dynamic_ist_stack_size, &ist0_top) &&
+            gdt_stack_top_checked(dynamic_ist_stacks[1], dynamic_ist_stack_size, &ist1_top) &&
+            gdt_stack_top_checked(dynamic_ist_stacks[2], dynamic_ist_stack_size, &ist2_top)) {
+            gdt_set_kernel_stack(ring0_top);
+            gdt_set_ist(1, ist0_top);
+            gdt_set_ist(2, ist1_top);
+            gdt_set_ist(3, ist2_top);
+        } else {
+            dynamic_stacks_installed = false;
+            gdt_set_kernel_stack(gdt_kernel_stack_top());
+            gdt_set_ist(1, gdt_ist_top(1));
+            gdt_set_ist(2, gdt_ist_top(2));
+            gdt_set_ist(3, gdt_ist_top(3));
+        }
     } else {
         gdt_set_kernel_stack(gdt_kernel_stack_top());
         gdt_set_ist(1, gdt_ist_top(1));

@@ -142,11 +142,18 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
     }
     if (e->kind == DEV_KMSG) {
         if (size && !buffer) return VFS_ERR_INVAL;
-        char msg[161];
-        usize n = size < sizeof(msg) - 1u ? size : sizeof(msg) - 1u;
-        if (n) memcpy(msg, buffer, n);
+        enum { DEV_KMSG_MAX = 256 };
+        char *msg = (char *)kmalloc(DEV_KMSG_MAX);
+        if (!msg) return VFS_ERR_NOMEM;
+        usize n = size < DEV_KMSG_MAX - 1u ? size : DEV_KMSG_MAX - 1u;
+        const unsigned char *src = (const unsigned char *)buffer;
+        for (usize i = 0; i < n; ++i) {
+            unsigned char c = src[i];
+            msg[i] = (c >= 0x20u && c != 0x7fu) || c == '\t' ? (char)c : '?';
+        }
         msg[n] = 0;
         KLOG(LOG_INFO, "kmsg", "%s", msg);
+        kfree(msg);
         if (written_out) *written_out = size;
         return VFS_OK;
     }

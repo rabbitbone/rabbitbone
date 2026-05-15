@@ -18,8 +18,10 @@ static process_status_t process_segment_page_span(const elf64_phdr_t *ph, uptr *
     u64 seg_end64 = 0;
     if (__builtin_add_overflow(ph->p_vaddr, ph->p_memsz, &seg_end64)) return PROC_ERR_RANGE;
     uptr start = RABBITBONE_ALIGN_DOWN((uptr)ph->p_vaddr, PAGE_SIZE);
-    uptr end = RABBITBONE_ALIGN_UP((uptr)seg_end64, PAGE_SIZE);
-    if (end <= start || !user_addr_range_valid(start, (usize)(end - start))) return PROC_ERR_RANGE;
+    u64 aligned_end = 0;
+    if (!rabbitbone_align_up_u64_checked(seg_end64, PAGE_SIZE, &aligned_end)) return PROC_ERR_RANGE;
+    uptr end = (uptr)aligned_end;
+    if ((u64)end != aligned_end || end <= start || !user_addr_range_valid(start, (usize)(end - start))) return PROC_ERR_RANGE;
     usize pages = (usize)((end - start) / PAGE_SIZE);
     if (pages == 0 || pages > USER_MAX_MAPPINGS) return PROC_ERR_RANGE;
     *start_out = start;
@@ -119,11 +121,12 @@ static process_status_t load_elf_image(active_process_t *p, const char *path, u6
     if (ps != PROC_OK) return ps;
     for (usize mi = image_first_mapping; mi < p->mapping_count;) {
         uptr run_start = p->mappings[mi].virt;
-        uptr run_end = run_start + PAGE_SIZE;
+        uptr run_end = 0;
+        if (__builtin_add_overflow(run_start, (uptr)PAGE_SIZE, &run_end)) return PROC_ERR_RANGE;
         u32 run_prot = process_prot_from_flags(p->mappings[mi].final_flags);
         ++mi;
         while (mi < p->mapping_count && p->mappings[mi].virt == run_end && process_prot_from_flags(p->mappings[mi].final_flags) == run_prot) {
-            run_end += PAGE_SIZE;
+            if (__builtin_add_overflow(run_end, (uptr)PAGE_SIZE, &run_end)) return PROC_ERR_RANGE;
             ++mi;
         }
         ps = process_add_vma(p, run_start, run_end, run_prot, 0, USER_VMA_IMAGE);
@@ -276,6 +279,7 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     last_result = p->result;
     record_process_result(&p->result, st, p->result.started_ticks, p->result.finished_ticks);
     release_mappings(p);
+    process_drop_vmas(p);
     vmm_space_destroy(&p->space);
     memset(p, 0, sizeof(*p));
     return st;
@@ -297,6 +301,7 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     dst->signal_flags = current_proc.signal_flags & RABBITBONE_PROCESS_FLAG_SESSION_LEADER;
     dst->signal_blocked = current_proc.signal_blocked;
     memcpy(dst->signal_actions, current_proc.signal_actions, sizeof(dst->signal_actions));
+    process_signal_exec_reset(dst);
     dst->cred = current_proc.cred;
     strlcpy(dst->cwd, current_proc.cwd[0] ? current_proc.cwd : "/", sizeof(dst->cwd));
     dst->wait_pid = 0;
@@ -337,6 +342,7 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
         }
     }
     release_mappings(dst);
+    process_drop_vmas(dst);
     vmm_space_destroy(&dst->space);
     memset(dst, 0, sizeof(*dst));
     return st;
@@ -364,6 +370,7 @@ static void commit_exec_replacement(cpu_regs_t *regs) {
     (void)sync_current_to_slot();
     vmm_switch_space(&current_proc.space);
     release_mappings(exec_old_proc);
+    process_drop_vmas(exec_old_proc);
     vmm_space_destroy(&exec_old_proc->space);
     memset(exec_old_proc, 0, sizeof(*exec_old_proc));
     KLOG(LOG_INFO, "process", "exec pid=%u image=%s asid=%llu", current_proc.result.pid,
@@ -377,6 +384,7 @@ static void discard_exec_replacement(void) {
     }
     if (exec_replacement->active || exec_replacement->space.pml4_physical || exec_replacement->mapping_count) {
         release_mappings(exec_replacement);
+        process_drop_vmas(exec_replacement);
         vmm_space_destroy(&exec_replacement->space);
     }
     memset(exec_replacement, 0, sizeof(*exec_replacement));

@@ -35,7 +35,8 @@ static u64 allocator_normalize_goal(ext4_mount_t *mnt, u64 goal) {
 static void allocator_note_success(ext4_mount_t *mnt, u64 block) {
     if (!mnt) return;
     u64 first = allocator_first_data_block(mnt);
-    u64 next = block + 1u;
+    u64 next = first;
+    if (!checked_add_u64(block, 1u, &next)) next = first;
     if (next >= mnt->blocks_count || ext4_block_is_journal(mnt, next)) next = first;
     mnt->allocator_next_block = next;
 }
@@ -78,7 +79,13 @@ static ext4_status_t alloc_block_goal(ext4_mount_t *mnt, u64 goal, bool zero_fil
             if (st != EXT4_OK) { final = st; goto out; }
             u32 gfree = gd_free_blocks(&gd);
             u64 sfree = sb_free_blocks(mnt);
-            if (gfree) gd_set_free_blocks(&gd, gfree - 1u);
+            if (gfree == 0 || sfree == 0) {
+                bitmap_clear8(bm, bit);
+                (void)write_block(mnt, bitmap_block, bm);
+                final = EXT4_ERR_CORRUPT;
+                goto out;
+            }
+            gd_set_free_blocks(&gd, gfree - 1u);
             st = write_group_desc(mnt, group, &gd);
             if (st != EXT4_OK) {
                 bitmap_clear8(bm, bit);
@@ -86,10 +93,10 @@ static ext4_status_t alloc_block_goal(ext4_mount_t *mnt, u64 goal, bool zero_fil
                 final = st;
                 goto out;
             }
-            if (sfree) sb_set_free_blocks(mnt, sfree - 1u);
+            sb_set_free_blocks(mnt, sfree - 1u);
             st = write_super(mnt);
             if (st != EXT4_OK) {
-                if (sfree) sb_set_free_blocks(mnt, sfree);
+                sb_set_free_blocks(mnt, sfree);
                 bitmap_clear8(bm, bit);
                 (void)write_block(mnt, bitmap_block, bm);
                 gd_set_free_blocks(&gd, gfree);
@@ -140,7 +147,9 @@ static bool ext4_block_is_known_metadata(ext4_mount_t *mnt, u64 block, const ext
     u64 gdt_bytes = 0;
     if (!checked_mul_u64((u64)mnt->group_count, (u64)mnt->group_desc_size, &gdt_bytes)) return true;
     u64 gdt_blocks = div_round_up_u64(gdt_bytes, mnt->block_size);
-    if (block >= gdt_first && block < gdt_first + gdt_blocks) return true;
+    u64 gdt_end = 0;
+    if (!checked_add_u64(gdt_first, gdt_blocks, &gdt_end)) return true;
+    if (block >= gdt_first && block < gdt_end) return true;
 
     if (block == group_block_bitmap(block_group_gd)) return true;
     if (block == group_inode_bitmap(block_group_gd)) return true;
@@ -148,7 +157,9 @@ static bool ext4_block_is_known_metadata(ext4_mount_t *mnt, u64 block, const ext
     u64 table_bytes = 0;
     if (!checked_mul_u64((u64)mnt->inodes_per_group, (u64)mnt->inode_size, &table_bytes)) return true;
     u64 table_blocks = div_round_up_u64(table_bytes, mnt->block_size);
-    if (block >= inode_table && block < inode_table + table_blocks) return true;
+    u64 inode_table_end = 0;
+    if (!checked_add_u64(inode_table, table_blocks, &inode_table_end)) return true;
+    if (block >= inode_table && block < inode_table_end) return true;
     return false;
 }
 
@@ -173,6 +184,8 @@ static ext4_status_t free_block(ext4_mount_t *mnt, u64 block) {
 
     u32 old_gfree = gd_free_blocks(&gd);
     u64 old_sfree = sb_free_blocks(mnt);
+    u32 valid = group_valid_blocks(mnt, group);
+    if (old_gfree >= valid || old_sfree >= mnt->blocks_count) { st = EXT4_ERR_CORRUPT; goto out; }
     bitmap_clear8(bm, bit);
     st = write_block(mnt, bitmap_block, bm);
     if (st != EXT4_OK) goto out;
@@ -216,8 +229,9 @@ static ext4_status_t deferred_free_run(ext4_mount_t *mnt, ext4_deferred_free_t *
 
 
 static ext4_status_t reserve_block_if_free(ext4_mount_t *mnt, u64 block) {
-    if (!mnt || block >= mnt->blocks_count) return EXT4_ERR_RANGE;
+    if (!mnt || mnt->blocks_per_group == 0 || block >= mnt->blocks_count) return EXT4_ERR_RANGE;
     u32 group = (u32)(block / mnt->blocks_per_group);
+    if (group >= mnt->group_count) return EXT4_ERR_RANGE;
     u32 bit = (u32)(block % mnt->blocks_per_group);
     ext4_group_desc_disk_t gd;
     ext4_status_t st = read_group_desc(mnt, group, &gd);
@@ -266,7 +280,13 @@ ext4_status_t ext4_recover(ext4_mount_t *mnt, ext4_fsck_report_t *report) {
             if (journal_record_header_valid(mnt, &jr) && jr.state == 1u) {
                 u8 *payload = ext4_tmp_block(mnt);
                 if (!payload) { ext4_tmp_block_free(header_block); return EXT4_ERR_NO_MEMORY; }
-                st = read_block(mnt, mnt->journal_first_block + 1u, payload);
+                u64 payload_block = 0;
+                if (!checked_add_u64(mnt->journal_first_block, 1u, &payload_block) || payload_block >= mnt->blocks_count) {
+                    ext4_tmp_block_free(payload);
+                    ext4_tmp_block_free(header_block);
+                    return EXT4_ERR_RANGE;
+                }
+                st = read_block(mnt, payload_block, payload);
                 if (st == EXT4_OK && crc32(payload, (usize)mnt->block_size) == jr.payload_crc) {
                     st = raw_write_block(mnt, jr.target_block, payload);
                     if (st == EXT4_OK) {
@@ -303,19 +323,39 @@ static ext4_status_t alloc_inode(ext4_mount_t *mnt, bool dir, u32 *ino_out) {
         st = read_block(mnt, bitmap_block, bm);
         if (st != EXT4_OK) { result = st; goto out; }
         for (u32 bit = 0; bit < mnt->inodes_per_group; ++bit) {
-            u32 ino = group * mnt->inodes_per_group + bit + 1u;
+            u64 ino64 = (u64)group * (u64)mnt->inodes_per_group + (u64)bit + 1u;
+            if (ino64 > 0xffffffffull) continue;
+            u32 ino = (u32)ino64;
             if (ino < first || ino > mnt->inodes_count) continue;
             if (bitmap_get(bm, bit)) continue;
+            u32 old_gfree = gd_free_inodes(&gd);
+            u64 old_sfree = sb_free_inodes(mnt);
+            u32 old_used_dirs = gd_used_dirs(&gd);
+            if (old_gfree == 0 || old_sfree == 0 || (dir && old_used_dirs == 0xffffffffu)) { result = EXT4_ERR_CORRUPT; goto out; }
             bitmap_set8(bm, bit);
             st = write_block(mnt, bitmap_block, bm);
             if (st != EXT4_OK) { result = st; goto out; }
-            gd_set_free_inodes(&gd, gd_free_inodes(&gd) - 1u);
-            if (dir) gd_set_used_dirs(&gd, gd_used_dirs(&gd) + 1u);
+            gd_set_free_inodes(&gd, old_gfree - 1u);
+            if (dir) gd_set_used_dirs(&gd, old_used_dirs + 1u);
             st = write_group_desc(mnt, group, &gd);
-            if (st != EXT4_OK) { result = st; goto out; }
-            sb_set_free_inodes(mnt, sb_free_inodes(mnt) - 1u);
+            if (st != EXT4_OK) {
+                bitmap_clear8(bm, bit);
+                (void)write_block(mnt, bitmap_block, bm);
+                result = st;
+                goto out;
+            }
+            sb_set_free_inodes(mnt, old_sfree - 1u);
             st = write_super(mnt);
-            if (st != EXT4_OK) { result = st; goto out; }
+            if (st != EXT4_OK) {
+                sb_set_free_inodes(mnt, old_sfree);
+                bitmap_clear8(bm, bit);
+                (void)write_block(mnt, bitmap_block, bm);
+                gd_set_free_inodes(&gd, old_gfree);
+                if (dir) gd_set_used_dirs(&gd, old_used_dirs);
+                (void)write_group_desc(mnt, group, &gd);
+                result = st;
+                goto out;
+            }
             *ino_out = ino;
             result = EXT4_OK;
             goto out;
@@ -327,9 +367,10 @@ out:
 }
 
 static ext4_status_t free_inode(ext4_mount_t *mnt, u32 ino, bool dir) {
-    if (!mnt || ino == 0 || ino > mnt->inodes_count) return EXT4_ERR_RANGE;
+    if (!mnt || mnt->inodes_per_group == 0 || ino == 0 || ino > mnt->inodes_count) return EXT4_ERR_RANGE;
     u32 idx = ino - 1u;
     u32 group = idx / mnt->inodes_per_group;
+    if (group >= mnt->group_count) return EXT4_ERR_RANGE;
     u32 bit = idx % mnt->inodes_per_group;
     ext4_group_desc_disk_t gd;
     ext4_status_t st = read_group_desc(mnt, group, &gd);
@@ -339,15 +380,32 @@ static ext4_status_t free_inode(ext4_mount_t *mnt, u32 ino, bool dir) {
     st = read_block(mnt, group_inode_bitmap(&gd), bm);
     if (st != EXT4_OK) goto out;
     if (!bitmap_get(bm, bit)) { st = EXT4_ERR_CORRUPT; goto out; }
+    u32 old_gfree = gd_free_inodes(&gd);
+    u64 old_sfree = sb_free_inodes(mnt);
+    u32 old_used_dirs = gd_used_dirs(&gd);
+    if (old_gfree >= mnt->inodes_per_group || old_sfree >= mnt->inodes_count || (dir && old_used_dirs == 0)) { st = EXT4_ERR_CORRUPT; goto out; }
     bitmap_clear8(bm, bit);
-    st = write_block(mnt, group_inode_bitmap(&gd), bm);
+    u64 bitmap_block = group_inode_bitmap(&gd);
+    st = write_block(mnt, bitmap_block, bm);
     if (st != EXT4_OK) goto out;
-    gd_set_free_inodes(&gd, gd_free_inodes(&gd) + 1u);
-    if (dir && gd_used_dirs(&gd)) gd_set_used_dirs(&gd, gd_used_dirs(&gd) - 1u);
+    gd_set_free_inodes(&gd, old_gfree + 1u);
+    if (dir) gd_set_used_dirs(&gd, old_used_dirs - 1u);
     st = write_group_desc(mnt, group, &gd);
-    if (st != EXT4_OK) goto out;
-    sb_set_free_inodes(mnt, sb_free_inodes(mnt) + 1u);
+    if (st != EXT4_OK) {
+        bitmap_set8(bm, bit);
+        (void)write_block(mnt, bitmap_block, bm);
+        goto out;
+    }
+    sb_set_free_inodes(mnt, old_sfree + 1u);
     st = write_super(mnt);
+    if (st != EXT4_OK) {
+        sb_set_free_inodes(mnt, old_sfree);
+        bitmap_set8(bm, bit);
+        (void)write_block(mnt, bitmap_block, bm);
+        gd_set_free_inodes(&gd, old_gfree);
+        if (dir) gd_set_used_dirs(&gd, old_used_dirs);
+        (void)write_group_desc(mnt, group, &gd);
+    }
 out:
     ext4_tmp_block_free(bm);
     return st;

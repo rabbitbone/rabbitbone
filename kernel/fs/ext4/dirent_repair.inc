@@ -3,6 +3,7 @@ static bool dirent_live_entry_is_repairable(ext4_mount_t *mnt, const ext4_dir_en
     if (de->name_len == 0) return false;
     if (le32(de->inode) == 0 || le32(de->inode) > mnt->inodes_count) return false;
     if (de->file_type > 7u) return false;
+    if (!ext4_name_bytes_valid(de->name, de->name_len, true)) return false;
     u16 need = ext4_rec_len(de->name_len);
     return need >= 8u && need <= rec_len;
 }
@@ -33,11 +34,11 @@ static ext4_status_t dirent_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inod
     if (!fixed) { ext4_tmp_block_free(block); return EXT4_ERR_NO_MEMORY; }
     bool changed_any = false;
     ext4_status_t final_st = EXT4_OK;
-    for (u64 off = 0; off < size; off += mnt->block_size) {
-        u64 logical64 = off / mnt->block_size;
-        if (logical64 > 0xffffffffull) { final_st = EXT4_ERR_RANGE; break; }
+    u32 block_count = 0;
+    if (!ext4_block_count_u32_checked(mnt, size, &block_count)) { final_st = EXT4_ERR_RANGE; goto done; }
+    for (u32 logical = 0; logical < block_count; ++logical) {
         u64 phys = 0;
-        ext4_status_t st = inode_block_for_write(mnt, dir, (u32)logical64, &phys, false, false, false);
+        ext4_status_t st = inode_block_for_write(mnt, dir, logical, &phys, false, false, false);
         if (st != EXT4_OK) continue;
         st = read_block(mnt, phys, block);
         if (st != EXT4_OK) { final_st = st; break; }
@@ -52,7 +53,8 @@ static ext4_status_t dirent_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inod
         while (in + 8u <= mnt->block_size) {
             const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + in);
             u16 rec_len = le16(de->rec_len);
-            if (rec_len < 8u || (rec_len & 3u) != 0 || in + rec_len > mnt->block_size) {
+            usize next_in = 0;
+            if (rec_len < 8u || (rec_len & 3u) != 0 || !checked_add_usize(in, rec_len, &next_in) || next_in > mnt->block_size) {
                 parse_ok = false;
                 changed = true;
                 break;
@@ -60,18 +62,19 @@ static ext4_status_t dirent_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inod
 
             if (dirent_live_entry_is_repairable(mnt, de, rec_len)) {
                 u16 need = ext4_rec_len(de->name_len);
-                if (out + need > mnt->block_size) {
+                usize next_out = 0;
+                if (!checked_add_usize(out, need, &next_out) || next_out > mnt->block_size) {
                     parse_ok = false;
                     changed = true;
                     break;
                 }
                 dirent_copy_normalized(fixed + out, le32(de->inode), need, de->file_type, de->name, de->name_len);
-                out += need;
+                out = next_out;
                 ++live_entries;
             } else {
                 if (de->inode != 0 || de->name_len != 0 || de->file_type != 0) changed = true;
             }
-            in += rec_len;
+            in = next_in;
         }
         if (in != mnt->block_size) changed = true;
 
@@ -82,7 +85,12 @@ static ext4_status_t dirent_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inod
             usize scan = 0;
             for (u32 i = 0; i < live_entries; ++i) {
                 last = (ext4_dir_entry_2_t *)(fixed + scan);
-                scan += le16(last->rec_len);
+                usize next_scan = 0;
+                if (!checked_add_usize(scan, le16(last->rec_len), &next_scan) || next_scan > mnt->block_size) {
+                    final_st = EXT4_ERR_CORRUPT;
+                    break;
+                }
+                scan = next_scan;
             }
             if (!last || scan != out) {
                 final_st = EXT4_ERR_CORRUPT;
@@ -98,6 +106,7 @@ static ext4_status_t dirent_repair_dir(ext4_mount_t *mnt, u32 dir_ino, ext4_inod
             changed_any = true;
         }
     }
+done:
     kfree(fixed);
     ext4_tmp_block_free(block);
     if (final_st != EXT4_OK) return final_st;
@@ -133,8 +142,9 @@ ext4_status_t ext4_repair_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *report
         u32 valid_inodes = group_valid_inodes(mnt, group);
         for (u32 bit = 0; bit < valid_inodes; ++bit) {
             if (!bitmap_get(bm, bit)) continue;
-            u32 ino = group * mnt->inodes_per_group + bit + 1u;
-            if (ino == 0 || ino > mnt->inodes_count) continue;
+            u64 ino64 = (u64)group * (u64)mnt->inodes_per_group + (u64)bit + 1u;
+            if (ino64 == 0 || ino64 > mnt->inodes_count || ino64 > 0xffffffffull) continue;
+            u32 ino = (u32)ino64;
             ext4_inode_disk_t inode;
             st = ext4_read_inode(mnt, ino, &inode);
             if (st != EXT4_OK) goto out_bm;

@@ -5,22 +5,39 @@ typedef struct sys_kctl_out {
     usize len;
 } sys_kctl_out_t;
 
+static void kctl_len_add(sys_kctl_out_t *out, usize add) {
+    if (!out || add == 0) return;
+    if (out->len > (usize)-1 - add) out->len = (usize)-1;
+    else out->len += add;
+}
+
 static void kctl_append_raw(sys_kctl_out_t *out, const char *s) {
     if (!out || !s) return;
     while (*s) {
-        if (out->cap && out->len + 1u < out->cap) out->buf[out->len] = *s;
-        ++out->len;
+        if (out->cap && out->len < out->cap - 1u) out->buf[out->len] = *s;
+        kctl_len_add(out, 1u);
         ++s;
     }
 }
 
 static void kctl_appendf(sys_kctl_out_t *out, const char *fmt, ...) {
-    char tmp[256];
+    if (!out || !fmt) return;
+    if (!out->cap || out->len >= out->cap) {
+        char sink[1];
+        __builtin_va_list ap;
+        __builtin_va_start(ap, fmt);
+        int wrote = kvsnprintf(sink, sizeof(sink), fmt, ap);
+        __builtin_va_end(ap);
+        if (wrote > 0) kctl_len_add(out, (usize)wrote);
+        return;
+    }
+    usize rem = out->cap - out->len;
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(tmp, sizeof(tmp), fmt, ap);
+    int wrote = kvsnprintf(out->buf + out->len, rem, fmt, ap);
     __builtin_va_end(ap);
-    kctl_append_raw(out, tmp);
+    if (wrote <= 0) return;
+    kctl_len_add(out, (usize)wrote);
 }
 
 static void kctl_finish(sys_kctl_out_t *out) {
@@ -29,9 +46,8 @@ static void kctl_finish(sys_kctl_out_t *out) {
     out->buf[pos] = 0;
 }
 
-static sys_kctl_out_t *kctl_log_target;
-static void kctl_log_line_writer(const char *line) {
-    kctl_append_raw(kctl_log_target, line);
+static void kctl_log_line_writer(const char *line, void *ctx) {
+    kctl_append_raw((sys_kctl_out_t *)ctx, line);
 }
 
 
@@ -48,8 +64,12 @@ typedef struct kctl_ktest_stacks {
     uptr old_rsp0;
 } kctl_ktest_stacks_t;
 
-static uptr kctl_stack_top(void *base, usize size) {
-    return ((uptr)base + size) & ~(uptr)0xfull;
+static bool kctl_stack_top_checked(void *base, usize size, uptr *top_out) {
+    if (!base || !top_out) return false;
+    uptr sum = 0;
+    if (__builtin_add_overflow((uptr)base, (uptr)size, &sum)) return false;
+    *top_out = sum & ~(uptr)0xfull;
+    return true;
 }
 
 static void kctl_run_full_ktest_body(u64 arg) {
@@ -64,7 +84,10 @@ static void kctl_run_full_ktest_body(u64 arg) {
      * for the whole full-test window.
      */
     if (stacks && stacks->tss_stack) {
-        gdt_set_kernel_stack(kctl_stack_top(stacks->tss_stack, KCTL_KTEST_TSS_STACK_SIZE));
+        uptr tss_top = 0;
+        if (kctl_stack_top_checked(stacks->tss_stack, KCTL_KTEST_TSS_STACK_SIZE, &tss_top)) {
+            gdt_set_kernel_stack(tss_top);
+        }
     }
 
     cpu_sti();
@@ -93,9 +116,15 @@ static bool kctl_run_full_ktest_on_private_stack(void) {
     memset(stacks.tss_stack, 0, KCTL_KTEST_TSS_STACK_SIZE);
     stacks.old_rsp0 = gdt_current_kernel_stack();
 
-    uptr exec_top = kctl_stack_top(stacks.exec_stack, KCTL_KTEST_STACK_SIZE);
-    if (exec_top > KCTL_KTEST_STACK_GUARD) exec_top -= KCTL_KTEST_STACK_GUARD;
-    exec_top &= ~(uptr)0xfull;
+    uptr exec_top = 0;
+    if (!kctl_stack_top_checked(stacks.exec_stack, KCTL_KTEST_STACK_SIZE, &exec_top) ||
+        exec_top <= KCTL_KTEST_STACK_GUARD) {
+        gdt_set_kernel_stack(stacks.old_rsp0);
+        kfree(stacks.tss_stack);
+        kfree(stacks.exec_stack);
+        return false;
+    }
+    exec_top = (exec_top - KCTL_KTEST_STACK_GUARD) & ~(uptr)0xfull;
 
     u64 ok = arch_call_on_stack((u64)exec_top, kctl_run_full_ktest_body, (u64)(uptr)&stacks);
 
@@ -113,6 +142,7 @@ static syscall_result_t kctl_copy_text(u64 out_ptr, u64 out_len64, const char *t
     usize n = used < cap ? used + 1u : cap;
     if (n > cap) n = cap;
     if (!copy_out_buf(out_ptr, tmp, n)) return err(VFS_ERR_INVAL);
+    if (used > (usize)0x7fffffffffffffffull) return ok(0x7fffffffffffffffll);
     return ok((i64)used);
 }
 
@@ -146,9 +176,35 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
         if (!validate_user_write_range(out_ptr, (usize)out_len64)) return err(VFS_ERR_INVAL);
     }
 
-    char tmp[RABBITBONE_KCTL_OUT_MAX];
-    memset(tmp, 0, sizeof(tmp));
-    sys_kctl_out_t out = { tmp, sizeof(tmp), 0 };
+    if (terminal_op) {
+        switch (op) {
+            case RABBITBONE_KCTL_OP_PANIC: {
+                enum { KCTL_PANIC_MSG_MAX = 160 };
+                char *msg = arg_ptr ? copy_string_arg_heap(arg_ptr, KCTL_PANIC_MSG_MAX) : 0;
+                if (msg) {
+                    PANIC("userspace requested panic: %s", msg);
+                }
+                PANIC("userspace requested panic");
+            }
+            case RABBITBONE_KCTL_OP_REBOOT:
+                KLOG(LOG_WARN, "kctl", "userspace requested reboot");
+                cpu_reboot();
+                break;
+            case RABBITBONE_KCTL_OP_HALT:
+                KLOG(LOG_WARN, "kctl", "userspace requested halt");
+                cpu_halt_forever();
+                break;
+            default:
+                break;
+        }
+        return err(VFS_ERR_INVAL);
+    }
+
+    char *tmp = (char *)kmalloc(RABBITBONE_KCTL_OUT_MAX);
+    if (!tmp) return err(VFS_ERR_NOMEM);
+    memset(tmp, 0, RABBITBONE_KCTL_OUT_MAX);
+    sys_kctl_out_t out = { tmp, RABBITBONE_KCTL_OUT_MAX, 0 };
+    syscall_result_t result = err(VFS_ERR_INVAL);
 
     switch (op) {
         case RABBITBONE_KCTL_OP_MEM: {
@@ -199,7 +255,7 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
             bool need_isolation = process_user_active() || process_async_scheduler_active();
             if (need_isolation) {
                 isolated = process_enter_kernel_test_context();
-                if (!isolated) return err(VFS_ERR_INVAL);
+                if (!isolated) { result = err(VFS_ERR_INVAL); goto out; }
             }
 
             bool ok_all = kctl_run_full_ktest_on_private_stack();
@@ -222,9 +278,9 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
         }
         case RABBITBONE_KCTL_OP_LOGS: {
             kctl_append_raw(&out, "logs:\n");
-            kctl_log_target = &out;
-            log_dump_ring(kctl_log_line_writer);
-            kctl_log_target = 0;
+            usize budget = 0;
+            if (out.cap > out.len + 1u) budget = out.cap - out.len - 1u;
+            log_dump_ring_tail_ctx(kctl_log_line_writer, &out, budget);
             break;
         }
         case RABBITBONE_KCTL_OP_DISKS:
@@ -304,25 +360,14 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
             }
             break;
         }
-        case RABBITBONE_KCTL_OP_PANIC: {
-            char msg[160];
-            if (arg_ptr && copy_string_arg(arg_ptr, msg, sizeof(msg))) {
-                PANIC("userspace requested panic: %s", msg);
-            }
-            PANIC("userspace requested panic");
-        }
-        case RABBITBONE_KCTL_OP_REBOOT:
-            KLOG(LOG_WARN, "kctl", "userspace requested reboot");
-            cpu_reboot();
-            break;
-        case RABBITBONE_KCTL_OP_HALT:
-            KLOG(LOG_WARN, "kctl", "userspace requested halt");
-            cpu_halt_forever();
-            break;
         default:
-            return err(VFS_ERR_INVAL);
+            result = err(VFS_ERR_INVAL);
+            goto out;
     }
 
     kctl_finish(&out);
-    return kctl_copy_text(out_ptr, out_len64, tmp, out.len);
+    result = kctl_copy_text(out_ptr, out_len64, tmp, out.len);
+out:
+    kfree(tmp);
+    return result;
 }

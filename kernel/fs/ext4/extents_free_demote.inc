@@ -4,11 +4,13 @@ static ext4_status_t extent_array_free_logical_block(ext4_mount_t *mnt, ext4_ino
     for (u16 i = 0; i < entries; ++i) {
         u32 first = le32(ext[i].ee_block);
         u32 len = extent_len_blocks(&ext[i]);
-        u32 end = first + len;
+        u32 end = 0;
+        if (!extent_logical_end_checked(first, len, &end)) return EXT4_ERR_CORRUPT;
         if (logical < first || logical >= end) continue;
         if (logical != first && logical != end - 1u && entries >= le16(hdr->eh_max)) return EXT4_ERR_UNSUPPORTED;
         bool unwritten = extent_is_unwritten(&ext[i]);
-        u64 phys = extent_start_block(&ext[i]) + (u64)(logical - first);
+        u64 phys = 0;
+        if (!checked_add_u64(extent_start_block(&ext[i]), (u64)(logical - first), &phys)) return EXT4_ERR_RANGE;
         ext4_status_t st = deferred_free_add(deferred, phys);
         if (st != EXT4_OK) return st;
         if (len == 1u) {
@@ -23,11 +25,14 @@ static ext4_status_t extent_array_free_logical_block(ext4_mount_t *mnt, ext4_ino
             extent_set_len_blocks_state(&ext[i], len - 1u, unwritten);
         } else {
             u32 right_len = end - logical - 1u;
-            u64 right_start = phys + 1u;
+            u64 right_start = 0;
+            if (!checked_add_u64(phys, 1u, &right_start)) return EXT4_ERR_RANGE;
             extent_set_len_blocks_state(&ext[i], logical - first, unwritten);
             for (u16 j = entries; j > i + 1u; --j) ext[j] = ext[j - 1u];
             memset(&ext[i + 1u], 0, sizeof(ext4_extent_t));
-            ext[i + 1u].ee_block = logical + 1u;
+            u32 right_first = 0;
+            if (!checked_add_u32(logical, 1u, &right_first)) return EXT4_ERR_RANGE;
+            ext[i + 1u].ee_block = right_first;
             extent_set_len_blocks_state(&ext[i + 1u], right_len, unwritten);
             extent_set_start_block(&ext[i + 1u], right_start);
             hdr->eh_entries = entries + 1u;

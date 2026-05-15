@@ -120,7 +120,6 @@ pub enum DecodeError {
 
 const VFS_ERR_INVAL: i64 = crate::abi::RABBITBONE_ERR_INVAL;
 const VFS_ERR_UNSUPPORTED: i64 = crate::abi::RABBITBONE_ERR_UNSUPPORTED;
-const VFS_ERR_BUSY: i64 = crate::abi::RABBITBONE_ERR_BUSY;
 const MAX_CONSOLE_WRITE: u64 = 65_536;
 const MAX_IO_BYTES: u64 = 1_048_576;
 const MAX_CREATE_BYTES: u64 = 65_536;

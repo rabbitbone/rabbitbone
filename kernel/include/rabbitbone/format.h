@@ -13,6 +13,7 @@ typedef struct rabbitbone_buf_out {
 
 void rabbitbone_buf_init(rabbitbone_buf_out_t *out, char *buf, usize cap);
 void rabbitbone_buf_append_raw(rabbitbone_buf_out_t *out, const char *s);
+void rabbitbone_buf_vappendf(rabbitbone_buf_out_t *out, const char *fmt, __builtin_va_list ap);
 void rabbitbone_buf_appendf(rabbitbone_buf_out_t *out, const char *fmt, ...);
 
 #if defined(__cplusplus)

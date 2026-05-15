@@ -18,10 +18,9 @@ void syscall_reset_user_handles(void) {
 
 void syscall_prepare_user_handle_snapshot(void *dst, usize dst_size) {
     if (!dst || dst_size < SYSCALL_HANDLE_TABLE_BYTES) return;
-    sys_handle_t tmp[SYSCALL_MAX_HANDLES];
-    memset(tmp, 0, sizeof(tmp));
-    init_stdio_handles(tmp);
-    memcpy(dst, tmp, sizeof(tmp));
+    sys_handle_t *handles = (sys_handle_t *)dst;
+    memset(handles, 0, SYSCALL_HANDLE_TABLE_BYTES);
+    init_stdio_handles(handles);
 }
 
 usize syscall_user_handle_snapshot_size(void) {
@@ -33,9 +32,9 @@ void syscall_save_user_handles(void *dst, usize dst_size) {
     memcpy(dst, user_handles, SYSCALL_HANDLE_TABLE_BYTES);
 }
 
-bool syscall_retain_user_handle_snapshot(const void *src, usize src_size) {
+bool syscall_retain_user_handle_snapshot(void *src, usize src_size) {
     if (!src || src_size < SYSCALL_HANDLE_TABLE_BYTES) return false;
-    const sys_handle_t *handles = (const sys_handle_t *)src;
+    sys_handle_t *handles = (sys_handle_t *)src;
     for (usize i = 0; i < SYSCALL_MAX_HANDLES; ++i) {
         if (handles[i].used && !handle_retain_resource(&handles[i])) {
             for (usize j = 0; j < i; ++j) {
@@ -44,6 +43,7 @@ bool syscall_retain_user_handle_snapshot(const void *src, usize src_size) {
                     handle_release_resource(&tmp);
                 }
             }
+            memset(handles, 0, SYSCALL_HANDLE_TABLE_BYTES);
             return false;
         }
     }

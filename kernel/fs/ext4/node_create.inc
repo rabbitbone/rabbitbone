@@ -2,7 +2,7 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     char parent_path[VFS_PATH_MAX];
     char name[EXT4_NAME_LEN + 1];
     if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
-    if (ext4_name_is_dot_or_dotdot(name)) return EXT4_ERR_RANGE;
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     ext4_inode_disk_t parent;
     u32 parent_ino = 0;
     ext4_status_t st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);
@@ -12,6 +12,8 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     st = ext4_find_in_dir(mnt, &parent, name, &tmp_ino, 0);
     if (st == EXT4_OK) return EXT4_ERR_EXIST;
     if (st != EXT4_ERR_NOT_FOUND) return st;
+    u16 parent_links_before = le16(parent.i_links_count);
+    if (dir && parent_links_before == 0xffffu) return EXT4_ERR_RANGE;
     u32 ino = 0;
     st = alloc_inode(mnt, dir, &ino);
     if (st != EXT4_OK) return st;
@@ -21,7 +23,6 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     inode.i_links_count = dir ? 2u : 1u;
     ext4_init_inline_extent_tree(&inode);
     bool linked = false;
-    u16 parent_links_before = le16(parent.i_links_count);
     if (dir) {
         u64 b = 0;
         st = inode_block_for_write(mnt, &inode, 0, &b, true, false, false);
@@ -43,8 +44,7 @@ static ext4_status_t create_node(ext4_mount_t *mnt, const char *path, bool dir, 
     if (st != EXT4_OK) goto fail_blocks;
     linked = true;
     if (dir) {
-        if (parent_links_before == 0xffffu) { st = EXT4_ERR_RANGE; goto fail_linked; }
-        parent.i_links_count = (u16)(parent_links_before + 1u);
+        if (!ext4_links_inc_checked(&parent)) { st = EXT4_ERR_RANGE; goto fail_linked; }
         st = write_inode(mnt, parent_ino, &parent);
         if (st != EXT4_OK) {
             parent.i_links_count = parent_links_before;
@@ -78,11 +78,11 @@ ext4_status_t ext4_mkdir(ext4_mount_t *mnt, const char *path) {
 ext4_status_t ext4_symlink(ext4_mount_t *mnt, const char *target, const char *link_path) {
     if (!mnt || !target || !target[0] || !link_path) return EXT4_ERR_RANGE;
     usize len = strnlen(target, VFS_PATH_MAX);
-    if (len == 0 || len >= VFS_PATH_MAX) return EXT4_ERR_RANGE;
+    if (!ext4_symlink_target_valid(target, len)) return EXT4_ERR_RANGE;
     char parent_path[VFS_PATH_MAX];
     char name[EXT4_NAME_LEN + 1];
     if (!split_parent_path(link_path, parent_path, sizeof(parent_path), name, sizeof(name))) return EXT4_ERR_RANGE;
-    if (ext4_name_is_dot_or_dotdot(name)) return EXT4_ERR_RANGE;
+    if (!ext4_name_cstr_valid(name, false)) return EXT4_ERR_RANGE;
     ext4_inode_disk_t parent;
     u32 parent_ino = 0;
     ext4_status_t st = ext4_lookup_path(mnt, parent_path, &parent, &parent_ino);

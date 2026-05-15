@@ -27,12 +27,15 @@ static ext4_status_t validate_htree_inode(ext4_mount_t *mnt, const ext4_inode_di
         st = read_block(mnt, phys, dir_block);
         if (st != EXT4_OK) goto out;
         u16 off = le16(entries[i].offset);
-        if ((usize)off + 8u > mnt->block_size) { ++report->htree_errors; ++report->errors; st = EXT4_ERR_CORRUPT; goto out; }
+        usize min_end = 0;
+        if (!checked_add_usize((usize)off, 8u, &min_end) || min_end > mnt->block_size) { ++report->htree_errors; ++report->errors; st = EXT4_ERR_CORRUPT; goto out; }
         const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(dir_block + off);
         u16 rec_len = le16(de->rec_len);
-        if (rec_len < 8u || (usize)off + rec_len > mnt->block_size || de->inode == 0 ||
+        usize rec_end = 0;
+        if (rec_len < 8u || !checked_add_usize((usize)off, rec_len, &rec_end) || rec_end > mnt->block_size || de->inode == 0 ||
             de->name_len != entries[i].name_len || de->file_type != entries[i].file_type ||
             le32(de->inode) != le32(entries[i].inode) || 8u + de->name_len > rec_len ||
+            !ext4_name_bytes_valid(de->name, de->name_len, true) ||
             htree_hash_name(de->name, de->name_len) != h) {
             ++report->htree_errors;
             ++report->errors;
@@ -55,11 +58,11 @@ static ext4_status_t validate_dirent_rec_len_inode(ext4_mount_t *mnt, const ext4
     u8 *block = ext4_tmp_block(mnt);
     if (!block) return EXT4_ERR_NO_MEMORY;
     ext4_status_t result = EXT4_OK;
-    for (u64 off = 0; off < size; off += mnt->block_size) {
-        u64 logical64 = off / mnt->block_size;
-        if (logical64 > 0xffffffffull) { ++report->errors; result = EXT4_ERR_RANGE; goto out; }
+    u32 block_count = 0;
+    if (!ext4_block_count_u32_checked(mnt, size, &block_count)) { ++report->errors; result = EXT4_ERR_RANGE; goto out; }
+    for (u32 logical = 0; logical < block_count; ++logical) {
         u64 phys = 0;
-        ext4_status_t st = map_inode_block(mnt, dir, (u32)logical64, &phys);
+        ext4_status_t st = map_inode_block(mnt, dir, logical, &phys);
         if (st != EXT4_OK) { ++report->errors; result = st; goto out; }
         st = read_block(mnt, phys, block);
         if (st != EXT4_OK) { result = st; goto out; }
@@ -67,10 +70,11 @@ static ext4_status_t validate_dirent_rec_len_inode(ext4_mount_t *mnt, const ext4
         while (p + 8u <= mnt->block_size) {
             const ext4_dir_entry_2_t *de = (const ext4_dir_entry_2_t *)(block + p);
             u16 rec_len = le16(de->rec_len);
-            if (rec_len < 8u || (rec_len & 3u) != 0 || p + rec_len > mnt->block_size) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
-            if (de->inode && (de->name_len == 0 || ext4_rec_len(de->name_len) > rec_len)) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
+            usize next = 0;
+            if (rec_len < 8u || (rec_len & 3u) != 0 || !checked_add_usize(p, rec_len, &next) || next > mnt->block_size) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
+            if (de->inode && (de->name_len == 0 || ext4_rec_len(de->name_len) > rec_len || de->file_type > 7u || !ext4_name_bytes_valid(de->name, de->name_len, true))) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
             if (!de->inode && (de->name_len != 0 || de->file_type != 0)) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
-            p += rec_len;
+            p = next;
         }
         if (p != mnt->block_size) { ++report->errors; result = EXT4_ERR_CORRUPT; goto out; }
     }
@@ -154,7 +158,8 @@ ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *repo
             result = EXT4_ERR_CORRUPT;
             goto out;
         }
-        if (inode_table_blocks && inode_table + inode_table_blocks > mnt->blocks_count) {
+        u64 inode_table_end = inode_table;
+        if (inode_table_blocks && (!checked_add_u64(inode_table, inode_table_blocks, &inode_table_end) || inode_table_end > mnt->blocks_count)) {
             ++report->errors;
             result = EXT4_ERR_CORRUPT;
             goto out;
@@ -183,8 +188,9 @@ ext4_status_t ext4_validate_metadata(ext4_mount_t *mnt, ext4_fsck_report_t *repo
 
         for (u32 bit = 0; bit < valid_inodes; ++bit) {
             if (!bitmap_get(bm, bit)) continue;
-            u32 ino = group * mnt->inodes_per_group + bit + 1u;
-            if (ino == 0 || ino > mnt->inodes_count) continue;
+            u64 ino64 = (u64)group * (u64)mnt->inodes_per_group + (u64)bit + 1u;
+            if (ino64 == 0 || ino64 > mnt->inodes_count || ino64 > 0xffffffffull) continue;
+            u32 ino = (u32)ino64;
             ext4_inode_disk_t inode;
             st = ext4_read_inode(mnt, ino, &inode);
             if (st != EXT4_OK) { result = st; goto out; }

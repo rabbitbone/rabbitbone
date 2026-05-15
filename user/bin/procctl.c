@@ -36,6 +36,21 @@ static int signal_job_tests(void) {
     if (au_signal(RABBITBONE_SIGKILL, on_sigusr1) != (au_sighandler_t)(unsigned long)RABBITBONE_SIG_ERR) return fail(127);
     if (au_kill(0x7ffffffe, RABBITBONE_SIGTERM) >= 0) return fail(128);
     if (au_kill(-0x7ffffffe, RABBITBONE_SIGTERM) >= 0) return fail(129);
+
+    unsigned char *data_handler = (unsigned char *)mmap(0, 4096ul, RABBITBONE_PROT_READ | RABBITBONE_PROT_WRITE, RABBITBONE_MAP_ANON | RABBITBONE_MAP_PRIVATE, -1, 0);
+    if (data_handler == (void *)-1 || !data_handler) return fail(130);
+    au_sigaction_t bad_act;
+    au_memset(&bad_act, 0, sizeof(bad_act));
+    bad_act.handler = (au_u64)(unsigned long)data_handler;
+    bad_act.restorer = (au_u64)(unsigned long)data_handler;
+    if (au_sigaction(RABBITBONE_SIGUSR2, &bad_act, 0) >= 0) return fail(131);
+    if (munmap(data_handler, 4096ul) != 0) return fail(132);
+    if (au_sigaction(RABBITBONE_SIGUSR2, 0, 0) >= 0) return fail(133);
+    if (au_sigprocmask(RABBITBONE_SIG_SETMASK, 0, 0) >= 0) return fail(134);
+    au_result_t raw_bad = au_syscall3(AU_SYS_KILL, 0x80000000ull, RABBITBONE_SIGTERM, 0);
+    if (au_result_code(raw_bad) >= 0) return fail(135);
+    au_result_t raw_pg = au_syscall3(AU_SYS_KILL, 0xfffffffeull, RABBITBONE_SIGTERM, 0);
+    if (raw_pg.error == RABBITBONE_ERR_INVAL) return fail(136);
     return 0;
 }
 

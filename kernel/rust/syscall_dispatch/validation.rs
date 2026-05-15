@@ -36,7 +36,10 @@ fn valid_sudo_args(a: SysArgs) -> bool {
 }
 
 fn valid_pid_or_pgrp_arg(pid: u64) -> bool {
-    pid <= MAX_PID || pid >= 0xffff_ffff_8000_0000
+    if pid <= MAX_PID {
+        return pid != 0x8000_0000;
+    }
+    pid >= 0xffff_ffff_8000_0001
 }
 
 fn validate_args(no: SyscallNo, a: SysArgs) -> Result<(), i64> {

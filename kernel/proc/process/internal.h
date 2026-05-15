@@ -19,6 +19,7 @@
 #include <rabbitbone/rust.h>
 #include <rabbitbone/panic.h>
 #include <rabbitbone/path.h>
+#include <rabbitbone/format.h>
 #include <rabbitbone/tty.h>
 #include <rabbitbone/spinlock.h>
 
@@ -209,11 +210,13 @@ static u32 tty_foreground_pgrp;
 static u32 tty_session_id;
 
 static void release_mappings(active_process_t *p);
+static void process_drop_vmas(active_process_t *p);
 static user_mapping_t *find_mapping(active_process_t *p, uptr virt);
 static process_status_t track_mapping(active_process_t *p, uptr virt, uptr phys, u64 final_flags);
 static void release_mapping_at(active_process_t *p, usize idx);
 static bool process_resolve_cow_page(active_process_t *p, uptr fault_addr);
 static bool process_resolve_vma_fault(active_process_t *p, uptr fault_addr, bool write, bool instruction_fetch);
+static bool process_user_access_allowed_at(active_process_t *p, uptr addr, bool write, bool instruction_fetch);
 static bool ensure_process_user_page_writable(active_process_t *p, uptr addr, uptr *phys_out, u64 *flags_out);
 static process_status_t process_set_brk_for(active_process_t *p, uptr new_break, uptr *current_out);
 static bool process_range_has_vma(const active_process_t *p, uptr start, uptr end, u32 kind);
@@ -224,6 +227,7 @@ static const user_vma_t *process_find_vma_for_page_const(const active_process_t 
 static bool process_vma_is_shared_anon(const user_vma_t *v);
 static bool process_mapping_is_shared_anon(const active_process_t *p, uptr page_virt);
 static void process_signal_init(active_process_t *p);
+static void process_signal_exec_reset(active_process_t *p);
 static int process_signal_deliver_pending(active_process_t *p, cpu_regs_t *regs);
 static process_status_t shared_anon_alloc(u32 page_count, u32 *id_out);
 static bool shared_anon_retain(u32 id);

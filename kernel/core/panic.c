@@ -5,7 +5,12 @@
 #include <rabbitbone/libc.h>
 #include <rabbitbone/drivers.h>
 
+#define PANIC_MSG_BUF_SIZE 512u
+#define PANIC_SERIAL_CHUNK_SIZE 256u
+
 static volatile u32 g_panic_active;
+static char g_panic_msg[PANIC_MSG_BUF_SIZE];
+static char g_panic_serial_chunk[PANIC_SERIAL_CHUNK_SIZE];
 
 static RABBITBONE_NORETURN void panic_halt_forever(void) {
     cpu_cli();
@@ -17,13 +22,40 @@ static void panic_serial_line(const char *s) {
     serial_write(s);
 }
 
+static void panic_serial_emit(const char *s, usize n, void *ctx) {
+    (void)ctx;
+    if (s && n) serial_write_n(s, n);
+}
+
 static void panic_serial_printf(const char *fmt, ...) {
-    char buf[512];
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(buf, sizeof(buf), fmt, ap);
+    (void)kvprintf_emit_buffered(panic_serial_emit, 0, g_panic_serial_chunk, sizeof(g_panic_serial_chunk), fmt, ap);
     __builtin_va_end(ap);
-    serial_write(buf);
+}
+
+static const char *panic_format_message(const char *fmt, __builtin_va_list ap) {
+    if (!fmt) fmt = "panic";
+    kvsnprintf(g_panic_msg, sizeof(g_panic_msg), fmt, ap);
+    g_panic_msg[sizeof(g_panic_msg) - 1u] = 0;
+    return g_panic_msg;
+}
+
+static RABBITBONE_NORETURN void panic_reentered(const char *msg) {
+    serial_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
+    console_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
+    if (msg) {
+        serial_write(msg);
+        serial_write("\n");
+        console_write(msg);
+        console_write("\n");
+    }
+    panic_halt_forever();
+}
+
+static bool panic_try_claim(void) {
+    cpu_cli();
+    return __sync_lock_test_and_set(&g_panic_active, 1u) == 0;
 }
 
 static void panic_write_u64_console(const char *name, u64 value) {
@@ -102,20 +134,7 @@ static void panic_dump_regs_serial(const cpu_regs_t *r) {
     panic_serial_line("\n");
 }
 
-static RABBITBONE_NORETURN void panic_emit(const char *file, int line, const cpu_regs_t *regs, const char *msg) {
-    cpu_cli();
-    if (__sync_lock_test_and_set(&g_panic_active, 1u) != 0) {
-        serial_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
-        console_write("\n*** RABBITBONE KERNEL PANIC REENTERED ***\n");
-        if (msg) {
-            serial_write(msg);
-            serial_write("\n");
-            console_write(msg);
-            console_write("\n");
-        }
-        panic_halt_forever();
-    }
-
+static RABBITBONE_NORETURN void panic_emit_claimed(const char *file, int line, const cpu_regs_t *regs, const char *msg) {
     panic_serial_printf("\n========== RABBITBONE KERNEL PANIC ==========" "\n");
     panic_serial_printf("theme=%s at %s:%d\n", console_theme_name(console_theme()), file ? file : "?", line);
     if (msg) panic_serial_printf("message=%s\n", msg);
@@ -143,21 +162,21 @@ static RABBITBONE_NORETURN void panic_emit(const char *file, int line, const cpu
 }
 
 RABBITBONE_NORETURN void panic_at(const char *file, int line, const char *fmt, ...) {
-    char msg[512];
+    if (!panic_try_claim()) panic_reentered(0);
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(msg, sizeof(msg), fmt, ap);
+    const char *msg = panic_format_message(fmt, ap);
     __builtin_va_end(ap);
-    panic_emit(file, line, 0, msg);
+    panic_emit_claimed(file, line, 0, msg);
 }
 
 RABBITBONE_NORETURN void panic_at_regs(const char *file, int line, const cpu_regs_t *regs, const char *fmt, ...) {
-    char msg[512];
+    if (!panic_try_claim()) panic_reentered(0);
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(msg, sizeof(msg), fmt, ap);
+    const char *msg = panic_format_message(fmt, ap);
     __builtin_va_end(ap);
-    panic_emit(file, line, regs, msg);
+    panic_emit_claimed(file, line, regs, msg);
 }
 
 RABBITBONE_NORETURN void rabbitbone_rust_panic(const char *msg) {

@@ -3,22 +3,18 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
-## 0.0.3.3
+## 0.0.3.4
 
-Sixth-pass hardening update over `0.0.3.2`.
+Stack-safety and syscall snapshot hardening update over `0.0.3.2`.
 
-- Added release guard scripts for Rust syscall ABI synchronization and source hardening invariants.
-- Hardened path normalization, tarfs archive path validation, auth password handling, pipe/open-file access wrappers, mmap argument validation, and ordered shell redirection handling.
-- Tightened generated Rust ABI usage and release metadata checks, removed the unused Rust target JSON, and bumped the syscall ABI to `0x00000303`.
-
-
-## 0.0.3.2
-
-Fifth-pass hardening update over `0.0.3.0`.
-
-- Added VFS pin-count guards for destructive size mutations so `truncate`, `ftruncate`, `preallocate`, and `fpreallocate` fail with `busy` while another open file object or file-backed mapping still pins the inode.
-- Added mmap regression coverage for truncate/preallocate denial while a private file mapping is alive and release after `munmap`.
-- Tightened release/version metadata for `0.0.3.2` and bumped the syscall ABI to `0x00000302`.
+- Removed full file-descriptor snapshot tables from kernel stack paths. User handle snapshots are now initialized in place, pipe snapshot collision checks simulate count changes without copying the whole table, and syscall selftests heap-allocate full snapshots.
+- Reduced emergency debug shell stack pressure by moving large diagnostic formatting buffers to short-lived heap allocations.
+- Added source-hardening checks that reject reintroduced full syscall handle snapshots on stack and preserve the in-place snapshot initialization model.
+- Tightened release/version metadata for `0.0.3.4` and bumped the syscall ABI to `0x00000304`.
+- Final hardening pass: log/KCTL diagnostics no longer depend on shared output globals or large stack formatting buffers, `/dev/kmsg` and user log messages sanitize control bytes before reaching the terminal, signal handlers and sigreturn RIPs are checked against executable user VMAs, and EXT4 allocator/free paths now reject wrapped metadata ranges and corrupt free counters before mutating disk state.
+- Final polish after the stack-safety pass: ktest logging now forwards varargs directly into the kernel log ring, `rbsh` no longer puts the 4 KiB KCTL output buffer on the user stack, EXT4 journal reservation/commit/replay arithmetic is checked, and the tarfs archive-name policy is covered by in-kernel tests. Static ktest coverage is now tracked by `scripts/check_ktest_count.py` and reports 445 `check()` sites.
+- Final EXT4 directory mutation hardening: directory scans, HTree indexing/counting, repair, link/unlink, rename, and mkdir paths now use checked block-count, offset, growth, and link-count arithmetic, rejecting corrupt metadata wrap/underflow before mutating disk state.
+- Final ktest cleanup: Rust dead-code warnings are removed, KCTL log dumps now tail recent entries into bounded buffers, raw 32-bit negative `kill()` arguments map to backend results instead of validation failure, and hardening regression coverage now reports 445 checks across 11 suites.
 
 
 ## 0.0.3.0

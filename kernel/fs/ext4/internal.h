@@ -120,10 +120,37 @@ static void extent_set_len_blocks_state(ext4_extent_t *ex, u32 len, bool unwritt
     if (unwritten && raw != 0) raw |= 0x8000u;
     ex->ee_len = raw;
 }
+static bool checked_add_u32(u32 a, u32 b, u32 *out) { return !__builtin_add_overflow(a, b, out); }
 static bool checked_add_u64(u64 a, u64 b, u64 *out) { return !__builtin_add_overflow(a, b, out); }
 static bool checked_mul_u64(u64 a, u64 b, u64 *out) { return !__builtin_mul_overflow(a, b, out); }
 static bool checked_add_usize(usize a, usize b, usize *out) { return !__builtin_add_overflow(a, b, out); }
+static bool extent_logical_end_checked(u32 first, u32 len, u32 *end_out) { return len != 0 && checked_add_u32(first, len, end_out); }
+static bool extent_physical_end_checked(u64 first, u32 len, u64 *end_out) { return len != 0 && checked_add_u64(first, (u64)len, end_out); }
+static bool ext4_links_inc_checked(ext4_inode_disk_t *inode) {
+    if (!inode) return false;
+    u16 links = le16(inode->i_links_count);
+    if (links == 0xffffu) return false;
+    inode->i_links_count = (u16)(links + 1u);
+    return true;
+}
+static bool ext4_links_dec_checked(ext4_inode_disk_t *inode) {
+    if (!inode) return false;
+    u16 links = le16(inode->i_links_count);
+    if (links == 0) return false;
+    inode->i_links_count = (u16)(links - 1u);
+    return true;
+}
 static u64 div_round_up_u64(u64 a, u64 b) { return b ? (a / b) + ((a % b) != 0) : 0; }
+static bool ext4_block_count_u32_checked(ext4_mount_t *mnt, u64 bytes, u32 *blocks_out) {
+    if (!mnt || !blocks_out || mnt->block_size == 0) return false;
+    u64 blocks = div_round_up_u64(bytes, mnt->block_size);
+    if (blocks > 0xffffffffull) return false;
+    *blocks_out = (u32)blocks;
+    return true;
+}
+static bool ext4_logical_offset_checked(ext4_mount_t *mnt, u32 logical, u64 *off_out) {
+    return mnt && off_out && checked_mul_u64((u64)logical, mnt->block_size, off_out);
+}
 static bool ext4_partition_blocks_from_sectors(u64 sectors, u32 block_size, u64 *blocks_out) {
     if (!blocks_out || block_size == 0) return false;
     if (sectors == 0) {
@@ -136,7 +163,36 @@ static bool ext4_partition_blocks_from_sectors(u64 sectors, u32 block_size, u64 
     return true;
 }
 static u16 ext4_rec_len(usize name_len) { return (u16)((8u + name_len + 3u) & ~3u); }
-static bool ext4_name_is_dot_or_dotdot(const char *name) { return name && name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)); }
+static bool ext4_name_is_dot_or_dotdot_len(const char *name, usize len) {
+    return name && len >= 1u && name[0] == '.' && (len == 1u || (len == 2u && name[1] == '.'));
+}
+static bool ext4_name_byte_allowed(u8 c) {
+    return c >= 0x20u && c != 0x7fu && c != (u8)'/' && c != (u8)'\\';
+}
+static bool ext4_name_bytes_valid(const char *name, usize len, bool allow_dot_names) {
+    if (!name || len == 0 || len > EXT4_NAME_LEN) return false;
+    if (!allow_dot_names && ext4_name_is_dot_or_dotdot_len(name, len)) return false;
+    for (usize i = 0; i < len; ++i) {
+        if (!ext4_name_byte_allowed((u8)name[i])) return false;
+    }
+    return true;
+}
+static bool ext4_name_cstr_valid(const char *name, bool allow_dot_names) {
+    if (!name) return false;
+    usize len = strnlen(name, EXT4_NAME_LEN + 1u);
+    if (len == 0 || len > EXT4_NAME_LEN) return false;
+    return ext4_name_bytes_valid(name, len, allow_dot_names);
+}
+static bool ext4_symlink_target_byte_allowed(u8 c) {
+    return c >= 0x20u && c != 0x7fu && c != (u8)'\\';
+}
+static bool ext4_symlink_target_valid(const char *target, usize len) {
+    if (!target || len == 0 || len >= VFS_PATH_MAX) return false;
+    for (usize i = 0; i < len; ++i) {
+        if (!ext4_symlink_target_byte_allowed((u8)target[i])) return false;
+    }
+    return true;
+}
 static bool bitmap_get(const u8 *bm, u32 bit) { return (bm[bit / 8u] & (u8)(1u << (bit % 8u))) != 0; }
 static void bitmap_set8(u8 *bm, u32 bit) { bm[bit / 8u] |= (u8)(1u << (bit % 8u)); }
 static void bitmap_clear8(u8 *bm, u32 bit) { bm[bit / 8u] &= (u8)~(1u << (bit % 8u)); }

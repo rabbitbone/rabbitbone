@@ -5,6 +5,7 @@ process_status_t process_spawn_async(const char *path, int argc, const char *con
     process_status_t st = prepare_process(slot, path, argc, argv, parent);
     if (st != PROC_OK) {
         release_mappings(slot);
+        process_drop_vmas(slot);
         if (slot->space.pml4_physical) vmm_space_destroy(&slot->space);
         memset(slot, 0, sizeof(*slot));
         return st;
@@ -12,9 +13,7 @@ process_status_t process_spawn_async(const char *path, int argc, const char *con
     if (current_proc.active) {
         syscall_save_user_handles(slot->fd_snapshot, sizeof(slot->fd_snapshot));
         if (!syscall_retain_user_handle_snapshot(slot->fd_snapshot, sizeof(slot->fd_snapshot))) {
-            release_mappings(slot);
-            vmm_space_destroy(&slot->space);
-            memset(slot, 0, sizeof(*slot));
+            release_process_slot(slot);
             return PROC_ERR_NOMEM;
         }
     }
@@ -30,6 +29,7 @@ process_status_t process_spawn_async_snapshot(const char *path, int argc, const 
     process_status_t st = prepare_process(slot, path, argc, argv, parent);
     if (st != PROC_OK) {
         release_mappings(slot);
+        process_drop_vmas(slot);
         if (slot->space.pml4_physical) vmm_space_destroy(&slot->space);
         memset(slot, 0, sizeof(*slot));
         return st;
@@ -118,9 +118,7 @@ static bool fork_current_from_regs(cpu_regs_t *regs, u32 *pid_out) {
     if (!slot) return false;
     memset(slot, 0, sizeof(*slot));
     if (!clone_current_address_space(slot)) {
-        release_mappings(slot);
-        vmm_space_destroy(&slot->space);
-        memset(slot, 0, sizeof(*slot));
+        release_process_slot(slot);
         return false;
     }
     slot->regs = *regs;
@@ -163,6 +161,7 @@ static void finish_current(process_lifecycle_t state, process_status_t status, c
     syscall_forget_pid(current_proc.result.pid);
 
     release_mappings(&current_proc);
+    process_drop_vmas(&current_proc);
     if (current_proc.space.pml4_physical) vmm_space_destroy(&current_proc.space);
 
     last_result = current_proc.result;

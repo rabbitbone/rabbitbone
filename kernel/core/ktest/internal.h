@@ -6,6 +6,7 @@
 #include <rabbitbone/bootinfo.h>
 #include <rabbitbone/console.h>
 #include <rabbitbone/crc32.h>
+#include <rabbitbone/format.h>
 #include <rabbitbone/drivers.h>
 #include <rabbitbone/elf64.h>
 #include <rabbitbone/ext4.h>
@@ -43,12 +44,10 @@ static u32 suite_skipped;
 static bool ktest_verbose_passes;
 
 static void ktest_log_line(log_level_t level, const char *fmt, ...) {
-    char msg[256];
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
-    kvsnprintf(msg, sizeof(msg), fmt, ap);
+    log_vwrite(level, "ktest", fmt, ap);
     __builtin_va_end(ap);
-    log_write(level, "ktest", "%s", msg);
 }
 
 static void suite_begin(const char *name) {

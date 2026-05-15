@@ -126,7 +126,7 @@ K_RUST_ABI := $(BUILD)/kernel/rust/abi_generated.rs
 K_OBJS := $(K_C_SRCS:%.c=$(BUILD)/%.o) $(K_CXX_SRCS:%.cpp=$(BUILD)/%.o) $(K_ASM_SRCS:%.S=$(BUILD)/%.o) $(K_RUST_OBJ) $(if $(filter 1,$(RABBITBONE_EMBED_USERLAND)),$(BUILD)/user_bins.o,)
 DEPS := $(patsubst %.o,%.d,$(filter %.o,$(K_OBJS)))
 
-.PHONY: all clean test image live-iso legacy-image bootcheck ueficheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck releasecheck rustabisynccheck
+.PHONY: all clean test image live-iso legacy-image bootcheck ueficheck layoutcheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck rusttoolcheck splitintegritycheck releasecheck rustabisynccheck ktestcountcheck
 all: image
 
 $(BUILD):
@@ -289,6 +289,12 @@ rustabisynccheck:
 sourcehardeningcheck:
 	python3 scripts/check_source_hardening.py
 
+ktestcountcheck:
+	python3 scripts/check_ktest_count.py
+
+ktestcoveragecheck:
+	python3 scripts/check_ktest_coverage.py
+
 layoutcheck: $(BUILD)/stage2.elf
 	python3 scripts/check_stage2_layout.py $(BUILD)/stage2.elf
 
@@ -304,10 +310,10 @@ rustpaniccheck: $(K_RUST_OBJ)
 usercheck: $(USER_ELFS)
 	python3 scripts/check_userland.py $(USER_ELFS)
 
-test: releasecheck splitintegritycheck rustabisynccheck sourcehardeningcheck ueficheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
+test: releasecheck splitintegritycheck rustabisynccheck sourcehardeningcheck ktestcountcheck ktestcoveragecheck ueficheck kernellayoutcheck rustsymbolscheck rustpaniccheck usercheck $(BUILD)/host-tests
 	$(BUILD)/host-tests
 
-HOST_C_SRCS := kernel/lib/bitmap.c kernel/lib/string.c kernel/lib/ringbuf.c kernel/lib/crc32.c kernel/core/printf.c kernel/drivers/block.c kernel/drivers/mbr.c kernel/fs/ext4.c kernel/mm/kmem.c kernel/vfs/path.c kernel/vfs/tarfs.c
+HOST_C_SRCS := kernel/lib/bitmap.c kernel/lib/string.c kernel/lib/format.c kernel/lib/ringbuf.c kernel/lib/crc32.c kernel/core/printf.c kernel/drivers/block.c kernel/drivers/mbr.c kernel/fs/ext4.c kernel/mm/kmem.c kernel/vfs/path.c kernel/vfs/tarfs.c
 HOST_C_OBJS := $(HOST_C_SRCS:%.c=$(BUILD)/host/%.o)
 HOST_DEPS := $(patsubst %.o,%.d,$(HOST_C_OBJS))
 HOST_TEST_SRCS := tests/test_main.cpp $(wildcard tests/main/*.inc tests/main/*.hpp)

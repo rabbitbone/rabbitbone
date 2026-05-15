@@ -108,7 +108,7 @@ void syscall_init(void);
 void syscall_reset_user_handles(void);
 void syscall_prepare_user_handle_snapshot(void *dst, usize dst_size);
 void syscall_save_user_handles(void *dst, usize dst_size);
-bool syscall_retain_user_handle_snapshot(const void *src, usize src_size);
+bool syscall_retain_user_handle_snapshot(void *src, usize src_size);
 void syscall_release_user_handle_snapshot(void *src, usize src_size);
 void syscall_close_user_handles_with_flags(u32 flags);
 void syscall_close_all_user_handles(void);

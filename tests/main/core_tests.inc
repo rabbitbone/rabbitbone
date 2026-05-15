@@ -56,6 +56,17 @@ static void test_printf() {
     ksnprintf(buf, sizeof(buf), "%lld", static_cast<long long>(INT64_MIN));
     require(strcmp(buf, "-9223372036854775808") == 0, "printf handles int64 min without UB");
     require(ksnprintf(nullptr, 8, "safe") == 4, "printf tolerates null output buffer");
+
+    char small[24];
+    rabbitbone_buf_out_t bo;
+    rabbitbone_buf_init(&bo, small, sizeof(small));
+    rabbitbone_buf_appendf(&bo, "%064u", 7u);
+    require(small[sizeof(small) - 1u] == 0, "format appendf keeps truncated buffer terminated");
+    require(strlen(small) == sizeof(small) - 1u, "format appendf fills caller buffer without tiny temp truncation");
+    bo.used = sizeof(small) + 100u;
+    rabbitbone_buf_append_raw(&bo, "x");
+    require(bo.used == sizeof(small) - 1u && small[sizeof(small) - 1u] == 0,
+            "format append_raw clamps corrupt used value before writing");
 }
 
 static void put32(std::vector<u8> &d, std::size_t off, u32 v) {

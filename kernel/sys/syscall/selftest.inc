@@ -1,3 +1,16 @@
+static bool syscall_selftest_pipe_snapshot_collision(void) {
+    u8 *pipe_snapshot = (u8 *)kmalloc(SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+    if (!pipe_snapshot) return false;
+    memset(pipe_snapshot, 0, SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+    syscall_prepare_user_handle_snapshot(pipe_snapshot, SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+    bool ok = !syscall_snapshot_pipe_between(pipe_snapshot, SYSCALL_USER_HANDLE_SNAPSHOT_BYTES, 3u,
+                                             pipe_snapshot, SYSCALL_USER_HANDLE_SNAPSHOT_BYTES, 3u) &&
+              !((sys_handle_t *)pipe_snapshot)[3].used;
+    syscall_release_user_handle_snapshot(pipe_snapshot, SYSCALL_USER_HANDLE_SNAPSHOT_BYTES);
+    kfree(pipe_snapshot);
+    return ok;
+}
+
 bool syscall_selftest(void) {
     if (!rabbitbone_rust_syscall_selftest()) return false;
     syscall_result_t r = syscall_dispatch(RABBITBONE_SYS_VERSION, 0, 0, 0, 0, 0, 0);
@@ -13,13 +26,12 @@ bool syscall_selftest(void) {
     static const char stdiomsg[] = "";
     r = syscall_dispatch(RABBITBONE_SYS_WRITE, RABBITBONE_STDOUT, (u64)(uptr)stdiomsg, 0, 0, 0, 0);
     if (r.error || r.value != 0) return false;
+    r = syscall_dispatch(RABBITBONE_SYS_SIGACTION, RABBITBONE_SIGUSR1, 0, 0, 0, 0, 0);
+    if (r.value != -1 || r.error != VFS_ERR_INVAL) return false;
+    r = syscall_dispatch(RABBITBONE_SYS_SIGPROCMASK, RABBITBONE_SIG_SETMASK, 0, 0, 0, 0, 0);
+    if (r.value != -1 || r.error != VFS_ERR_INVAL) return false;
 
-    u8 pipe_snapshot[SYSCALL_USER_HANDLE_SNAPSHOT_BYTES];
-    memset(pipe_snapshot, 0, sizeof(pipe_snapshot));
-    syscall_prepare_user_handle_snapshot(pipe_snapshot, sizeof(pipe_snapshot));
-    if (syscall_snapshot_pipe_between(pipe_snapshot, sizeof(pipe_snapshot), 3u, pipe_snapshot, sizeof(pipe_snapshot), 3u)) return false;
-    if (((sys_handle_t *)pipe_snapshot)[3].used) return false;
-    syscall_release_user_handle_snapshot(pipe_snapshot, sizeof(pipe_snapshot));
+    if (!syscall_selftest_pipe_snapshot_collision()) return false;
 
     u64 edge_fds[RABBITBONE_PROCESS_HANDLE_CAP - 3u];
     memset(edge_fds, 0, sizeof(edge_fds));
