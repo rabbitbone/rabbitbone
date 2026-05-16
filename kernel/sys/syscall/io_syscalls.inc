@@ -47,6 +47,36 @@ static syscall_result_t sys_read_impl(sys_handle_t *handles, usize h, u64 user_b
     syscall_result_t result = ok(0);
     if (!open_flags_can_read(f->open_flags)) { result = err(VFS_ERR_PERM); goto out_file; }
     if (handles[h].type == VFS_NODE_DIR) { result = err(VFS_ERR_ISDIR); goto out_file; }
+    if (handles[h].type == VFS_NODE_DEV && len <= sizeof(chunk)) {
+        if (len && !validate_user_write_range(user_buf, len)) { result = err(VFS_ERR_INVAL); goto out_file; }
+        usize got = 0;
+        u64 start_offset = 0;
+        u64 ff = spin_lock_irqsave(&f->lock);
+        start_offset = f->offset;
+        vfs_status_t vs = vfs_read_ref(&f->ref, start_offset, chunk, len, &got);
+        if (vs != VFS_OK) {
+            spin_unlock_irqrestore(&f->lock, ff);
+            result = err(vs);
+            goto out_file;
+        }
+        u64 new_offset = 0;
+        bool offset_ok = !__builtin_add_overflow(start_offset, (u64)got, &new_offset);
+        spin_unlock_irqrestore(&f->lock, ff);
+        if (!offset_ok) { result = err(VFS_ERR_INVAL); goto out_file; }
+        if (got && !copy_out_buf(user_buf, chunk, got)) { result = err(VFS_ERR_INVAL); goto out_file; }
+        ff = spin_lock_irqsave(&f->lock);
+        if (f->offset == start_offset) f->offset = new_offset;
+        else if (!__builtin_add_overflow(f->offset, (u64)got, &new_offset)) f->offset = new_offset;
+        else {
+            spin_unlock_irqrestore(&f->lock, ff);
+            result = err(VFS_ERR_INVAL);
+            goto out_file;
+        }
+        sync_handle_from_file(&handles[h], f);
+        spin_unlock_irqrestore(&f->lock, ff);
+        result = ok((i64)got);
+        goto out_file;
+    }
     while (total < len) {
         usize n = len - total;
         if (n > sizeof(chunk)) n = sizeof(chunk);
@@ -136,6 +166,34 @@ static syscall_result_t sys_write_impl(sys_handle_t *handles, usize h, u64 user_
     syscall_result_t result = ok(0);
     if (!open_flags_can_write(f->open_flags)) { result = err(VFS_ERR_PERM); goto out_file; }
     if (handles[h].type == VFS_NODE_DIR) { result = err(VFS_ERR_ISDIR); goto out_file; }
+    if (handles[h].type == VFS_NODE_DEV && len <= sizeof(chunk)) {
+        if (len && !copy_in_buf(chunk, user_buf, len)) { result = err(VFS_ERR_INVAL); goto out_file; }
+        usize wrote = 0;
+        u64 ff = spin_lock_irqsave(&f->lock);
+        if (f->open_flags & RABBITBONE_O_APPEND) {
+            vfs_stat_t ast;
+            if (vfs_stat_ref(&f->ref, &ast) == VFS_OK) f->size = ast.size;
+            f->offset = f->size;
+        }
+        vfs_status_t vs = vfs_write_ref(&f->ref, f->offset, chunk, len, &wrote);
+        if (vs != VFS_OK) {
+            spin_unlock_irqrestore(&f->lock, ff);
+            result = err(vs);
+            goto out_file;
+        }
+        u64 new_offset = 0;
+        if (__builtin_add_overflow(f->offset, (u64)wrote, &new_offset) || new_offset > SYSCALL_MAX_FILE_SIZE) {
+            spin_unlock_irqrestore(&f->lock, ff);
+            result = err(VFS_ERR_INVAL);
+            goto out_file;
+        }
+        f->offset = new_offset;
+        if (f->offset > f->size) f->size = f->offset;
+        sync_handle_from_file(&handles[h], f);
+        spin_unlock_irqrestore(&f->lock, ff);
+        result = ok((i64)wrote);
+        goto out_file;
+    }
     while (total < len) {
         usize n = len - total;
         if (n > sizeof(chunk)) n = sizeof(chunk);

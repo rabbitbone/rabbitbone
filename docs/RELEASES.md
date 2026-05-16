@@ -3,6 +3,20 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.3.6
+
+VMware networking and userland IPv4 utility update over `0.0.3.5`.
+
+- Bumped the kernel version and syscall ABI to `0.0.3.6` / `0x00000306`.
+- Added a small kernel network device layer with interface registration, MAC/link state, RX frame queues, TX accounting, packet statistics, and formatted `net` diagnostics.
+- Added Intel-compatible VMware Ethernet support for `e1000`/`e1000e` virtual NICs, including PCI discovery, MMIO BAR setup, descriptor rings, receive polling, transmit submission, link status, and MAC reporting.
+- Exposed network devices through devfs as `/dev/net0` so userland can read and write raw Ethernet frames through the existing file descriptor/syscall path.
+- Added `netctl` plus `net`, `ifconfig`, `dhcp`, `ifup`, `ip`, `arp`, and `ping` aliases in the seeded userland for status, DHCP lease acquisition, manual IPv4 configuration, ARP probes, DNS lookup, and ICMP echo testing.
+- Updated rbsh help and KCTL dispatch so network status and delegated `netctl` commands are available from the shell.
+- Updated VMware example configs to enable NAT networking with `ethernet0.virtualDev = "e1000"` and documented VMware networking setup in `docs/vm-networking.md`.
+- Added low-memory kernel layout warning mode for release builds while keeping strict enforcement available with `RABBITBONE_STRICT_LOW_LAYOUT=1`.
+
+
 ## 0.0.3.5
 
 Experimental SMP/AP bootstrap and observability update over `0.0.3.4`.

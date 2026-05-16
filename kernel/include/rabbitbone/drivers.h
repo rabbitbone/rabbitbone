@@ -55,6 +55,8 @@ void apic_init(void);
 void hpet_init(void);
 void smp_init_groundwork(void);
 void pci_init(void);
+void rabbit_eth_init(void);
+void rabbit_eth_poll(void);
 void ahci_init(void);
 void ata_pio_init(void);
 void bootramdisk_init(const rabbitbone_bootinfo_t *bootinfo);

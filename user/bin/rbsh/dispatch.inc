@@ -209,7 +209,7 @@ static int sh_cmd_log(int argc, char **argv, int allow_exit) {
 static int sh_cmd_kctl(int argc, char **argv, int allow_exit) { (void)allow_exit; return sh_builtin_kctl(argc, argv); }
 static int sh_cmd_bone(int argc, char **argv, int allow_exit) {
     (void)allow_exit;
-    if (argc < 2) { sh_err("usage: bone <mem|heap|logs|disks|ext4|boot|reboot|halt|panic>\n"); return 2; }
+    if (argc < 2) { sh_err("usage: bone <mem|heap|logs|disks|net|ext4|boot|reboot|halt|panic>\n"); return 2; }
     return sh_builtin_kctl(argc - 1, argv + 1);
 }
 
@@ -242,7 +242,7 @@ static const sh_builtin_entry_t sh_builtins[] = {
     { "fdprobe", sh_cmd_fdprobe }, { "fdinfo", sh_cmd_fdinfo }, { "tty", sh_cmd_tty }, { "statvfs", sh_cmd_statvfs }, { "mounts", sh_cmd_mounts },
     { "sync", sh_cmd_sync }, { "fsync", sh_cmd_fsync }, { "syscall", sh_cmd_syscall }, { "elf", sh_cmd_elf }, { "userbins", sh_cmd_userbins }, { "log", sh_cmd_log },
     { "mem", sh_cmd_kctl }, { "heap", sh_cmd_kctl }, { "vmm", sh_cmd_kctl }, { "ktest", sh_cmd_kctl }, { "logs", sh_cmd_kctl },
-    { "acpi", sh_cmd_kctl }, { "apic", sh_cmd_kctl }, { "hpet", sh_cmd_kctl }, { "timer", sh_cmd_kctl }, { "smp", sh_cmd_kctl }, { "signals", sh_cmd_kctl }, { "boot", sh_cmd_kctl }, { "pci", sh_cmd_kctl }, { "lspci", sh_cmd_kctl }, { "disks", sh_cmd_kctl }, { "blk", sh_cmd_kctl }, { "ext4", sh_cmd_kctl }, { "panic", sh_cmd_kctl }, { "reboot", sh_cmd_kctl }, { "halt", sh_cmd_kctl },
+    { "net", sh_cmd_kctl }, { "ifconfig", sh_cmd_kctl }, { "acpi", sh_cmd_kctl }, { "apic", sh_cmd_kctl }, { "hpet", sh_cmd_kctl }, { "timer", sh_cmd_kctl }, { "smp", sh_cmd_kctl }, { "signals", sh_cmd_kctl }, { "boot", sh_cmd_kctl }, { "pci", sh_cmd_kctl }, { "lspci", sh_cmd_kctl }, { "disks", sh_cmd_kctl }, { "blk", sh_cmd_kctl }, { "ext4", sh_cmd_kctl }, { "panic", sh_cmd_kctl }, { "reboot", sh_cmd_kctl }, { "halt", sh_cmd_kctl },
     { "runq", sh_cmd_runq }, { "schedtest", sh_cmd_schedtest },
 };
 

@@ -9,8 +9,8 @@ static void sh_help_general(void) {
     sh_puts("  ls ll stat cat write touch mkdir rm mv cp link ln symlink readlink truncate\n");
     sh_puts("  run spawn wait jobs ps proc last sched preempt ticks sleep yield\n");
     sh_puts("  fdprobe fdinfo tty statvfs mounts sync fsync syscall elf userbins log\n");
-    sh_puts("  mem heap vmm ktest logs boot disks blk pci acpi apic hpet timer smp ext4\n");
-    sh_puts("keys: Tab complete, Up/Down history, Home/End/Delete, PageUp/PageDown, Ctrl+L, Ctrl+D, Ctrl+C.\n");
+    sh_puts("  mem heap vmm ktest logs boot disks blk net pci acpi apic hpet timer smp ext4\n");
+    sh_puts("network: net dhcp, ping HOST|A.B.C.D, netctl dns NAME, ip A.B.C.D/PREFIX gw A.B.C.D dns A.B.C.D\nkeys: Tab complete, Up/Down history, Home/End/Delete, PageUp/PageDown, Ctrl+L, Ctrl+D, Ctrl+C.\n");
 }
 
 static void sh_help_command(const char *cmd) {
@@ -34,6 +34,11 @@ static void sh_help_command(const char *cmd) {
     else if (sh_streq(cmd, "export")) sh_puts("usage: export [NAME|NAME=VALUE...]\n");
     else if (sh_streq(cmd, "unset")) sh_puts("usage: unset NAME...\n");
     else if (sh_streq(cmd, "path")) sh_puts("usage: path [VALUE]\n");
+    else if (sh_streq(cmd, "net") || sh_streq(cmd, "netctl")) sh_puts("usage: net [status|dhcp|ping HOST|A.B.C.D|arp A.B.C.D|dns NAME|ip A.B.C.D/PREFIX gw A.B.C.D dns A.B.C.D]\n");
+    else if (sh_streq(cmd, "ping")) sh_puts("usage: ping HOST|A.B.C.D\n");
+    else if (sh_streq(cmd, "dhcp") || sh_streq(cmd, "ifup")) sh_puts("usage: dhcp\n");
+    else if (sh_streq(cmd, "ip")) sh_puts("usage: ip A.B.C.D/PREFIX [gw A.B.C.D] [dns A.B.C.D]\n");
+    else if (sh_streq(cmd, "arp")) sh_puts("usage: arp A.B.C.D\n");
     else if (sh_streq(cmd, "sudo")) sh_puts("usage: sudo [-v|-k|-K|-l|-s|-i|-n|-T TICKS|-u USER] [CMD...]\n");
     else { sh_err("help: no detailed help for "); sh_write_fd((au_i64)RABBITBONE_STDERR, cmd); sh_err("\n"); }
 }

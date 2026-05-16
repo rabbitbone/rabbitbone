@@ -28,6 +28,7 @@
 #include <rabbitbone/smp.h>
 #include <rabbitbone/vmm.h>
 #include <rabbitbone/memory.h>
+#include <rabbitbone/net.h>
 
 #define SYSCALL_MAX_HANDLES RABBITBONE_PROCESS_HANDLE_CAP
 #define SYSCALL_PATH_MAX VFS_PATH_MAX

@@ -16,7 +16,7 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno
 USER_ASMFLAGS := --target=x86_64-unknown-none -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 --gc-sections -s -T user/user.ld
 
-USER_C_PROGS := hello nano fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck cpuidcheck rbsh init
+USER_C_PROGS := hello nano netctl fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck cpuidcheck rbsh init
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)
@@ -27,17 +27,18 @@ USER_OBJS := $(USER_C_OBJS) $(USER_ASM_OBJS) $(USER_SUPPORT_OBJS)
 USER_DEPS := $(patsubst %.o,%.d,$(USER_OBJS))
 USER_DEFAULT_INSTALL_PROGS := $(filter-out rbsh init,$(USER_PROGS))
 USER_DEFAULT_INSTALLS := $(foreach p,$(USER_DEFAULT_INSTALL_PROGS),$(BUILD)/user/$(p).elf:/bin/$(p))
-USER_INSTALL_ALIASES := rbsh:/bin/sh rbsh:/bin/rbsh nano:/bin/rnano init:/sbin/init
+USER_INSTALL_ALIASES := rbsh:/bin/sh rbsh:/bin/rbsh nano:/bin/rnano netctl:/bin/ping netctl:/bin/dhcp netctl:/bin/ifup netctl:/bin/ip netctl:/bin/arp init:/sbin/init
 USER_ALIAS_INSTALLS := $(foreach m,$(USER_INSTALL_ALIASES),$(BUILD)/user/$(firstword $(subst :, ,$(m))).elf:$(word 2,$(subst :, ,$(m))))
 USER_BIN_INSTALLS := $(USER_DEFAULT_INSTALLS) $(USER_ALIAS_INSTALLS)
 INSTALLER_USER_ARGS := $(foreach f,$(USER_BIN_INSTALLS),--install $(f))
 RABBITBONE_EMBED_USERLAND ?= 0
+RABBITBONE_STRICT_LOW_LAYOUT ?= 0
 ISO_VOLUME_ID ?= $(shell python3 scripts/rabbitbone_version.py --print-iso-volume-id)
 
-K_CFLAGS := -DRABBITBONE_EMBED_USERLAND=$(RABBITBONE_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
-K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CFLAGS := -DRABBITBONE_EMBED_USERLAND=$(RABBITBONE_EMBED_USERLAND) --target=x86_64-unknown-none -std=c11 -Oz -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
+K_CXXFLAGS := --target=x86_64-unknown-none -std=c++20 -Oz -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=large -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -Iinclude -Ikernel/include -MMD -MP
 ASMFLAGS := --target=x86_64-unknown-none -ffreestanding -Wall -Wextra -Werror -MMD -MP
-LDFLAGS := -nostdlib -z max-page-size=0x1000 -T scripts/kernel.ld -Map=$(BUILD)/kernel.map
+LDFLAGS := -nostdlib -z max-page-size=0x1000 --gc-sections -T scripts/kernel.ld -Map=$(BUILD)/kernel.map
 RUSTFLAGS := $(RUST_SYSROOT_FLAG) --target $(RUST_TARGET) --edition=2021 -C panic=abort -C relocation-model=static -C code-model=large -C no-redzone=yes -C opt-level=2 --crate-type lib --emit obj
 
 K_C_SRCS := \
@@ -79,6 +80,8 @@ K_C_SRCS := \
   kernel/drivers/hpet.c \
   kernel/drivers/smp.c \
   kernel/drivers/pci.c \
+  kernel/drivers/net.c \
+  kernel/drivers/rabbit_eth.c \
   kernel/drivers/ahci.c \
   kernel/drivers/ata_pio.c \
   kernel/drivers/block.c \
@@ -300,7 +303,7 @@ layoutcheck: $(BUILD)/stage2.elf
 	python3 scripts/check_stage2_layout.py $(BUILD)/stage2.elf
 
 kernellayoutcheck: $(BUILD)/kernel.elf
-	python3 scripts/check_kernel_layout.py $(BUILD)/kernel.elf $(BUILD)/kernel.map
+	RABBITBONE_STRICT_LOW_LAYOUT=$(RABBITBONE_STRICT_LOW_LAYOUT) python3 scripts/check_kernel_layout.py $(BUILD)/kernel.elf $(BUILD)/kernel.map
 
 rustsymbolscheck: $(BUILD)/kernel.elf
 	python3 scripts/check_rust_symbols.py $(BUILD)/kernel.elf

@@ -7,6 +7,7 @@
 #include <rabbitbone/drivers.h>
 #include <rabbitbone/tty.h>
 #include <rabbitbone/spinlock.h>
+#include <rabbitbone/net.h>
 
 typedef enum dev_kind { DEV_NULL, DEV_ZERO, DEV_PRNG, DEV_KMSG, DEV_TTY } dev_kind_t;
 
@@ -41,6 +42,51 @@ static devfs_entry_t const *find_entry(const char *path) {
     return 0;
 }
 
+static bool parse_net_path(const char *path, usize *index_out) {
+    if (index_out) *index_out = 0;
+    if (!path) return false;
+    while (*path == '/') ++path;
+    if (path[0] != 'n' || path[1] != 'e' || path[2] != 't') return false;
+    const char *p = path + 3;
+    if (*p < '0' || *p > '9') return false;
+    usize value = 0;
+    while (*p >= '0' && *p <= '9') {
+        usize next = value * 10u + (usize)(*p - '0');
+        if (next < value) return false;
+        value = next;
+        ++p;
+    }
+    if (*p != 0) return false;
+    if (value >= netdev_count()) return false;
+    if (index_out) *index_out = value;
+    return true;
+}
+
+static net_device_t *find_netdev_path(const char *path) {
+    usize index = 0;
+    if (!parse_net_path(path, &index)) return 0;
+    return netdev_get(index);
+}
+
+static bool path_from_inode(u32 inode, char *out, usize out_len) {
+    if (!out || out_len == 0) return false;
+    out[0] = 0;
+    for (usize i = 0; i < RABBITBONE_ARRAY_LEN(entries); ++i) {
+        if (entries[i].inode == inode) {
+            strlcpy(out, entries[i].name, out_len);
+            return true;
+        }
+    }
+    if (inode >= 100u) {
+        usize index = (usize)(inode - 100u);
+        if (index < netdev_count()) {
+            ksnprintf(out, out_len, "net%llu", (unsigned long long)index);
+            return true;
+        }
+    }
+    return false;
+}
+
 static u64 xorshift(devfs_state_t *s) {
     u64 x = s->prng_state;
     if (!x) x = 0x9e3779b97f4a7c15ull ^ pit_ticks();
@@ -60,13 +106,24 @@ static vfs_status_t op_stat(vfs_mount_t *mnt, const char *path, vfs_stat_t *out)
         return VFS_OK;
     }
     const devfs_entry_t *e = find_entry(path);
-    if (!e) return VFS_ERR_NOENT;
-    memset(out, 0, sizeof(*out));
-    out->type = VFS_NODE_DEV;
-    out->mode = e->mode; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
-    out->inode = e->inode;
-    out->fs_id = mnt->fs_id;
-    return VFS_OK;
+    if (e) {
+        memset(out, 0, sizeof(*out));
+        out->type = VFS_NODE_DEV;
+        out->mode = e->mode; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_ROOT;
+        out->inode = e->inode;
+        out->fs_id = mnt->fs_id;
+        return VFS_OK;
+    }
+    usize net_index = 0;
+    if (parse_net_path(path, &net_index)) {
+        memset(out, 0, sizeof(*out));
+        out->type = VFS_NODE_DEV;
+        out->mode = 0660u; out->uid = RABBITBONE_UID_ROOT; out->gid = RABBITBONE_GID_USERS;
+        out->inode = 100u + (u32)net_index;
+        out->fs_id = mnt->fs_id;
+        return VFS_OK;
+    }
+    return VFS_ERR_NOENT;
 }
 
 static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void *buffer, usize size, usize *read_out) {
@@ -74,7 +131,14 @@ static vfs_status_t op_read(vfs_mount_t *mnt, const char *path, u64 offset, void
     if (read_out) *read_out = 0;
     if (size && !buffer) return VFS_ERR_INVAL;
     const devfs_entry_t *e = find_entry(path);
-    if (!e) return VFS_ERR_NOENT;
+    if (!e) {
+        net_device_t *ndev = find_netdev_path(path);
+        if (!ndev) return VFS_ERR_NOENT;
+        usize got = 0;
+        net_status_t ns = netdev_read_frame(ndev, buffer, size, &got, 0);
+        if (read_out) *read_out = got;
+        return ns == NET_OK ? VFS_OK : VFS_ERR_IO;
+    }
     u8 *out = (u8 *)buffer;
     switch (e->kind) {
         case DEV_NULL:
@@ -129,7 +193,17 @@ static vfs_status_t op_write(vfs_mount_t *mnt, const char *path, u64 offset, con
     (void)mnt; (void)offset;
     if (written_out) *written_out = 0;
     const devfs_entry_t *e = find_entry(path);
-    if (!e) return VFS_ERR_NOENT;
+    if (!e) {
+        net_device_t *ndev = find_netdev_path(path);
+        if (!ndev) return VFS_ERR_NOENT;
+        usize wrote = 0;
+        net_status_t ns = netdev_write_frame(ndev, buffer, size, &wrote);
+        if (written_out) *written_out = wrote;
+        if (ns == NET_OK) return VFS_OK;
+        if (ns == NET_ERR_BUSY) return VFS_ERR_BUSY;
+        if (ns == NET_ERR_RANGE || ns == NET_ERR_INVAL) return VFS_ERR_INVAL;
+        return VFS_ERR_IO;
+    }
     if (e->kind == DEV_NULL) {
         if (written_out) *written_out = size;
         return VFS_OK;
@@ -170,15 +244,50 @@ static vfs_status_t op_list(vfs_mount_t *mnt, const char *path, vfs_dir_iter_fn 
         strlcpy(de.name, entries[i].name, sizeof(de.name));
         de.type = VFS_NODE_DEV;
         de.inode = entries[i].inode;
+        if (!fn(&de, ctx)) return VFS_OK;
+    }
+    for (usize i = 0; i < netdev_count(); ++i) {
+        vfs_dirent_t de;
+        memset(&de, 0, sizeof(de));
+        ksnprintf(de.name, sizeof(de.name), "net%llu", (unsigned long long)i);
+        de.type = VFS_NODE_DEV;
+        de.inode = 100u + (u32)i;
         if (!fn(&de, ctx)) break;
     }
     return VFS_OK;
+}
+
+static vfs_status_t op_stat_inode(vfs_mount_t *mnt, u32 inode, vfs_stat_t *out) {
+    char path[32];
+    if (!path_from_inode(inode, path, sizeof(path))) return VFS_ERR_NOENT;
+    return op_stat(mnt, path, out);
+}
+
+static vfs_status_t op_read_inode(vfs_mount_t *mnt, u32 inode, u64 offset, void *buffer, usize size, usize *read_out) {
+    char path[32];
+    if (!path_from_inode(inode, path, sizeof(path))) {
+        if (read_out) *read_out = 0;
+        return VFS_ERR_NOENT;
+    }
+    return op_read(mnt, path, offset, buffer, size, read_out);
+}
+
+static vfs_status_t op_write_inode(vfs_mount_t *mnt, u32 inode, u64 offset, const void *buffer, usize size, usize *written_out) {
+    char path[32];
+    if (!path_from_inode(inode, path, sizeof(path))) {
+        if (written_out) *written_out = 0;
+        return VFS_ERR_NOENT;
+    }
+    return op_write(mnt, path, offset, buffer, size, written_out);
 }
 
 static const vfs_ops_t ops = {
     .stat = op_stat,
     .read = op_read,
     .write = op_write,
+    .stat_inode = op_stat_inode,
+    .read_inode = op_read_inode,
+    .write_inode = op_write_inode,
     .list = op_list,
 };
 

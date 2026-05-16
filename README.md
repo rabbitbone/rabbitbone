@@ -5,7 +5,7 @@
 <h1 align="center">Rabbitbone</h1>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.5-2f6fed" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.6-2f6fed" />
   <img alt="Target" src="https://img.shields.io/badge/target-x86_64%20UEFI%20Live%20ISO-222222" />
   <img alt="Kernel" src="https://img.shields.io/badge/kernel-independent-6b46c1" />
   <img alt="Written with" src="https://img.shields.io/badge/written%20with-GPT--5.5-0f766e" />
@@ -19,7 +19,7 @@
 
 Rabbitbone is a small amd64 operating system built from scratch for UEFI virtual machines. It is not Linux, not a Unix clone, and not a bootloader demo. The default artifact is a live ISO that boots an independent kernel, loads a RAM-backed root image as a boot module, mounts it at `/disk0`, and starts a disk-backed userland with `/disk0/sbin/init` and `rbsh`.
 
-The current release line is `0.0.3.5`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
+The current release line is `0.0.3.6`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
 
 ## Highlights
 
@@ -29,7 +29,8 @@ The current release line is `0.0.3.5`. The default path is UEFI-only. The legacy
 | Kernel | x86_64 CPU feature bring-up, per-CPU GDT/TSS stacks, IDT, paging, heap, VMM, W^X/NX image protection, panic path, structured logging, shell |
 | Filesystems | VFS, ramfs, devfs, tarfs, writable EXT4, indexed extents, split-leaf/depth-2 extent trees, htree directories, metadata repair-lite |
 | Storage | Live boot RAM disk, block layer, MBR parsing, ATA PIO, AHCI probing |
-| User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, `/disk0/sbin/init`, `/disk0/bin/rbsh`, test utilities including `cpuidcheck` |
+| Networking | VMware `e1000`/`e1000e` Ethernet probe path, `/dev/net0`, frame RX/TX queues, `net` diagnostics, DHCP, ARP, DNS lookup, and ICMP ping through `netctl` |
+| User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, `/disk0/sbin/init`, `/disk0/bin/rbsh`, test utilities including `cpuidcheck` and `netctl` |
 | Processes | spawn/wait, process registry, fork, exec, fd table, `brk`/`sbrk`, anonymous mmap, file-backed private mmap |
 | Scheduling | Preemptive scheduler with SMP topology, AP bootstrap, cross-call, TLB-shootdown, idle, and per-CPU telemetry groundwork |
 | Rust boundary | Rust modules for syscall dispatch, usercopy validation, VFS routing, and path policy checks |
@@ -144,6 +145,10 @@ lastproc
 sched
 preempt
 cpuidcheck
+net
+netctl status
+dhcp
+ping 8.8.8.8
 schedtest
 runq
 tty
@@ -200,7 +205,7 @@ boot/                  UEFI loader plus retained legacy BIOS loader sources
 include/               public Rabbitbone ABI/version headers
 kernel/arch/x86_64/    CPU, GDT, IDT, IRQ, paging, entry assembly
 kernel/core/           kernel main, shell, logging, panic, ktest
-kernel/drivers/        VGA, serial, PIT, PIC, keyboard, boot RAM disk, AHCI, ATA PIO, MBR, block layer, SMP/APIC support
+kernel/drivers/        VGA, serial, PIT, PIC, keyboard, boot RAM disk, AHCI, ATA PIO, MBR, block layer, network, SMP/APIC support
 kernel/exec/           ELF64 image loader
 kernel/fs/             EXT4 reader/writer
 kernel/mm/             virtual memory and kernel heap
@@ -221,6 +226,7 @@ vmware/                VMware helper files and example configs
 
 - [Current status](docs/STATUS.md)
 - [Release notes](docs/RELEASES.md)
+- [VM networking](docs/vm-networking.md)
 
 ## Current limits
 
@@ -230,6 +236,7 @@ Rabbitbone is still intentionally narrow in scope:
 - UEFI live RAM-root boot flow by default
 - EXT4 write support only for the implemented and tested regular-file/directory paths
 - extent-tree support covered through the tested inline, indexed, split-leaf, and depth-2 cases
+- networking is currently VMware Intel virtual NIC oriented, with userland IPv4 helpers rather than a full kernel TCP/IP stack
 - no NVMe, USB, GUI, or full Linux-compatible journal descriptor/commit format
 - `/dev/prng` and `/dev/urandom_insecure` are deterministic non-cryptographic PRNG devices until real entropy plumbing exists
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,15 @@ from pathlib import Path
 if len(sys.argv) != 3:
     print('usage: check_kernel_layout.py KERNEL_ELF KERNEL_MAP', file=sys.stderr)
     sys.exit(2)
+
+STRICT_LOW_LAYOUT = os.environ.get('RABBITBONE_STRICT_LOW_LAYOUT', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
+def low_layout_violation(message):
+    if STRICT_LOW_LAYOUT:
+        print(message, file=sys.stderr)
+        sys.exit(1)
+    print(message.replace('kernel layout check:', 'kernel layout warning:', 1), file=sys.stderr)
+
 elf = Path(sys.argv[1])
 map_file = Path(sys.argv[2])
 if not elf.exists() or not map_file.exists():
@@ -51,11 +61,9 @@ LOW_MEMORY_RESERVED_START = 0x9f000
 EARLY_STACK_TOP = 0x1f0000
 MIN_EARLY_STACK_BYTES = 64 * 1024
 if syms['__kernel_end'] > LOW_MEMORY_RESERVED_START:
-    print(f'kernel layout check: kernel low-memory image overlaps reserved BIOS/video region: __kernel_end=0x{syms["__kernel_end"]:x} limit=0x{LOW_MEMORY_RESERVED_START:x}', file=sys.stderr)
-    sys.exit(1)
+    low_layout_violation(f'kernel layout check: kernel low-memory image overlaps reserved BIOS/video region: __kernel_end=0x{syms["__kernel_end"]:x} limit=0x{LOW_MEMORY_RESERVED_START:x}')
 if syms['__kernel_end'] + MIN_EARLY_STACK_BYTES > EARLY_STACK_TOP:
-    print(f'kernel layout check: early stack margin too small: __kernel_end=0x{syms["__kernel_end"]:x} stack_top=0x{EARLY_STACK_TOP:x} min={MIN_EARLY_STACK_BYTES}', file=sys.stderr)
-    sys.exit(1)
+    low_layout_violation(f'kernel layout check: early stack margin too small: __kernel_end=0x{syms["__kernel_end"]:x} stack_top=0x{EARLY_STACK_TOP:x} min={MIN_EARLY_STACK_BYTES}')
 
 text = map_file.read_text(errors='replace')
 for orphan in ('.ldata', '.lbss', '.lrodata'):

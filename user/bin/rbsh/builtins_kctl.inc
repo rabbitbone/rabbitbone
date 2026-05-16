@@ -22,6 +22,7 @@ static int sh_kctl_op_for(const char *cmd, unsigned int *op) {
     else if (sh_streq(cmd, "timer")) *op = RABBITBONE_KCTL_OP_TIMER;
     else if (sh_streq(cmd, "smp")) *op = RABBITBONE_KCTL_OP_SMP;
     else if (sh_streq(cmd, "blk")) *op = RABBITBONE_KCTL_OP_BLK;
+    else if (sh_streq(cmd, "net") || sh_streq(cmd, "ifconfig")) *op = RABBITBONE_KCTL_OP_NET;
     else if (sh_streq(cmd, "pci") || sh_streq(cmd, "lspci")) *op = RABBITBONE_KCTL_OP_PCI;
     else if (sh_streq(cmd, "ext4")) *op = RABBITBONE_KCTL_OP_EXT4;
     else if (sh_streq(cmd, "signals")) *op = RABBITBONE_KCTL_OP_SIGNALS;
@@ -38,6 +39,17 @@ static int sh_builtin_kctl(int argc, char **argv) {
     if (argc <= 0 || !argv || !argv[0]) return 1;
     unsigned int op = 0;
     if (!sh_kctl_op_for(argv[0], &op)) return 127;
+    if (op == RABBITBONE_KCTL_OP_NET && argc > 1) {
+        const char *av[SH_ARG_MAX];
+        unsigned int n = 0;
+        av[n++] = "/bin/netctl";
+        for (int i = 1; i < argc && n < SH_ARG_MAX; ++i) av[n++] = argv[i];
+        au_procinfo_t pi;
+        au_memset(&pi, 0, sizeof(pi));
+        au_i64 sr = au_spawnv_wait("/bin/netctl", n, av, &pi);
+        if (sr < 0) { sh_perror2(argv[0], "/bin/netctl", sr); return 1; }
+        return pi.exit_code;
+    }
     const char *arg = 0;
     if (op == RABBITBONE_KCTL_OP_PANIC) arg = argc > 1 ? argv[1] : "shell panic command";
     else if (op == RABBITBONE_KCTL_OP_KTEST) arg = argc > 1 ? argv[1] : 0;

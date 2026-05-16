@@ -32,6 +32,7 @@
 #include <rabbitbone/apic.h>
 #include <rabbitbone/hpet.h>
 #include <rabbitbone/smp.h>
+#include <rabbitbone/net.h>
 
 #ifdef RABBITBONE_DEBUG_SHELL
 extern void shell_run(void);
@@ -53,7 +54,7 @@ static void kernel_mount_filesystems(void) {
         return;
     }
     static const char *const userland_aliases[] = {
-        "hello", "fscheck", "writetest", "badptr", "badpath", "statcheck", "procstat",
+        "hello", "netctl", "ping", "dhcp", "ifup", "ip", "arp", "fscheck", "writetest", "badptr", "badpath", "statcheck", "procstat",
         "spawncheck", "schedcheck", "preemptcheck", "fdcheck", "isolate", "fdleak",
         "forkcheck", "heapcheck", "mmapcheck", "mmapfilecheck", "mmapsharedcheck",
         "procctl", "execcheck", "execfdcheck", "execfdchild", "execvecheck", "exectarget",
@@ -118,9 +119,11 @@ void kernel_main(const rabbitbone_bootinfo_t *bootinfo) {
     timer_init_sources();
 
     pci_init();
+    rabbit_eth_init();
     ahci_init();
     ata_pio_init();
     block_log_devices();
+    net_log_devices();
     kernel_mount_filesystems();
     syscall_init();
     rabbitbone_cpp_api_selftest();
