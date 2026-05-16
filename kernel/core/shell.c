@@ -55,7 +55,7 @@ static void debug_execute(char *line) {
     } else if (strcmp(line, "timer") == 0) {
         debug_print_formatted(timer_format_status, 1024u);
     } else if (strcmp(line, "smp") == 0) {
-        debug_print_formatted(smp_format_status, 2048u);
+        debug_print_formatted(smp_format_status, 8192u);
     } else if (strcmp(line, "pci") == 0 || strcmp(line, "lspci") == 0) {
         debug_print_formatted(pci_format_devices, 4096u);
     } else if (strcmp(line, "disks") == 0 || strcmp(line, "blk") == 0) {

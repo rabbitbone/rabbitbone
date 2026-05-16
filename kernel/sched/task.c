@@ -5,6 +5,8 @@
 #include <rabbitbone/log.h>
 #include <rabbitbone/drivers.h>
 #include <rabbitbone/spinlock.h>
+#include <rabbitbone/smp.h>
+#include <rabbitbone/scheduler.h>
 
 typedef struct task {
     task_info_t info;
@@ -13,7 +15,7 @@ typedef struct task {
 } task_t;
 
 static task_t tasks[TASK_MAX];
-static task_t *current;
+static task_t *current_by_cpu[SMP_MAX_CPUS];
 static u32 next_pid;
 static u64 total_runs;
 static bool initialized;
@@ -27,12 +29,29 @@ static u64 now_tick(void) {
 #endif
 }
 
+static u32 task_cpu_slot(void) {
+#if defined(RABBITBONE_HOST_TEST)
+    return 0;
+#else
+    u32 id = smp_current_cpu_id();
+    return id < SMP_MAX_CPUS ? id : 0u;
+#endif
+}
+
+static task_t *task_current_locked(void) {
+    return current_by_cpu[task_cpu_slot()];
+}
+
+static void task_set_current_locked(task_t *t) {
+    current_by_cpu[task_cpu_slot()] = t;
+}
+
 #define TASK_SNAPSHOT_MAGIC 0x52424f4e52415453ull
 
 typedef struct task_snapshot {
     u64 magic;
     task_t tasks_copy[TASK_MAX];
-    i32 current_index;
+    i32 current_index[SMP_MAX_CPUS];
     u32 next_pid_copy;
     u64 total_runs_copy;
     bool initialized_copy;
@@ -47,10 +66,12 @@ bool task_snapshot_save(void *buffer, usize size) {
     u64 flags = spin_lock_irqsave(&task_lock);
     snap->magic = TASK_SNAPSHOT_MAGIC;
     memcpy(snap->tasks_copy, tasks, sizeof(tasks));
-    snap->current_index = -1;
-    if (current) {
+    for (usize cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) snap->current_index[cpu] = -1;
+    for (usize cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) {
+        task_t *cur = current_by_cpu[cpu];
+        if (!cur) continue;
         for (usize i = 0; i < TASK_MAX; ++i) {
-            if (&tasks[i] == current) { snap->current_index = (i32)i; break; }
+            if (&tasks[i] == cur) { snap->current_index[cpu] = (i32)i; break; }
         }
     }
     snap->next_pid_copy = next_pid;
@@ -66,7 +87,7 @@ bool task_snapshot_restore(const void *buffer, usize size) {
     if (snap->magic != TASK_SNAPSHOT_MAGIC) return false;
     u64 flags = spin_lock_irqsave(&task_lock);
     memcpy(tasks, snap->tasks_copy, sizeof(tasks));
-    current = (snap->current_index >= 0 && (usize)snap->current_index < TASK_MAX) ? &tasks[snap->current_index] : 0;
+    for (usize cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) current_by_cpu[cpu] = (snap->current_index[cpu] >= 0 && (usize)snap->current_index[cpu] < TASK_MAX) ? &tasks[snap->current_index[cpu]] : 0;
     next_pid = snap->next_pid_copy;
     total_runs = snap->total_runs_copy;
     initialized = snap->initialized_copy;
@@ -77,7 +98,7 @@ bool task_snapshot_restore(const void *buffer, usize size) {
 void task_reset_for_test(void) {
     u64 flags = spin_lock_irqsave(&task_lock);
     memset(tasks, 0, sizeof(tasks));
-    current = 0;
+    memset(current_by_cpu, 0, sizeof(current_by_cpu));
     next_pid = 1;
     total_runs = 0;
     initialized = true;
@@ -102,6 +123,10 @@ const char *task_state_name(task_state_t state) {
     }
 }
 
+bool task_is_initialized(void) {
+    return __atomic_load_n(&initialized, __ATOMIC_ACQUIRE);
+}
+
 void task_init(void) {
     u64 flags = spin_lock_irqsave(&task_lock);
     if (initialized && task_table_has_live_locked()) {
@@ -109,7 +134,7 @@ void task_init(void) {
         return;
     }
     memset(tasks, 0, sizeof(tasks));
-    current = 0;
+    memset(current_by_cpu, 0, sizeof(current_by_cpu));
     next_pid = 1;
     total_runs = 0;
     initialized = true;
@@ -151,7 +176,8 @@ i32 task_spawn_kernel(const char *name, task_entry_t entry, void *ctx) {
     if (!pid) { spin_unlock_irqrestore(&task_lock, flags); return -3; }
     memset(t, 0, sizeof(*t));
     t->info.pid = pid;
-    t->info.parent_pid = current ? current->info.pid : 0;
+    task_t *parent = task_current_locked();
+    t->info.parent_pid = parent ? parent->info.pid : 0;
     t->info.state = TASK_READY;
     t->info.created_tick = now_tick();
     strlcpy(t->info.name, name, sizeof(t->info.name));
@@ -165,9 +191,10 @@ i32 task_spawn_kernel(const char *name, task_entry_t entry, void *ctx) {
 
 void task_exit_current(i32 code) {
     u64 flags = spin_lock_irqsave(&task_lock);
-    if (current) {
-        current->info.exit_code = code;
-        current->info.state = TASK_EXITED;
+    task_t *cur = task_current_locked();
+    if (cur) {
+        cur->info.exit_code = code;
+        cur->info.state = TASK_EXITED;
     }
     spin_unlock_irqrestore(&task_lock, flags);
 }
@@ -183,7 +210,7 @@ void task_run_ready(u32 max_tasks) {
         u64 flags = spin_lock_irqsave(&task_lock);
         if (tasks[i].info.state == TASK_READY && tasks[i].entry) {
             t = &tasks[i];
-            current = t;
+            task_set_current_locked(t);
             t->info.state = TASK_RUNNING;
             ++t->info.run_count;
             ++total_runs;
@@ -193,11 +220,12 @@ void task_run_ready(u32 max_tasks) {
         }
         spin_unlock_irqrestore(&task_lock, flags);
         if (!entry) continue;
+        scheduler_note_kernel_task_dispatch();
         entry(ctx);
         flags = spin_lock_irqsave(&task_lock);
-        if (t && current == t) {
+        if (t && task_current_locked() == t) {
             if (t->info.state == TASK_RUNNING) t->info.state = TASK_EXITED;
-            current = 0;
+            task_set_current_locked(0);
         }
         spin_unlock_irqrestore(&task_lock, flags);
     }

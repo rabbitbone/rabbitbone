@@ -28,6 +28,13 @@ static uptr align_up_uptr(uptr value, uptr align) {
     return align_up_uptr_checked(value, align, &out) ? out : 0;
 }
 
+#define VMM_SMP_TRAMPOLINE_BASE 0x7000ull
+#define VMM_SMP_TRAMPOLINE_SIZE PAGE_SIZE
+
+static bool identity_page_is_smp_trampoline(uptr page) {
+    return page >= VMM_SMP_TRAMPOLINE_BASE && page < VMM_SMP_TRAMPOLINE_BASE + VMM_SMP_TRAMPOLINE_SIZE;
+}
+
 static u64 identity_4k_flags(uptr addr) {
     const uptr text_start = (uptr)__text_start;
     const uptr text_end = (uptr)__text_end;
@@ -38,15 +45,17 @@ static u64 identity_4k_flags(uptr addr) {
     const uptr bss_start = (uptr)__bss_start;
     const uptr bss_end = (uptr)__bss_end;
 
+    if (identity_page_is_smp_trampoline(addr)) return VMM_WRITE | VMM_GLOBAL | VMM_NX;
     if (page_overlaps(addr, text_start, text_end)) return VMM_GLOBAL;
     if (page_overlaps(addr, rodata_start, rodata_end)) return VMM_GLOBAL | VMM_NX;
     if (page_overlaps(addr, data_start, data_end) || page_overlaps(addr, bss_start, bss_end)) return VMM_WRITE | VMM_GLOBAL | VMM_NX;
     return VMM_WRITE | VMM_NX;
 }
 
-static bool identity_2m_window_overlaps_kernel(uptr base) {
+static bool identity_2m_window_requires_4k(uptr base) {
     const uptr huge_size = 2ull * 1024ull * 1024ull;
-    return vmm_ranges_overlap(base, base + huge_size, (uptr)__kernel_start, (uptr)__kernel_end);
+    return vmm_ranges_overlap(base, base + huge_size, (uptr)__kernel_start, (uptr)__kernel_end) ||
+           vmm_ranges_overlap(base, base + huge_size, VMM_SMP_TRAMPOLINE_BASE, VMM_SMP_TRAMPOLINE_BASE + VMM_SMP_TRAMPOLINE_SIZE);
 }
 
 static bool vmm_range_has_flags(uptr start, uptr end, u64 required, u64 forbidden) {
@@ -93,7 +102,7 @@ void vmm_init(u64 identity_bytes) {
     kernel_space_obj.user_space = false;
     pte_t *root = alloc_kernel_table();
     kernel_space_obj.pml4_physical = (uptr)root;
-    current_space_obj = &kernel_space_obj;
+    vmm_set_current_space_local(&kernel_space_obj);
     if (identity_bytes < 64ull * 1024ull * 1024ull) identity_bytes = 64ull * 1024ull * 1024ull;
     if (identity_bytes < (u64)(uptr)__kernel_end) identity_bytes = (u64)(uptr)__kernel_end;
     const u64 huge_size = 2ull * 1024ull * 1024ull;
@@ -101,7 +110,7 @@ void vmm_init(u64 identity_bytes) {
     if (!rabbitbone_align_up_u64_checked(identity_bytes, huge_size, &aligned_identity)) PANIC("vmm: identity window overflow");
     identity_bytes = aligned_identity;
     for (u64 addr = 0; addr < identity_bytes; addr += huge_size) {
-        if (identity_2m_window_overlaps_kernel((uptr)addr)) {
+        if (identity_2m_window_requires_4k((uptr)addr)) {
             for (u64 page = addr; page < addr + huge_size && page < identity_bytes; page += PAGE_SIZE) {
                 if (!vmm_map_4k((uptr)page, (uptr)page, identity_4k_flags((uptr)page))) PANIC("vmm: 4K identity map failed at %p", (void *)(uptr)page);
             }
@@ -120,7 +129,7 @@ void vmm_get_stats(vmm_stats_t *out) {
     if (!out) return;
     u64 irq = spin_lock_irqsave(&vmm_lock);
     *out = stats;
-    out->current_pml4_physical = current_space_obj ? current_space_obj->pml4_physical : 0;
+    out->current_pml4_physical = vmm_current_space_local() ? vmm_current_space_local()->pml4_physical : 0;
     spin_unlock_irqrestore(&vmm_lock, irq);
     vmm_kernel_protection_status(&out->kernel_text_ro, &out->kernel_rodata_nx, &out->kernel_data_nx);
 }

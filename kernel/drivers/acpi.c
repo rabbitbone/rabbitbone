@@ -5,6 +5,8 @@
 #include <rabbitbone/console.h>
 #include <rabbitbone/types.h>
 #include <rabbitbone/memory.h>
+#include <rabbitbone/bootinfo.h>
+#include <rabbitbone/vmm.h>
 
 #define ACPI_RSDP_SIG "RSD PTR "
 #define ACPI_TABLE_MADT "APIC"
@@ -79,6 +81,14 @@ typedef struct RABBITBONE_PACKED acpi_madt_lapic_override {
     u64 lapic_address;
 } acpi_madt_lapic_override_t;
 
+typedef struct RABBITBONE_PACKED acpi_madt_x2apic {
+    acpi_madt_entry_header_t h;
+    u16 reserved;
+    u32 x2apic_id;
+    u32 flags;
+    u32 acpi_uid;
+} acpi_madt_x2apic_t;
+
 typedef struct RABBITBONE_PACKED acpi_gas {
     u8 address_space_id;
     u8 register_bit_width;
@@ -100,15 +110,31 @@ static acpi_info_t acpi_info;
 static const acpi_sdt_header_t *acpi_tables[32];
 static usize acpi_table_count;
 
-static bool phys_range_identity_mapped(uptr addr, usize len) {
+#define ACPI_IDENTITY_ACCESS_LIMIT 0x0000800000000000ull
+
+static bool phys_range_accessible(uptr addr, usize len) {
     if (len == 0) return true;
     uptr end = 0;
     if (__builtin_add_overflow(addr, (uptr)len, &end)) return false;
-    return addr >= 0x400u && end <= (uptr)MEMORY_KERNEL_DIRECT_LIMIT;
+    if (addr < 0x400u || (u64)end > ACPI_IDENTITY_ACCESS_LIMIT) return false;
+    uptr first = RABBITBONE_ALIGN_DOWN(addr, PAGE_SIZE);
+    u64 aligned_end64 = 0;
+    if (!rabbitbone_align_up_u64_checked((u64)end, PAGE_SIZE, &aligned_end64)) return false;
+    if (aligned_end64 > ACPI_IDENTITY_ACCESS_LIMIT) return false;
+    for (uptr page = first; (u64)page < aligned_end64; page += PAGE_SIZE) {
+        uptr phys = 0;
+        u64 flags = 0;
+        if (vmm_translate(page, &phys, &flags)) {
+            if (phys != page) return false;
+            continue;
+        }
+        if (!vmm_map_4k(page, page, VMM_NX | VMM_GLOBAL)) return false;
+    }
+    return true;
 }
 
 static bool checksum_ok(const void *ptr, usize len) {
-    if (!ptr || !phys_range_identity_mapped((uptr)ptr, len)) return false;
+    if (!ptr || !phys_range_accessible((uptr)ptr, len)) return false;
     const u8 *p = (const u8 *)ptr;
     u8 sum = 0;
     for (usize i = 0; i < len; ++i) sum = (u8)(sum + p[i]);
@@ -131,13 +157,13 @@ static const acpi_rsdp_v2_t *scan_rsdp_range(uptr start, uptr end) {
     for (;;) {
         uptr candidate_end = 0;
         if (__builtin_add_overflow(p, (uptr)sizeof(acpi_rsdp_v1_t), &candidate_end) || candidate_end > end) break;
-        if (!phys_range_identity_mapped(p, sizeof(acpi_rsdp_v1_t))) goto next;
+        if (!phys_range_accessible(p, sizeof(acpi_rsdp_v1_t))) goto next;
         const acpi_rsdp_v2_t *r = (const acpi_rsdp_v2_t *)p;
         if (memcmp(r->v1.signature, ACPI_RSDP_SIG, 8u) != 0) goto next;
         if (!checksum_ok(&r->v1, sizeof(acpi_rsdp_v1_t))) goto next;
         if (r->v1.revision >= 2u) {
             if (r->length < sizeof(acpi_rsdp_v2_t) || r->length > 4096u) goto next;
-            if (!phys_range_identity_mapped((uptr)r, r->length) || !checksum_ok(r, r->length)) goto next;
+            if (!phys_range_accessible((uptr)r, r->length) || !checksum_ok(r, r->length)) goto next;
         }
         return r;
 next:
@@ -146,7 +172,24 @@ next:
     return 0;
 }
 
+static const acpi_rsdp_v2_t *validate_rsdp_at(uptr addr) {
+    if (!addr || (addr & 0xfu) != 0) return 0;
+    if (!phys_range_accessible(addr, sizeof(acpi_rsdp_v1_t))) return 0;
+    const acpi_rsdp_v2_t *r = (const acpi_rsdp_v2_t *)addr;
+    if (memcmp(r->v1.signature, ACPI_RSDP_SIG, 8u) != 0) return 0;
+    if (!checksum_ok(&r->v1, sizeof(acpi_rsdp_v1_t))) return 0;
+    if (r->v1.revision >= 2u) {
+        if (r->length < sizeof(acpi_rsdp_v2_t) || r->length > 4096u) return 0;
+        if (!phys_range_accessible(addr, r->length) || !checksum_ok(r, r->length)) return 0;
+    }
+    return r;
+}
+
 static const acpi_rsdp_v2_t *find_rsdp(void) {
+    const u64 boot_rsdp = bootinfo_acpi_rsdp();
+    const acpi_rsdp_v2_t *from_boot = boot_rsdp ? validate_rsdp_at((uptr)boot_rsdp) : 0;
+    if (from_boot) return from_boot;
+
     u16 ebda_seg = *(const volatile u16 *)(uptr)0x40e;
     uptr ebda = (uptr)ebda_seg << 4;
     if (ebda >= 0x80000u && ebda < 0xa0000u) {
@@ -157,9 +200,9 @@ static const acpi_rsdp_v2_t *find_rsdp(void) {
 }
 
 static bool valid_sdt(const acpi_sdt_header_t *h) {
-    if (!h || !phys_range_identity_mapped((uptr)h, sizeof(*h))) return false;
+    if (!h || !phys_range_accessible((uptr)h, sizeof(*h))) return false;
     if (h->length < sizeof(*h) || h->length > (1024u * 1024u)) return false;
-    if (!phys_range_identity_mapped((uptr)h, h->length)) return false;
+    if (!phys_range_accessible((uptr)h, h->length)) return false;
     return checksum_ok(h, h->length);
 }
 
@@ -178,7 +221,7 @@ static void parse_root_table(const acpi_sdt_header_t *root, bool xsdt) {
         entries = (root->length - sizeof(*root)) / sizeof(u64);
         const u64 *p = (const u64 *)((const u8 *)root + sizeof(*root));
         for (usize i = 0; i < entries; ++i) {
-            if (p[i] && p[i] < MEMORY_KERNEL_DIRECT_LIMIT) add_table((const acpi_sdt_header_t *)(uptr)p[i]);
+            if (p[i]) add_table((const acpi_sdt_header_t *)(uptr)p[i]);
         }
     } else {
         entries = (root->length - sizeof(*root)) / sizeof(u32);
@@ -198,6 +241,42 @@ const void *acpi_find_table(const char sig[4]) {
     return 0;
 }
 
+static acpi_cpu_info_t *acpi_find_cpu_by_apic_id(u32 apic_id) {
+    for (u32 i = 0; i < acpi_info.cpu_count; ++i) {
+        if (acpi_info.cpus[i].apic_id == apic_id) return &acpi_info.cpus[i];
+    }
+    return 0;
+}
+
+static acpi_cpu_info_t *acpi_find_cpu_by_uid(u32 acpi_id) {
+    for (u32 i = 0; i < acpi_info.cpu_count; ++i) {
+        if (acpi_info.cpus[i].acpi_id == acpi_id) return &acpi_info.cpus[i];
+    }
+    return 0;
+}
+
+static void acpi_record_madt_cpu(u32 acpi_id, u32 apic_id, u32 flags, bool x2apic) {
+    bool enabled = (flags & 0x1u) != 0;
+    acpi_cpu_info_t *c = acpi_find_cpu_by_apic_id(apic_id);
+    if (!c) c = acpi_find_cpu_by_uid(acpi_id);
+    if (!c) {
+        if (acpi_info.cpu_count >= ACPI_MAX_CPUS) return;
+        c = &acpi_info.cpus[acpi_info.cpu_count++];
+        memset(c, 0, sizeof(*c));
+    } else if (c->enabled) {
+        --acpi_info.enabled_cpu_count;
+    }
+
+    c->acpi_id = acpi_id;
+    c->flags = flags;
+    c->enabled = enabled;
+    if (x2apic || !c->x2apic) {
+        c->apic_id = apic_id;
+        c->x2apic = x2apic;
+    }
+    if (c->enabled) ++acpi_info.enabled_cpu_count;
+}
+
 static void parse_madt(void) {
     const acpi_madt_t *m = (const acpi_madt_t *)acpi_find_table(ACPI_TABLE_MADT);
     if (!m || m->h.length < sizeof(*m)) return;
@@ -210,14 +289,7 @@ static void parse_madt(void) {
         if (eh->length < sizeof(*eh) || !acpi_span_has(p, end, eh->length)) break;
         if (eh->type == 0 && eh->length >= sizeof(acpi_madt_lapic_t)) {
             const acpi_madt_lapic_t *e = (const acpi_madt_lapic_t *)p;
-            if (acpi_info.cpu_count < ACPI_MAX_CPUS) {
-                acpi_cpu_info_t *c = &acpi_info.cpus[acpi_info.cpu_count++];
-                c->acpi_id = e->acpi_processor_id;
-                c->apic_id = e->apic_id;
-                c->flags = e->flags;
-                c->enabled = (e->flags & 0x1u) != 0;
-                if (c->enabled) ++acpi_info.enabled_cpu_count;
-            }
+            acpi_record_madt_cpu((u32)e->acpi_processor_id, (u32)e->apic_id, e->flags, false);
         } else if (eh->type == 1 && eh->length >= sizeof(acpi_madt_ioapic_t)) {
             const acpi_madt_ioapic_t *e = (const acpi_madt_ioapic_t *)p;
             if (acpi_info.ioapic_count < ACPI_MAX_IOAPICS) {
@@ -238,6 +310,9 @@ static void parse_madt(void) {
         } else if (eh->type == 5 && eh->length >= sizeof(acpi_madt_lapic_override_t)) {
             const acpi_madt_lapic_override_t *e = (const acpi_madt_lapic_override_t *)p;
             if (e->lapic_address <= 0xffffffffull) acpi_info.lapic_address = (u32)e->lapic_address;
+        } else if (eh->type == 9 && eh->length >= sizeof(acpi_madt_x2apic_t)) {
+            const acpi_madt_x2apic_t *e = (const acpi_madt_x2apic_t *)p;
+            acpi_record_madt_cpu(e->acpi_uid, e->x2apic_id, e->flags, true);
         }
         p += eh->length;
     }
@@ -266,8 +341,8 @@ void acpi_init(void) {
     const acpi_sdt_header_t *root = 0;
     bool xsdt = false;
     if (rsdp->v1.revision >= 2u && rsdp->xsdt_address) {
-        root = rsdp->xsdt_address < MEMORY_KERNEL_DIRECT_LIMIT ? (const acpi_sdt_header_t *)(uptr)rsdp->xsdt_address : 0;
-        xsdt = root != 0;
+        root = (const acpi_sdt_header_t *)(uptr)rsdp->xsdt_address;
+        xsdt = true;
         if (!valid_sdt(root)) { root = 0; xsdt = false; }
     }
     if (!root && rsdp->v1.rsdt_address) root = (const acpi_sdt_header_t *)(uptr)(u64)rsdp->v1.rsdt_address;
@@ -295,7 +370,7 @@ void acpi_format_status(char *out, usize out_len) {
             acpi_info.cpu_count, acpi_info.enabled_cpu_count, acpi_info.ioapic_count, acpi_info.iso_count);
     for (u32 i = 0; i < acpi_info.cpu_count; ++i) {
         const acpi_cpu_info_t *c = &acpi_info.cpus[i];
-        rabbitbone_buf_appendf(&bo, "    cpu%u acpi=%u apic=%u enabled=%u flags=0x%x\n", i, c->acpi_id, c->apic_id, c->enabled ? 1u : 0u, c->flags);
+        rabbitbone_buf_appendf(&bo, "    cpu%u acpi=%u apic=%u x2=%u enabled=%u flags=0x%x\n", i, c->acpi_id, c->apic_id, c->x2apic ? 1u : 0u, c->enabled ? 1u : 0u, c->flags);
     }
     for (u32 i = 0; i < acpi_info.ioapic_count; ++i) {
         const acpi_ioapic_info_t *io = &acpi_info.ioapics[i];
@@ -310,5 +385,15 @@ bool acpi_selftest(void) {
     if (acpi_info.rsdp == 0 || acpi_info.root_table == 0) return false;
     if (acpi_info.table_count == 0) return false;
     if (acpi_info.madt_found && acpi_info.enabled_cpu_count == 0) return false;
+    u32 enabled = 0;
+    for (u32 i = 0; i < acpi_info.cpu_count; ++i) {
+        const acpi_cpu_info_t *a = &acpi_info.cpus[i];
+        if (a->enabled) ++enabled;
+        for (u32 j = i + 1u; j < acpi_info.cpu_count; ++j) {
+            const acpi_cpu_info_t *b = &acpi_info.cpus[j];
+            if (a->enabled && b->enabled && a->apic_id == b->apic_id) return false;
+        }
+    }
+    if (enabled != acpi_info.enabled_cpu_count) return false;
     return true;
 }

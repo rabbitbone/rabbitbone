@@ -11,6 +11,9 @@
 
 static vfs_mount_t mounts[VFS_MAX_MOUNTS];
 static spinlock_t mounts_lock;
+static spinlock_t vfs_op_lock;
+static volatile u64 vfs_op_lock_acquires;
+static volatile u64 vfs_op_lock_contention;
 static u32 next_fs_id;
 static u32 next_mount_generation;
 static bool ready;

@@ -8,6 +8,8 @@
 #include <rabbitbone/log.h>
 #include <rabbitbone/console.h>
 
+#define MMIO_IDENTITY_ACCESS_LIMIT 0x0000800000000000ull
+
 #define AHCI_MAX_CONTROLLERS 2u
 #define AHCI_MAX_DEVS 4u
 #define AHCI_MAX_WAIT 1000000u
@@ -116,19 +118,22 @@ static bool ahci_wait_clear(volatile u32 *reg, u32 mask) {
 
 static bool ahci_map_abar(u64 base, u64 size) {
     if (size == 0) size = 0x2000;
-    if (base == 0 || base >= MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    if (base == 0 || base >= MMIO_IDENTITY_ACCESS_LIMIT) return false;
     u64 raw_end = 0;
     if (__builtin_add_overflow(base, size, &raw_end)) return false;
-    if (raw_end > MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    if (raw_end > MMIO_IDENTITY_ACCESS_LIMIT) return false;
     u64 start = RABBITBONE_ALIGN_DOWN(base, PAGE_SIZE);
     u64 end = 0;
     if (!rabbitbone_align_up_u64_checked(raw_end, PAGE_SIZE, &end)) return false;
+    if (end > MMIO_IDENTITY_ACCESS_LIMIT) return false;
     for (u64 p = start; p < end; p += PAGE_SIZE) {
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_translate((uptr)p, &phys, &flags)) {
-            if (!vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_WRITETHR | VMM_GLOBAL)) return false;
+        if (vmm_translate((uptr)p, &phys, &flags)) {
+            if (phys != (uptr)p) return false;
+            continue;
         }
+        if (!vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_WRITETHR | VMM_GLOBAL)) return false;
     }
     return true;
 }

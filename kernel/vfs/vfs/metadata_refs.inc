@@ -2,6 +2,9 @@ void vfs_init(void) {
     memset(mounts, 0, sizeof(mounts));
     memset(ref_pins, 0, sizeof(ref_pins));
     spinlock_init(&mounts_lock);
+    spinlock_init(&vfs_op_lock);
+    vfs_op_lock_acquires = 0;
+    vfs_op_lock_contention = 0;
     spinlock_init(&ref_pins_lock);
     next_fs_id = 1;
     next_mount_generation = 1;
@@ -210,7 +213,7 @@ bool vfs_retain_ref(const vfs_node_ref_t *ref) {
     if (!ref || ref->inode == 0) return false;
     if (ref->fs_id == 0 && strcmp(ref->path, "/") == 0) return true;
     if (ref->fs_id == 0 || ref->mount_generation == 0) return false;
-    vfs_mount_t *mnt = mount_by_fs_id(ref->fs_id, ref->mount_generation);
+    vfs_mount_t *mnt = mount_pin_by_fs_id(ref->fs_id, ref->mount_generation);
     if (!mnt) return false;
     u64 flags = spin_lock_irqsave(&ref_pins_lock);
     usize free_idx = VFS_MAX_PINNED_REFS;
@@ -219,7 +222,7 @@ bool vfs_retain_ref(const vfs_node_ref_t *ref) {
             ref_pins[i].mount_generation == ref->mount_generation && ref_pins[i].inode == ref->inode) {
             if (ref_pins[i].refs == 0xffffffffu) {
                 spin_unlock_irqrestore(&ref_pins_lock, flags);
-                mount_release(mnt);
+                (void)mount_release_by_fs_id(ref->fs_id, ref->mount_generation);
                 return false;
             }
             ++ref_pins[i].refs;
@@ -230,7 +233,7 @@ bool vfs_retain_ref(const vfs_node_ref_t *ref) {
     }
     if (free_idx == VFS_MAX_PINNED_REFS) {
         spin_unlock_irqrestore(&ref_pins_lock, flags);
-        mount_release(mnt);
+        (void)mount_release_by_fs_id(ref->fs_id, ref->mount_generation);
         return false;
     }
     memset(&ref_pins[free_idx], 0, sizeof(ref_pins[free_idx]));

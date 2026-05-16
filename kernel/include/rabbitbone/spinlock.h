@@ -10,6 +10,7 @@ typedef struct spinlock {
 } spinlock_t;
 
 static inline void spinlock_init(spinlock_t *lock) { if (lock) lock->locked = 0; }
+static inline bool spin_is_locked(const spinlock_t *lock) { return lock && __atomic_load_n(&lock->locked, __ATOMIC_RELAXED) != 0u; }
 static inline void spin_lock(spinlock_t *lock) {
     while (__sync_lock_test_and_set(&lock->locked, 1u)) {
         while (lock->locked) __asm__ volatile("pause");

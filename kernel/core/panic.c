@@ -22,6 +22,10 @@ static void panic_serial_line(const char *s) {
     serial_write(s);
 }
 
+static void panic_serial_log_line(const char *s) {
+    if (log_formatted_line_should_emit_serial(s)) serial_write(s);
+}
+
 static void panic_serial_emit(const char *s, usize n, void *ctx) {
     (void)ctx;
     if (s && n) serial_write_n(s, n);
@@ -139,8 +143,8 @@ static RABBITBONE_NORETURN void panic_emit_claimed(const char *file, int line, c
     panic_serial_printf("theme=%s at %s:%d\n", console_theme_name(console_theme()), file ? file : "?", line);
     if (msg) panic_serial_printf("message=%s\n", msg);
     panic_dump_regs_serial(regs);
-    panic_serial_line("--- kernel log ring ---\n");
-    log_dump_ring(panic_serial_line);
+    panic_serial_line("--- kernel log ring: warnings/errors/fails ---\n");
+    log_dump_ring(panic_serial_log_line);
     panic_serial_line("--- end panic log, system halted ---\n");
 
     console_panic_begin();
@@ -156,8 +160,9 @@ static RABBITBONE_NORETURN void panic_emit_claimed(const char *file, int line, c
         kprintf("[FATAL] panic: %s\n", msg);
     }
     panic_dump_regs_console(regs);
-    console_write("\nFull panic record and kernel log were written to COM1 / VMware rabbitbone-com1.log.\n");
+    console_write("\nFull panic record and filtered kernel log were written to COM1 / VMware rabbitbone-com1.log.\n");
     console_write("System halted.\n");
+    console_flush();
     panic_halt_forever();
 }
 

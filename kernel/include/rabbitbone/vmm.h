@@ -19,12 +19,21 @@ extern "C" {
 #define VMM_NX       (1ull << 63)
 
 #define VMM_SPACE_MAX_TABLES 128u
+#ifndef SMP_MAX_CPUS
+#define SMP_MAX_CPUS 16u
+#endif
 
 typedef struct vmm_space {
     uptr pml4_physical;
     uptr owned_tables[VMM_SPACE_MAX_TABLES];
     usize owned_count;
     bool user_space;
+    volatile u32 active_cpu_mask;
+    volatile u64 tlb_generation;
+    volatile u64 tlb_seen_generation[SMP_MAX_CPUS];
+    volatile u64 tlb_shootdowns;
+    volatile u64 tlb_full_shootdowns;
+    volatile u64 tlb_failures;
 } vmm_space_t;
 
 typedef struct vmm_stats {
@@ -58,6 +67,8 @@ bool vmm_space_remap_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags);
 bool vmm_space_translate(const vmm_space_t *space, uptr virt, uptr *phys_out, u64 *flags_out);
 void vmm_switch_space(vmm_space_t *space);
 void vmm_switch_kernel(void);
+void vmm_note_cpu_current_space(vmm_space_t *space);
+bool vmm_space_tlb_shootdown(vmm_space_t *space, uptr virt, usize length, bool full_flush, u64 timeout_ticks);
 uptr vmm_read_cr3(void);
 
 void vmm_get_stats(vmm_stats_t *out);

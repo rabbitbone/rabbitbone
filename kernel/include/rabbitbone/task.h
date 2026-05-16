@@ -39,6 +39,7 @@ typedef struct task_stats {
 } task_stats_t;
 
 void task_init(void);
+bool task_is_initialized(void);
 i32 task_spawn_kernel(const char *name, task_entry_t entry, void *ctx);
 void task_run_ready(u32 max_tasks);
 void task_exit_current(i32 code);

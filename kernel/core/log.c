@@ -19,7 +19,7 @@ static u32 write_index;
 static u32 total_lines;
 static spinlock_t log_lock;
 static log_level_t console_min_level = LOG_ERROR;
-static log_level_t serial_min_level = LOG_TRACE;
+static log_level_t serial_min_level = LOG_WARN;
 static bool heap_ring_active;
 
 static char *ring_line(u32 idx) {
@@ -35,6 +35,27 @@ const char *log_level_name(log_level_t level) {
         case LOG_FATAL: return "FATAL";
         default: return "UNKNOWN";
     }
+}
+
+static bool log_line_has_attention_marker(const char *line) {
+    if (!line) return false;
+    return strstr(line, "[ fail  ]") != 0 ||
+           strstr(line, "KTEST_STATUS: FAIL") != 0 ||
+           strstr(line, "[ ambiguous ]") != 0 ||
+           strstr(line, "[ inconclusive ]") != 0 ||
+           strstr(line, "[ unknown ]") != 0;
+}
+
+bool log_formatted_line_should_emit_serial(const char *formatted_line) {
+    if (!formatted_line) return false;
+    return strncmp(formatted_line, "[WARN]", 6u) == 0 ||
+           strncmp(formatted_line, "[ERROR]", 7u) == 0 ||
+           strncmp(formatted_line, "[FATAL]", 7u) == 0 ||
+           log_line_has_attention_marker(formatted_line);
+}
+
+bool log_line_should_emit_serial(log_level_t level, const char *formatted_line) {
+    return level >= serial_min_level || log_formatted_line_should_emit_serial(formatted_line);
 }
 
 void log_init(void) {
@@ -94,7 +115,7 @@ void log_vwrite(log_level_t level, const char *component, const char *fmt, __bui
     write_index = (write_index + 1u) % ring_lines;
     if (total_lines < ring_lines) ++total_lines;
     if (level >= console_min_level) console_write(dst);
-    else if (level >= serial_min_level) serial_write(dst);
+    if (log_line_should_emit_serial(level, dst)) serial_write(dst);
     spin_unlock_irqrestore(&log_lock, flags);
 }
 

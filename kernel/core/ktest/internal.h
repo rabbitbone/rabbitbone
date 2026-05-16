@@ -19,6 +19,7 @@
 #include <rabbitbone/apic.h>
 #include <rabbitbone/hpet.h>
 #include <rabbitbone/smp.h>
+#include <rabbitbone/spinlock.h>
 #include <rabbitbone/memory.h>
 #include <rabbitbone/path.h>
 #include <rabbitbone/ringbuf.h>

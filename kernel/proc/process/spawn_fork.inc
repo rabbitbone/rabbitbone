@@ -46,6 +46,10 @@ static bool clone_current_address_space(active_process_t *child) {
     if (!vmm_space_create_user(&child->space)) return false;
     child->active = true;
     child->state = PROCESS_STATE_READY;
+    child->home_cpu = current_proc.last_cpu;
+    child->last_cpu = current_proc.last_cpu;
+    child->affinity_mask = current_proc.affinity_mask ? current_proc.affinity_mask : 1u;
+    child->migration_count = 0;
     child->parent_pid = current_proc.result.pid;
     child->process_group = current_proc.process_group;
     child->session_id = current_proc.session_id;

@@ -3,6 +3,21 @@
 This file keeps the release history short enough to be useful. Older one-off stage notes were folded into this summary.
 
 
+## 0.0.3.5
+
+Experimental SMP/AP bootstrap and observability update over `0.0.3.4`.
+
+- Bumped the kernel version and syscall ABI to `0.0.3.5` / `0x00000305`.
+- Added the x86_64 AP trampoline to the kernel assembly set, plus a source check that keeps trampoline GDT offsets aligned with the C boot mailbox contract.
+- Expanded CPU bring-up to capture per-CPU architecture state, including FPU/SSE/SSE2, NX, PAT, MTRR, invariant TSC, XSAVE/OSXSAVE, XCR0, CR0/CR4, EFER, family/model, and readiness flags.
+- Reworked GDT/TSS state into per-CPU slots with dynamically allocated guarded ring0 and IST stacks, guard-page validation, stack canaries, and diagnostic reporting.
+- Replaced SMP topology-only groundwork with experimental AP startup, per-CPU records, AP work queues, synchronous/asynchronous cross-calls, reschedule IPIs, idle wake accounting, lifecycle masks, TLB shootdown telemetry, and richer `smp` status output.
+- Extended APIC support with IOAPIC redirection helpers, IRQ balancing metadata, LAPIC timer control hooks, current APIC ID reporting, and additional APIC self-test validation.
+- Added deeper scheduler/process/VMM integration for per-CPU current process/address-space state, remote TLB generation acknowledgements, AP kernel work, wait/preemption accounting, and diagnostic coverage.
+- Added `cpuidcheck` to the seeded userland and expanded `ktest` coverage for SMP boot hardening, cross-call contracts, async queue behavior, TLB shootdowns, AP idle wakes, guarded GDT stacks, and CPU feature consistency.
+- Kept VMware runtime configs local-only: the repository now tracks VMware `.example` templates while ignoring non-example `.vmx` files.
+
+
 ## 0.0.3.4
 
 Stack-safety and syscall snapshot hardening update over `0.0.3.2`.

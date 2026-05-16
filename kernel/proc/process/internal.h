@@ -22,6 +22,7 @@
 #include <rabbitbone/format.h>
 #include <rabbitbone/tty.h>
 #include <rabbitbone/spinlock.h>
+#include <rabbitbone/smp.h>
 
 #define USER_IMAGE_BASE      ELF64_RABBITBONE_USER_IMAGE_BASE
 #define USER_SPACE_LIMIT     ELF64_RABBITBONE_USER_SPACE_LIMIT
@@ -115,6 +116,10 @@ typedef struct active_process {
     u32 process_group;
     u32 session_id;
     u32 signal_flags;
+    u32 home_cpu;
+    u32 last_cpu;
+    u32 affinity_mask;
+    u32 migration_count;
     u32 wait_pid;
     uptr wait_out_ptr;
     u64 wake_tick;
@@ -183,19 +188,23 @@ static void arch_user_context_restore(const arch_user_return_context_t *ctx) {
     arch_user_saved_r15 = ctx->r15;
 }
 
-static active_process_t *current_proc_ptr;
-#define current_proc (*current_proc_ptr)
+typedef struct process_cpu_runtime {
+    active_process_t *current;
+    active_process_t *exec_replacement;
+    active_process_t *exec_old_proc;
+    i32 async_slot;
+    bool req_reschedule;
+    bool req_exit;
+    bool req_fork;
+    bool req_exec;
+    i32 req_exit_code;
+} process_cpu_runtime_t;
+
+static process_cpu_runtime_t process_boot_runtime;
+static process_cpu_runtime_t *process_cpu_runtimes;
 static active_process_t *async_slots;
 static u32 async_next_rr;
-static i32 current_async_slot = -1;
 static bool async_scheduler_active;
-static bool reschedule_requested;
-static bool exit_requested;
-static bool fork_requested;
-static bool exec_requested;
-static active_process_t *exec_replacement;
-static active_process_t *exec_old_proc;
-static i32 requested_exit_code;
 static u64 next_user_pid = 1;
 static u64 next_address_space_generation = 1;
 static process_result_t last_result;
@@ -205,9 +214,55 @@ static usize process_table_next;
 static bool process_initialized;
 static user_shared_anon_object_t *shared_anon_objects;
 static spinlock_t shared_anon_lock;
+static spinlock_t process_sched_lock;
 static u64 next_shared_anon_generation = 1;
 static u32 tty_foreground_pgrp;
 static u32 tty_session_id;
+
+
+static void process_runtime_reset(process_cpu_runtime_t *rt) {
+    if (!rt) return;
+    if (rt->current) memset(rt->current, 0, sizeof(*rt->current));
+    if (rt->exec_replacement) memset(rt->exec_replacement, 0, sizeof(*rt->exec_replacement));
+    if (rt->exec_old_proc) memset(rt->exec_old_proc, 0, sizeof(*rt->exec_old_proc));
+    rt->async_slot = -1;
+    rt->req_reschedule = false;
+    rt->req_exit = false;
+    rt->req_fork = false;
+    rt->req_exec = false;
+    rt->req_exit_code = 0;
+}
+
+static bool process_runtime_alloc_buffers(process_cpu_runtime_t *rt) {
+    if (!rt) return false;
+    if (!rt->current) rt->current = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!rt->exec_replacement) rt->exec_replacement = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!rt->exec_old_proc) rt->exec_old_proc = (active_process_t *)kmalloc(sizeof(active_process_t));
+    if (!rt->current || !rt->exec_replacement || !rt->exec_old_proc) return false;
+    process_runtime_reset(rt);
+    return true;
+}
+
+static process_cpu_runtime_t *process_current_runtime(void) {
+    process_cpu_runtime_t *base = process_cpu_runtimes ? process_cpu_runtimes : &process_boot_runtime;
+    u32 cpu = smp_current_cpu_id();
+    if (cpu >= SMP_MAX_CPUS || !process_cpu_runtimes) cpu = 0;
+    process_cpu_runtime_t *rt = &base[cpu];
+    if (process_cpu_runtimes && !rt->current) PANIC("process current runtime buffer missing");
+    smp_set_current_process(rt->current);
+    return rt;
+}
+
+#define current_proc_ptr (process_current_runtime()->current)
+#define current_proc (*current_proc_ptr)
+#define current_async_slot (process_current_runtime()->async_slot)
+#define reschedule_requested (process_current_runtime()->req_reschedule)
+#define exit_requested (process_current_runtime()->req_exit)
+#define fork_requested (process_current_runtime()->req_fork)
+#define exec_requested (process_current_runtime()->req_exec)
+#define requested_exit_code (process_current_runtime()->req_exit_code)
+#define exec_replacement (process_current_runtime()->exec_replacement)
+#define exec_old_proc (process_current_runtime()->exec_old_proc)
 
 static void release_mappings(active_process_t *p);
 static void process_drop_vmas(active_process_t *p);

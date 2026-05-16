@@ -30,14 +30,19 @@ bool scheduler_enqueue(const char *path, int argc, const char *const *argv, u32 
     if (next_job_id == 0) next_job_id = 1;
     job->info.state = SCHED_JOB_QUEUED;
     job->info.enqueued_ticks = sched_now();
+    job->target_cpu = scheduler_pick_target_cpu_locked();
+    job->last_cpu = job->target_cpu;
     inc_u32_sat(&total_enqueued);
+    scheduler_recount_cpu_states_locked();
     u32 jid = job->info.job_id;
+    u32 target_cpu = job->target_cpu;
     char log_path[SCHED_PATH_MAX];
     memset(log_path, 0, sizeof(log_path));
     strlcpy(log_path, job->info.path, sizeof(log_path));
     spin_unlock_irqrestore(&scheduler_lock, flags);
     if (job_id_out) *job_id_out = jid;
-    KLOG(LOG_INFO, "sched", "enqueue job=%u path=%s", jid, log_path);
+    (void)scheduler_request_reschedule(target_cpu);
+    KLOG(LOG_INFO, "sched", "enqueue job=%u cpu=%u path=%s", jid, target_cpu, log_path);
     return true;
 }
 
@@ -63,6 +68,10 @@ static bool run_one(sched_job_t *job) {
     job->info.state = SCHED_JOB_RUNNING;
     job->info.started_ticks = sched_now();
     job_id = job->info.job_id;
+    if (sched_cpu_count_cached == 0) scheduler_reset_cpu_states_locked();
+    if (job->target_cpu >= sched_cpu_count_cached) job->target_cpu = 0;
+    job->last_cpu = job->target_cpu;
+    ++sched_cpus[job->target_cpu].running;
     argc = job->argc;
     strlcpy(path, job->info.path, sizeof(path));
     for (int i = 0; i < argc; ++i) strlcpy(argv_storage[i], job->argv[i], SCHED_PATH_MAX);
@@ -85,9 +94,14 @@ static bool run_one(sched_job_t *job) {
     finished_job->info.proc_status = (i32)st;
     finished_job->info.state = (st == PROC_OK && !result.faulted) ? SCHED_JOB_DONE : SCHED_JOB_FAILED;
     inc_u32_sat(&total_dispatched);
+    u32 cpu = finished_job->last_cpu < sched_cpu_count_cached ? finished_job->last_cpu : 0;
+    ++sched_cpus[cpu].dispatched;
+    ++scheduler_runtime_for_cpu_locked(cpu)->process_dispatches;
+    sched_cpus[cpu].last_dispatch_ticks = finished_job->info.finished_ticks;
     sched_job_info_t finished = finished_job->info;
     push_history_locked(&finished);
     memset(finished_job, 0, sizeof(*finished_job));
+    scheduler_recount_cpu_states_locked();
     spin_unlock_irqrestore(&scheduler_lock, flags);
 
     KLOG(LOG_INFO, "sched", "finish job=%u pid=%u state=%s exit=%d", finished.job_id, finished.pid,
@@ -95,17 +109,32 @@ static bool run_one(sched_job_t *job) {
     return true;
 }
 
+static bool scheduler_slot_queued_for_current_cpu(usize i, u32 current_cpu, bool allow_steal) {
+    bool should_run = false;
+    u64 flags = spin_lock_irqsave(&scheduler_lock);
+    if (queue && i < SCHED_QUEUE_CAP && queue[i].info.state == SCHED_JOB_QUEUED) {
+        if (sched_cpu_count_cached == 0) scheduler_reset_cpu_states_locked();
+        u32 target = queue[i].target_cpu < sched_cpu_count_cached ? queue[i].target_cpu : 0u;
+        should_run = (target == current_cpu) || allow_steal;
+    }
+    spin_unlock_irqrestore(&scheduler_lock, flags);
+    return should_run;
+}
+
 u32 scheduler_run_ready(u32 max_jobs) {
     ensure_init();
     if (!initialized || !queue || process_user_active()) return 0;
     if (max_jobs == 0) max_jobs = SCHED_QUEUE_CAP;
+    u32 current_cpu = smp_current_cpu_id();
+    u32 scpus = scheduler_cpu_count();
+    if (current_cpu >= scpus) current_cpu = 0;
     u32 ran = 0;
+
     for (usize i = 0; i < SCHED_QUEUE_CAP && ran < max_jobs; ++i) {
-        bool should_run = false;
-        u64 flags = spin_lock_irqsave(&scheduler_lock);
-        should_run = queue && queue[i].info.state == SCHED_JOB_QUEUED;
-        spin_unlock_irqrestore(&scheduler_lock, flags);
-        if (should_run && run_one(&queue[i])) ++ran;
+        if (scheduler_slot_queued_for_current_cpu(i, current_cpu, false) && run_one(&queue[i])) ++ran;
+    }
+    for (usize i = 0; i < SCHED_QUEUE_CAP && ran < max_jobs; ++i) {
+        if (scheduler_slot_queued_for_current_cpu(i, current_cpu, true) && run_one(&queue[i])) ++ran;
     }
     return ran;
 }

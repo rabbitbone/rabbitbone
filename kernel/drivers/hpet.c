@@ -9,6 +9,8 @@
 #include <rabbitbone/memory.h>
 #include <rabbitbone/math64.h>
 
+#define MMIO_IDENTITY_ACCESS_LIMIT 0x0000800000000000ull
+
 #define HPET_GCAP_ID 0x000u
 #define HPET_GEN_CONF 0x010u
 #define HPET_MAIN_COUNTER 0x0f0u
@@ -34,19 +36,22 @@ static u64 hpet_read_counter_raw(void) {
 }
 
 static bool hpet_map_mmio(u64 base, u64 size) {
-    if (base == 0 || size == 0 || base >= MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    if (base == 0 || size == 0 || base >= MMIO_IDENTITY_ACCESS_LIMIT) return false;
     u64 raw_end = 0;
     if (__builtin_add_overflow(base, size, &raw_end)) return false;
-    if (raw_end > MEMORY_KERNEL_DIRECT_LIMIT) return false;
+    if (raw_end > MMIO_IDENTITY_ACCESS_LIMIT) return false;
     u64 start = RABBITBONE_ALIGN_DOWN(base, PAGE_SIZE);
     u64 end = 0;
     if (!rabbitbone_align_up_u64_checked(raw_end, PAGE_SIZE, &end)) return false;
+    if (end > MMIO_IDENTITY_ACCESS_LIMIT) return false;
     for (u64 p = start; p < end; p += PAGE_SIZE) {
         uptr phys = 0;
         u64 flags = 0;
-        if (!vmm_translate((uptr)p, &phys, &flags)) {
-            if (vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_GLOBAL) == false) return false;
+        if (vmm_translate((uptr)p, &phys, &flags)) {
+            if (phys != (uptr)p) return false;
+            continue;
         }
+        if (!vmm_map_4k((uptr)p, (uptr)p, VMM_WRITE | VMM_NX | VMM_NOCACHE | VMM_GLOBAL)) return false;
     }
     return true;
 }

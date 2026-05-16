@@ -19,7 +19,7 @@ static void test_coverage_contracts(void) {
     suite_end();
 }
 
-bool ktest_run_all(void) {
+bool ktest_run_all_flags(u32 flags) {
     memset(&totals, 0, sizeof(totals));
     ktest_verbose_passes = false;
     kprintf("\n%s started\n", RABBITBONE_KTEST_TITLE);
@@ -35,6 +35,9 @@ bool ktest_run_all(void) {
     test_user_processes();
     test_process_registry();
     test_scheduler_contracts();
+    test_smp_contracts();
+    test_smp_deep_contracts();
+    if ((flags & RABBITBONE_KTEST_FLAG_SMP_EXPANDED) != 0u) test_smp_deep_expanded_matrix();
     test_coverage_contracts();
     u64 end = pit_ticks();
     kprintf("\n%s finished: suites=%u passed=%u failed=%u skipped=%u ticks=%llu\n", RABBITBONE_KTEST_TITLE,
@@ -48,4 +51,9 @@ bool ktest_run_all(void) {
 
 void ktest_get_last_totals(ktest_totals_t *out) {
     if (out) *out = totals;
+}
+
+
+bool ktest_run_all(void) {
+    return ktest_run_all_flags(0u);
 }

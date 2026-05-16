@@ -88,13 +88,16 @@ bool vmm_space_unmap_4k(vmm_space_t *space, uptr virt) {
     pte_t *pdpt = next_table(space, pml4, a, false, 0);
     if (!pdpt) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pte_t *pd = next_table(space, pdpt, b, false, 0);
-    if (!pd || (pd[c] & VMM_HUGE)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (!pd) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (pd[c] & VMM_HUGE) {
+        if (space->user_space || !vmm_split_huge_pde_locked(space, pd, c)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    }
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pt[d] = 0;
     if (stats.mapped_4k_pages) --stats.mapped_4k_pages;
-    if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     spin_unlock_irqrestore(&vmm_lock, irq);
+    (void)vmm_space_tlb_shootdown(space, virt, PAGE_SIZE, false, 0);
     return true;
 }
 
@@ -109,13 +112,16 @@ bool vmm_space_protect_4k(vmm_space_t *space, uptr virt, u64 flags) {
     pte_t *pdpt = next_table(space, pml4, a, false, 0);
     if (!pdpt) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pte_t *pd = next_table(space, pdpt, b, false, 0);
-    if (!pd || (pd[c] & VMM_HUGE)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (!pd) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (pd[c] & VMM_HUGE) {
+        if (space->user_space || !vmm_split_huge_pde_locked(space, pd, c)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    }
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     uptr phys = pt[d] & PTE_ADDR_MASK;
     pt[d] = phys | (vmm_leaf_pte_flags(flags) & ~PTE_ADDR_MASK) | VMM_PRESENT;
-    if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     spin_unlock_irqrestore(&vmm_lock, irq);
+    (void)vmm_space_tlb_shootdown(space, virt, PAGE_SIZE, false, 0);
     return true;
 }
 
@@ -135,12 +141,15 @@ bool vmm_space_remap_4k(vmm_space_t *space, uptr virt, uptr phys, u64 flags) {
     pte_t *pdpt = next_table(space, pml4, a, false, 0);
     if (!pdpt) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pte_t *pd = next_table(space, pdpt, b, false, 0);
-    if (!pd || (pd[c] & VMM_HUGE)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (!pd) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    if (pd[c] & VMM_HUGE) {
+        if (space->user_space || !vmm_split_huge_pde_locked(space, pd, c)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
+    }
     pte_t *pt = next_table(space, pd, c, false, 0);
     if (!pt || !(pt[d] & VMM_PRESENT)) { spin_unlock_irqrestore(&vmm_lock, irq); return false; }
     pt[d] = (phys & PTE_ADDR_MASK) | (vmm_leaf_pte_flags(flags) & ~PTE_ADDR_MASK) | VMM_PRESENT;
-    if (space == current_space_obj) __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
     spin_unlock_irqrestore(&vmm_lock, irq);
+    (void)vmm_space_tlb_shootdown(space, virt, PAGE_SIZE, false, 0);
     return true;
 }
 

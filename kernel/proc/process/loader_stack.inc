@@ -228,6 +228,11 @@ static process_status_t prepare_process_env(active_process_t *p, const char *pat
     if (!vmm_space_create_user(&p->space)) return PROC_ERR_NOMEM;
     p->active = true;
     p->state = PROCESS_STATE_READY;
+    p->home_cpu = smp_current_cpu_id();
+    if (p->home_cpu >= SMP_MAX_CPUS) p->home_cpu = 0;
+    p->last_cpu = p->home_cpu;
+    p->affinity_mask = smp_started_cpu_mask();
+    if (p->affinity_mask == 0) p->affinity_mask = 1u;
     p->parent_pid = parent_pid;
     if (current_proc.active) {
         p->process_group = current_proc.process_group ? current_proc.process_group : current_proc.result.pid;
@@ -295,6 +300,10 @@ static process_status_t prepare_exec_replacement_env(active_process_t *dst, cons
     if (!vmm_space_create_user(&dst->space)) return PROC_ERR_NOMEM;
     dst->active = true;
     dst->state = PROCESS_STATE_RUNNING;
+    dst->home_cpu = current_proc.home_cpu;
+    dst->last_cpu = smp_current_cpu_id();
+    dst->affinity_mask = current_proc.affinity_mask ? current_proc.affinity_mask : 1u;
+    dst->migration_count = current_proc.migration_count;
     dst->parent_pid = current_proc.parent_pid;
     dst->process_group = current_proc.process_group;
     dst->session_id = current_proc.session_id;

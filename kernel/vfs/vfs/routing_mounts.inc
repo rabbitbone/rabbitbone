@@ -125,11 +125,17 @@ static vfs_mount_t *mount_acquire_index(usize idx, u32 generation) {
         mnt = &mounts[idx];
     }
     spin_unlock_irqrestore(&mounts_lock, flags);
+    if (mnt) {
+        if (spin_is_locked(&vfs_op_lock)) __atomic_add_fetch(&vfs_op_lock_contention, 1u, __ATOMIC_RELAXED);
+        spin_lock(&vfs_op_lock);
+        __atomic_add_fetch(&vfs_op_lock_acquires, 1u, __ATOMIC_RELAXED);
+    }
     return mnt;
 }
 
 static void mount_release(vfs_mount_t *mnt) {
     if (!mnt) return;
+    spin_unlock(&vfs_op_lock);
     u64 flags = spin_lock_irqsave(&mounts_lock);
     if (mnt->active_refs) --mnt->active_refs;
     spin_unlock_irqrestore(&mounts_lock, flags);
@@ -152,6 +158,22 @@ static bool mount_release_by_fs_id(u32 fs_id, u32 generation) {
     return released;
 }
 
+
+static vfs_mount_t *mount_pin_by_fs_id(u32 fs_id, u32 generation) {
+    if (fs_id == 0 || generation == 0) return 0;
+    u64 flags = spin_lock_irqsave(&mounts_lock);
+    vfs_mount_t *mnt = 0;
+    for (usize i = 0; i < VFS_MAX_MOUNTS; ++i) {
+        if (mounts[i].ops && !mounts[i].unmounting && mounts[i].fs_id == fs_id && mounts[i].generation == generation) {
+            ++mounts[i].active_refs;
+            mnt = &mounts[i];
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&mounts_lock, flags);
+    return mnt;
+}
+
 static vfs_mount_t *route_mount(vfs_route_t *route) {
     if (!route || !route->found) return 0;
     return mount_acquire_index(route->mount_index, route->mount_generation);
@@ -169,6 +191,11 @@ static vfs_mount_t *mount_by_fs_id(u32 fs_id, u32 generation) {
         }
     }
     spin_unlock_irqrestore(&mounts_lock, flags);
+    if (mnt) {
+        if (spin_is_locked(&vfs_op_lock)) __atomic_add_fetch(&vfs_op_lock_contention, 1u, __ATOMIC_RELAXED);
+        spin_lock(&vfs_op_lock);
+        __atomic_add_fetch(&vfs_op_lock_acquires, 1u, __ATOMIC_RELAXED);
+    }
     return mnt;
 }
 

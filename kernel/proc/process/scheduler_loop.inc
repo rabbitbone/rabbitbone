@@ -65,17 +65,77 @@ static void fault_wait_deadlock(void) {
     }
 }
 
+
+static bool ready_slot_has_valid_user_context(const active_process_t *p) {
+    return p && p->active && p->state == PROCESS_STATE_READY && p->space.pml4_physical != 0u && p->regs.rip != 0u && p->regs.rsp != 0u;
+}
+
+static void fault_invalid_ready_slot_locked(active_process_t *p, u64 now) {
+    if (!p || !p->active || p->state != PROCESS_STATE_READY) return;
+    if (p->space.pml4_physical != 0u && p->regs.rip != 0u && p->regs.rsp != 0u) return;
+    p->state = PROCESS_STATE_FAULTED;
+    p->result.exit_code = -127;
+    p->result.faulted = true;
+    p->result.fault_vector = 0xfdu;
+    p->result.fault_rip = p->regs.rip;
+    p->result.fault_addr = p->space.pml4_physical;
+    p->result.finished_ticks = now;
+}
+
+static void sanitize_invalid_ready_slots_locked(void) {
+    if (!async_slots) return;
+    u64 now = pit_ticks();
+    for (usize i = 0; i < PROCESS_ASYNC_CAP; ++i) fault_invalid_ready_slot_locked(&async_slots[i], now);
+}
+
 static bool pick_ready_slot(usize *idx_out) {
+    if (idx_out) *idx_out = PROCESS_ASYNC_CAP;
     if (!async_slots || !idx_out) return false;
+    u32 cpu = smp_current_cpu_id();
+    if (cpu >= SMP_MAX_CPUS) cpu = 0;
+    u32 cpu_bit = 1u << cpu;
+    u64 flags = spin_lock_irqsave(&process_sched_lock);
     wake_sleepers();
+    sanitize_invalid_ready_slots_locked();
+
     for (usize scan = 0; scan < PROCESS_ASYNC_CAP; ++scan) {
         usize idx = (async_next_rr + scan) % PROCESS_ASYNC_CAP;
-        if (async_slots[idx].active && async_slots[idx].state == PROCESS_STATE_READY) {
+        active_process_t *p = &async_slots[idx];
+        if (ready_slot_has_valid_user_context(p) && p->home_cpu == cpu &&
+            ((p->affinity_mask == 0u) || (p->affinity_mask & cpu_bit))) {
+            p->state = PROCESS_STATE_RUNNING;
             *idx_out = idx;
             async_next_rr = (u32)((idx + 1u) % PROCESS_ASYNC_CAP);
+            spin_unlock_irqrestore(&process_sched_lock, flags);
             return true;
         }
     }
+
+    for (usize scan = 0; scan < PROCESS_ASYNC_CAP; ++scan) {
+        usize idx = (async_next_rr + scan) % PROCESS_ASYNC_CAP;
+        active_process_t *p = &async_slots[idx];
+        if (ready_slot_has_valid_user_context(p) &&
+            ((p->affinity_mask == 0u) || (p->affinity_mask & cpu_bit))) {
+            p->state = PROCESS_STATE_RUNNING;
+            *idx_out = idx;
+            async_next_rr = (u32)((idx + 1u) % PROCESS_ASYNC_CAP);
+            spin_unlock_irqrestore(&process_sched_lock, flags);
+            return true;
+        }
+    }
+
+    for (usize scan = 0; scan < PROCESS_ASYNC_CAP; ++scan) {
+        usize idx = (async_next_rr + scan) % PROCESS_ASYNC_CAP;
+        active_process_t *p = &async_slots[idx];
+        if (ready_slot_has_valid_user_context(p)) {
+            p->state = PROCESS_STATE_RUNNING;
+            *idx_out = idx;
+            async_next_rr = (u32)((idx + 1u) % PROCESS_ASYNC_CAP);
+            spin_unlock_irqrestore(&process_sched_lock, flags);
+            return true;
+        }
+    }
+    spin_unlock_irqrestore(&process_sched_lock, flags);
     return false;
 }
 
@@ -107,19 +167,43 @@ static void dispose_run_until_idle_children(u32 root_pid) {
     }
 }
 
-static void enter_ready_slot(usize idx) {
+static bool enter_ready_slot(usize idx) {
+    if (!async_slots || idx >= PROCESS_ASYNC_CAP) {
+        KLOG(LOG_ERROR, "process", "invalid ready slot index=%llu cap=%u", (unsigned long long)idx, PROCESS_ASYNC_CAP);
+        clear_current_async();
+        vmm_switch_kernel();
+        return false;
+    }
     load_slot_to_current(idx);
+    if (!current_proc.space.pml4_physical || !current_proc.regs.rip || !current_proc.regs.rsp) {
+        KLOG(LOG_ERROR, "process", "invalid runnable context pid=%u slot=%llu pml4=%p rip=%p rsp=%p",
+             current_proc.result.pid, (unsigned long long)idx, (void *)current_proc.space.pml4_physical,
+             (void *)(uptr)current_proc.regs.rip, (void *)(uptr)current_proc.regs.rsp);
+        fault_invalid_ready_slot_locked(&current_proc, pit_ticks());
+        if (current_proc.state == PROCESS_STATE_RUNNING) current_proc.state = PROCESS_STATE_FAULTED;
+        current_proc.result.exit_code = -127;
+        current_proc.result.faulted = true;
+        current_proc.result.fault_vector = 0xfdu;
+        current_proc.result.fault_rip = current_proc.regs.rip;
+        current_proc.result.fault_addr = current_proc.space.pml4_physical;
+        current_proc.result.finished_ticks = pit_ticks();
+        (void)sync_current_to_slot();
+        clear_current_async();
+        vmm_switch_kernel();
+        return false;
+    }
     int sig_result = process_signal_deliver_pending(&current_proc, &current_proc.regs);
     if (sig_result == 2 || sig_result == 3) {
         (void)sync_current_to_slot();
         clear_current_async();
         vmm_switch_kernel();
-        return;
+        return false;
     }
     if (sig_result == 1) (void)sync_current_to_slot();
     vmm_switch_space(&current_proc.space);
     arch_user_resume(&current_proc.regs);
     cpu_sti();
+    return true;
 }
 
 RABBITBONE_NORETURN void process_scheduler_loop(void) {
@@ -134,7 +218,7 @@ RABBITBONE_NORETURN void process_scheduler_loop(void) {
     for (;;) {
         usize idx = 0;
         if (pick_ready_slot(&idx)) {
-            enter_ready_slot(idx);
+            (void)enter_ready_slot(idx);
             continue;
         }
         if (!any_live_process()) {
@@ -143,8 +227,12 @@ RABBITBONE_NORETURN void process_scheduler_loop(void) {
             PANIC("persistent user scheduler has no live processes");
         }
         if (any_sleeping_process() || any_waiting_process() || any_stopped_process()) {
+            smp_monitor_tick();
+            task_run_ready(1);
+            scheduler_idle_enter();
             cpu_sti();
             cpu_hlt();
+            scheduler_idle_exit();
             continue;
         }
         fault_wait_deadlock();
@@ -172,11 +260,15 @@ bool process_run_until_idle(u32 root_pid, process_result_t *root_out) {
                 fault_wait_deadlock();
                 continue;
             }
+            smp_monitor_tick();
+            task_run_ready(1);
+            scheduler_idle_enter();
             cpu_sti();
             cpu_hlt();
+            scheduler_idle_exit();
             continue;
         }
-        enter_ready_slot(idx);
+        (void)enter_ready_slot(idx);
         continue;
     }
     vmm_switch_kernel();

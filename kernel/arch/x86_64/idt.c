@@ -9,6 +9,8 @@
 #include <rabbitbone/process.h>
 #include <rabbitbone/syscall.h>
 #include <rabbitbone/scheduler.h>
+#include <rabbitbone/apic.h>
+#include <rabbitbone/smp.h>
 
 typedef struct RABBITBONE_PACKED idt_entry {
     u16 offset_low;
@@ -35,7 +37,7 @@ DECL_ISR(16); DECL_ISR(17); DECL_ISR(18); DECL_ISR(19); DECL_ISR(20); DECL_ISR(2
 DECL_ISR(24); DECL_ISR(25); DECL_ISR(26); DECL_ISR(27); DECL_ISR(28); DECL_ISR(29); DECL_ISR(30); DECL_ISR(31);
 DECL_ISR(32); DECL_ISR(33); DECL_ISR(34); DECL_ISR(35); DECL_ISR(36); DECL_ISR(37); DECL_ISR(38); DECL_ISR(39);
 DECL_ISR(40); DECL_ISR(41); DECL_ISR(42); DECL_ISR(43); DECL_ISR(44); DECL_ISR(45); DECL_ISR(46); DECL_ISR(47);
-DECL_ISR(128);
+DECL_ISR(128); DECL_ISR(239); DECL_ISR(240); DECL_ISR(241); DECL_ISR(255);
 
 static void idt_set_gate_ist(u8 vector, void (*isr)(void), u8 flags, u8 ist) {
     u64 addr = (u64)(uptr)isr;
@@ -82,10 +84,28 @@ static void irq_dispatch(cpu_regs_t *regs) {
     if (irq == 0) { pit_irq(); do_preempt = scheduler_tick(regs); }
     else if (irq == 1) keyboard_irq();
     pic_send_eoi(irq);
+    const apic_info_t *ap = apic_get_info();
+    if (ap && ap->lapic_present && ap->legacy_pic_fallback) apic_send_eoi();
+    if (do_preempt && process_async_scheduler_active()) process_preempt_from_interrupt(regs);
+}
+
+
+static void apic_timer_interrupt(cpu_regs_t *regs) {
+    bool from_user = regs_from_user(regs);
+    smp_note_interrupt_enter((u32)RABBITBONE_APIC_TIMER_VECTOR, from_user);
+    apic_timer_note_interrupt();
+    bool do_preempt = scheduler_tick(regs);
+    apic_send_eoi();
+    smp_note_interrupt_exit((u32)RABBITBONE_APIC_TIMER_VECTOR);
     if (do_preempt && process_async_scheduler_active()) process_preempt_from_interrupt(regs);
 }
 
 void idt_set_handler(u8 vector, interrupt_handler_t handler) { handlers[vector] = handler; }
+
+void idt_load(void) {
+    idt_ptr_t ptr = { .limit = sizeof(idt) - 1, .base = (u64)(uptr)idt };
+    __asm__ volatile("lidt %0" : : "m"(ptr));
+}
 
 static void syscall_int80(cpu_regs_t *regs) {
     const u64 no = regs->rax;
@@ -120,6 +140,7 @@ void interrupt_dispatch(cpu_regs_t *regs) {
     }
     if (regs->vector < 32) default_exception(regs);
     else if (regs->vector >= 32 && regs->vector < 48) irq_dispatch(regs);
+    else if (regs->vector == 255) return;
     else KLOG(LOG_WARN, "idt", "unhandled vector %llu", (unsigned long long)regs->vector);
 }
 
@@ -136,8 +157,12 @@ void idt_init(void) {
     idt_set_gate_ist(14, isr14, 0x8e, 2);
     idt_set_gate_ist(18, isr18, 0x8e, 3);
     idt_set_gate(128, isr128, 0xee);
+    idt_set_gate(239, isr239, 0x8e);
+    idt_set_gate(240, isr240, 0x8e);
+    idt_set_gate(241, isr241, 0x8e);
+    idt_set_gate(255, isr255, 0x8e);
     idt_set_handler(128, syscall_int80);
-    idt_ptr_t ptr = { .limit = sizeof(idt) - 1, .base = (u64)(uptr)idt };
-    __asm__ volatile("lidt %0" : : "m"(ptr));
+    idt_set_handler((u8)RABBITBONE_APIC_TIMER_VECTOR, apic_timer_interrupt);
+    idt_load();
     KLOG(LOG_INFO, "idt", "loaded");
 }

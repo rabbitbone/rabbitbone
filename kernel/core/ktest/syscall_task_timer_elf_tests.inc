@@ -51,6 +51,13 @@ static void test_syscall_task_timer_elf(void) {
     check(pit_selftest(), "PIT divisor selection clamps unsafe frequencies");
     check(acpi_selftest(), "ACPI discovery tables are internally consistent when present");
     check(apic_selftest(), "APIC discovery keeps legacy PIC fallback valid");
+    const apic_info_t *api = apic_get_info();
+    if (api && api->lapic_present) {
+        check(api->lapic_timer_enabled && api->lapic_timer_vector == RABBITBONE_APIC_TIMER_VECTOR, "LAPIC timer scheduling vector is armed");
+    } else {
+        skip("LAPIC timer scheduling vector requires local APIC");
+    }
+    check(!apic_route_legacy_irq(0, 31u, 0), "IOAPIC IRQ router rejects unsafe vectors");
     check(hpet_selftest(), "HPET timer source is valid when advertised");
     check(smp_selftest(), "SMP bootstrap topology records one BSP and bounded CPU list");
     check(strcmp(log_level_name(LOG_INFO), "INFO") == 0 && strcmp(log_level_name(LOG_FATAL), "FATAL") == 0, "log level names");

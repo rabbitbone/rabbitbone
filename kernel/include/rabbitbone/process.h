@@ -55,11 +55,23 @@ typedef struct process_result {
 
 typedef rabbitbone_procinfo_t process_info_t;
 
+typedef struct process_cpu_info {
+    u32 pid;
+    u32 home_cpu;
+    u32 last_cpu;
+    u32 affinity_mask;
+    u32 migrations;
+    u32 state;
+} process_cpu_info_t;
+
 void process_init(void);
 process_status_t process_exec(const char *path, int argc, const char *const *argv, process_result_t *out);
 process_status_t process_execve(const char *path, int argc, const char *const *argv, int envc, const char *const *envp, process_result_t *out);
 process_status_t process_spawn(const char *path, int argc, const char *const *argv, u32 *pid_out, process_result_t *out);
 bool process_wait(u32 pid, process_info_t *out);
+bool process_migrate(u32 pid, u32 dst_cpu);
+bool process_set_affinity(u32 pid, u32 cpu_mask);
+bool process_cpu_info(u32 pid, process_cpu_info_t *out);
 process_status_t process_spawn_async(const char *path, int argc, const char *const *argv, u32 *pid_out);
 
 process_status_t process_spawn_async_snapshot(const char *path, int argc, const char *const *argv, void *snapshot, usize snapshot_size, u32 *pid_out);
@@ -113,6 +125,7 @@ bool process_set_current_cwd(const char *path);
 bool process_lookup(u32 pid, process_info_t *out);
 usize process_table_count(void);
 bool process_table_selftest(void);
+bool process_runtime_selftest(void);
 bool process_enter_kernel_test_context(void);
 void process_leave_kernel_test_context(void);
 

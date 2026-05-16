@@ -7,6 +7,7 @@
 #include <rabbitbone/log.h>
 #include <rabbitbone/panic.h>
 #include <rabbitbone/spinlock.h>
+#include <rabbitbone/smp.h>
 
 #define PT_ENTRIES 512u
 #define PTE_ADDR_MASK 0x000ffffffffff000ull
@@ -27,6 +28,28 @@ static vmm_space_t kernel_space_obj;
 static vmm_space_t *current_space_obj;
 static vmm_stats_t stats;
 static spinlock_t vmm_lock;
+
+
+static vmm_space_t *vmm_current_space_local(void) {
+    void *pcpu_space = smp_get_current_address_space();
+    if (pcpu_space) return (vmm_space_t *)pcpu_space;
+    return current_space_obj ? current_space_obj : &kernel_space_obj;
+}
+
+static void vmm_mark_space_active_on_current_cpu(vmm_space_t *space) {
+    if (!space) return;
+    u32 cpu = smp_current_cpu_id();
+    if (cpu >= SMP_MAX_CPUS) cpu = 0;
+    __atomic_or_fetch(&space->active_cpu_mask, 1u << cpu, __ATOMIC_ACQ_REL);
+    __atomic_store_n(&space->tlb_seen_generation[cpu], __atomic_load_n(&space->tlb_generation, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+    smp_set_current_cr3(space->pml4_physical);
+}
+
+static void vmm_set_current_space_local(vmm_space_t *space) {
+    current_space_obj = space ? space : &kernel_space_obj;
+    smp_set_current_address_space(current_space_obj);
+    vmm_mark_space_active_on_current_cpu(current_space_obj);
+}
 
 static bool vmm_is_canonical(uptr virt) {
     return virt < VMM_CANONICAL_LOW_TOP || virt >= VMM_CANONICAL_HIGH_BASE;

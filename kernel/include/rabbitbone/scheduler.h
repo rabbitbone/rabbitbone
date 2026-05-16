@@ -25,6 +25,19 @@ typedef enum sched_job_state {
 
 typedef rabbitbone_schedinfo_t sched_stats_t;
 
+
+typedef struct sched_cpu_info {
+    u32 cpu_id;
+    u32 queued;
+    u32 running;
+    u32 completed;
+    u32 failed;
+    u32 migrations_in;
+    u32 migrations_out;
+    u64 dispatched;
+    u64 last_dispatch_ticks;
+} sched_cpu_info_t;
+
 typedef struct sched_job_info {
     u32 job_id;
     u32 pid;
@@ -37,18 +50,45 @@ typedef struct sched_job_info {
     char path[SCHED_PATH_MAX];
 } sched_job_info_t;
 
+typedef struct sched_cpu_runtime_info {
+    u32 cpu_id;
+    u32 current_pid;
+    u32 current_slice_ticks;
+    u32 need_resched;
+    u32 idle;
+    u32 reserved;
+    u64 idle_entries;
+    u64 idle_ticks;
+    u64 kernel_task_dispatches;
+    u64 process_dispatches;
+    u64 reschedule_ipis;
+    u64 local_reschedules;
+} sched_cpu_runtime_info_t;
+
 void scheduler_init(void);
 const char *scheduler_job_state_name(u32 state);
 bool scheduler_enqueue(const char *path, int argc, const char *const *argv, u32 *job_id_out);
 u32 scheduler_run_ready(u32 max_jobs);
 bool scheduler_wait_job(u32 job_id, sched_job_info_t *out);
 bool scheduler_get_job(u32 job_id, sched_job_info_t *out);
+bool scheduler_migrate_job(u32 job_id, u32 dst_cpu);
+u32 scheduler_balance_queues(void);
+u32 scheduler_cpu_count(void);
+bool scheduler_cpu_info(u32 cpu_id, sched_cpu_info_t *out);
 void scheduler_stats(sched_stats_t *out);
 void scheduler_note_yield(void);
 void scheduler_note_sleep(u64 ticks);
 bool scheduler_tick(const cpu_regs_t *regs);
 bool scheduler_preempt_info(rabbitbone_preemptinfo_t *out);
 bool scheduler_set_quantum(u32 quantum_ticks);
+void scheduler_idle_enter(void);
+void scheduler_idle_exit(void);
+bool scheduler_need_resched(void);
+bool scheduler_request_reschedule(u32 cpu_id);
+u32 scheduler_request_reschedule_mask(u32 cpu_mask);
+void scheduler_note_reschedule_ipi(u32 cpu_id);
+bool scheduler_cpu_runtime_info(u32 cpu_id, sched_cpu_runtime_info_t *out);
+void scheduler_note_kernel_task_dispatch(void);
 void scheduler_dump(void);
 bool scheduler_selftest(void);
 usize scheduler_snapshot_size(void);

@@ -81,6 +81,25 @@ static pte_t *next_table(vmm_space_t *space, pte_t *parent, usize idx, bool crea
     return child;
 }
 
+static bool vmm_split_huge_pde_locked(vmm_space_t *space, pte_t *pd, usize idx) {
+    if (!space || !pd || idx >= PT_ENTRIES) return false;
+    pte_t huge = pd[idx];
+    if ((huge & (VMM_PRESENT | VMM_HUGE)) != (VMM_PRESENT | VMM_HUGE)) return true;
+    pte_t *pt = alloc_table_for(space);
+    if (!pt) return false;
+    uptr phys_base = huge & PTE_ADDR_MASK;
+    u64 leaf_flags = huge & ~PTE_ADDR_MASK;
+    leaf_flags &= ~VMM_HUGE;
+    for (usize i = 0; i < PT_ENTRIES; ++i) {
+        pt[i] = (phys_base + i * PAGE_SIZE) | leaf_flags | VMM_PRESENT;
+    }
+    u64 table_flags = VMM_PRESENT | VMM_WRITE | (huge & (VMM_USER | VMM_WRITETHR | VMM_NOCACHE));
+    pd[idx] = ((uptr)pt & PTE_ADDR_MASK) | table_flags;
+    if (stats.mapped_2m_pages) --stats.mapped_2m_pages;
+    stats.mapped_4k_pages += PT_ENTRIES;
+    return true;
+}
+
 static void split_indices(uptr virt, usize *pml4i, usize *pdpti, usize *pdi, usize *pti) {
     *pml4i = (virt >> 39) & 0x1ffu;
     *pdpti = (virt >> 30) & 0x1ffu;

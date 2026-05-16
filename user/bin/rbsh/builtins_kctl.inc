@@ -40,6 +40,7 @@ static int sh_builtin_kctl(int argc, char **argv) {
     if (!sh_kctl_op_for(argv[0], &op)) return 127;
     const char *arg = 0;
     if (op == RABBITBONE_KCTL_OP_PANIC) arg = argc > 1 ? argv[1] : "shell panic command";
+    else if (op == RABBITBONE_KCTL_OP_KTEST) arg = argc > 1 ? argv[1] : 0;
     if ((op == RABBITBONE_KCTL_OP_REBOOT || op == RABBITBONE_KCTL_OP_HALT) && argc > 1) {
         sh_err(argv[0]);
         sh_err(": no arguments expected\n");

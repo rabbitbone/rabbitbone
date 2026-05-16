@@ -5,7 +5,7 @@
 <h1 align="center">Rabbitbone</h1>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.4-2f6fed" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.3.5-2f6fed" />
   <img alt="Target" src="https://img.shields.io/badge/target-x86_64%20UEFI%20Live%20ISO-222222" />
   <img alt="Kernel" src="https://img.shields.io/badge/kernel-independent-6b46c1" />
   <img alt="Written with" src="https://img.shields.io/badge/written%20with-GPT--5.5-0f766e" />
@@ -19,19 +19,19 @@
 
 Rabbitbone is a small amd64 operating system built from scratch for UEFI virtual machines. It is not Linux, not a Unix clone, and not a bootloader demo. The default artifact is a live ISO that boots an independent kernel, loads a RAM-backed root image as a boot module, mounts it at `/disk0`, and starts a disk-backed userland with `/disk0/sbin/init` and `rbsh`.
 
-The current release line is `0.0.3.4`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
+The current release line is `0.0.3.5`. The default path is UEFI-only. The legacy BIOS image is kept only for regression comparison via `make legacy-image`.
 
 ## Highlights
 
 | Area | What exists now |
 | --- | --- |
 | Boot | UEFI `BOOTX64.EFI`, live ISO packaging, bootinfo v2, UEFI memory-map import, live root module loading |
-| Kernel | x86_64 GDT, IDT, paging, heap, VMM, W^X/NX image protection, panic path, structured logging, shell |
+| Kernel | x86_64 CPU feature bring-up, per-CPU GDT/TSS stacks, IDT, paging, heap, VMM, W^X/NX image protection, panic path, structured logging, shell |
 | Filesystems | VFS, ramfs, devfs, tarfs, writable EXT4, indexed extents, split-leaf/depth-2 extent trees, htree directories, metadata repair-lite |
 | Storage | Live boot RAM disk, block layer, MBR parsing, ATA PIO, AHCI probing |
-| User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, `/disk0/sbin/init`, `/disk0/bin/rbsh`, test utilities |
+| User mode | ELF64 loader, ring3 transition, `int 0x80` syscalls, `/disk0/sbin/init`, `/disk0/bin/rbsh`, test utilities including `cpuidcheck` |
 | Processes | spawn/wait, process registry, fork, exec, fd table, `brk`/`sbrk`, anonymous mmap, file-backed private mmap |
-| Scheduling | Single-core preemptive runqueue driven by PIT IRQ0 |
+| Scheduling | Preemptive scheduler with SMP topology, AP bootstrap, cross-call, TLB-shootdown, idle, and per-CPU telemetry groundwork |
 | Rust boundary | Rust modules for syscall dispatch, usercopy validation, VFS routing, and path policy checks |
 | Testing | Host tests plus in-kernel `ktest` coverage for boot, memory, VFS, EXT4, syscalls, scheduler, and ring3 userland |
 
@@ -94,7 +94,7 @@ Recommended VM setup:
 - CD/DVD attached to `build/rabbitbone-live.iso`
 - serial port connected to a file such as `rabbitbone-com1.log`
 
-A ready-to-run config is in `vmware/rabbitbone-uefi-live.vmx`. The editable template is [vmware/rabbitbone-uefi-live.vmx.example](vmware/rabbitbone-uefi-live.vmx.example).
+The tracked VMware template is [vmware/rabbitbone-uefi-live.vmx.example](vmware/rabbitbone-uefi-live.vmx.example). Copy it to `vmware/rabbitbone-uefi-live.vmx` for local runs; non-example `.vmx` files stay ignored.
 
 Important logging behavior:
 
@@ -143,6 +143,7 @@ procs
 lastproc
 sched
 preempt
+cpuidcheck
 schedtest
 runq
 tty
@@ -159,6 +160,7 @@ run /bin/fscheck /disk0/hello.txt
 run /bin/writetest
 run /bin/preemptcheck
 run /bin/fdcheck
+run /bin/cpuidcheck
 run /bin/procctl
 run /bin/forkcheck
 run /bin/execcheck
@@ -188,7 +190,7 @@ A passing in-kernel run ends with:
 KTEST_STATUS: PASS
 ```
 
-`ktest` covers libc helpers, heap, VMM, VFS, ramfs, devfs, tarfs, block/MBR, EXT4 read-write paths, syscalls, timer, scheduler, ELF loading, and ring3 process behavior.
+`ktest` covers libc helpers, heap, VMM, VFS, ramfs, devfs, tarfs, block/MBR, EXT4 read-write paths, syscalls, timer, scheduler, SMP/AP contracts, ELF loading, and ring3 process behavior.
 
 ## Source layout
 
@@ -198,7 +200,7 @@ boot/                  UEFI loader plus retained legacy BIOS loader sources
 include/               public Rabbitbone ABI/version headers
 kernel/arch/x86_64/    CPU, GDT, IDT, IRQ, paging, entry assembly
 kernel/core/           kernel main, shell, logging, panic, ktest
-kernel/drivers/        VGA, serial, PIT, PIC, keyboard, boot RAM disk, AHCI, ATA PIO, MBR, block layer
+kernel/drivers/        VGA, serial, PIT, PIC, keyboard, boot RAM disk, AHCI, ATA PIO, MBR, block layer, SMP/APIC support
 kernel/exec/           ELF64 image loader
 kernel/fs/             EXT4 reader/writer
 kernel/mm/             virtual memory and kernel heap
@@ -224,7 +226,7 @@ vmware/                VMware helper files and example configs
 
 Rabbitbone is still intentionally narrow in scope:
 
-- single-core execution
+- SMP remains experimental and virtual-machine oriented; AP startup, CPU-local work, and diagnostics exist, while broader platform IRQ/device routing is still staged
 - UEFI live RAM-root boot flow by default
 - EXT4 write support only for the implemented and tested regular-file/directory paths
 - extent-tree support covered through the tested inline, indexed, split-leaf, and depth-2 cases

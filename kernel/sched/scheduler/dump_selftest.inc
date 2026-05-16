@@ -12,10 +12,21 @@ void scheduler_dump(void) {
             (unsigned long long)last_preempt_ticks, (void *)(uptr)last_preempt_rip);
     u64 flags = spin_lock_irqsave(&scheduler_lock);
     if (!queue) { spin_unlock_irqrestore(&scheduler_lock, flags); return; }
-    kprintf("  job   pid   state    exit  path\n");
+    scheduler_recount_cpu_states_locked();
+    kprintf("  cpu   queued running done failed migrated_in migrated_out dispatched idle need_resched ktask proc last_tick\n");
+    for (u32 c = 0; c < sched_cpu_count_cached; ++c) {
+        sched_cpu_runtime_t *rt = scheduler_runtime_for_cpu_locked(c);
+        kprintf("  %-5u %-6u %-7u %-4u %-6u %-11u %-12u %-10llu %-4u %-12u %-5llu %-4llu %-9llu\n",
+                sched_cpus[c].cpu_id, sched_cpus[c].queued, sched_cpus[c].running,
+                sched_cpus[c].completed, sched_cpus[c].failed, sched_cpus[c].migrations_in,
+                sched_cpus[c].migrations_out, (unsigned long long)sched_cpus[c].dispatched,
+                rt->idle, rt->need_resched, (unsigned long long)rt->kernel_task_dispatches,
+                (unsigned long long)rt->process_dispatches, (unsigned long long)sched_cpus[c].last_dispatch_ticks);
+    }
+    kprintf("  job   pid   cpu state    exit  path\n");
     for (usize i = 0; i < SCHED_QUEUE_CAP; ++i) {
         if (queue[i].info.state == SCHED_JOB_EMPTY) continue;
-        kprintf("  %-5u %-5u %-8s %-5d %s\n", queue[i].info.job_id, queue[i].info.pid,
+        kprintf("  %-5u %-5u %-3u %-8s %-5d %s\n", queue[i].info.job_id, queue[i].info.pid, queue[i].target_cpu,
                 scheduler_job_state_name(queue[i].info.state), queue[i].info.exit_code, queue[i].info.path);
     }
     spin_unlock_irqrestore(&scheduler_lock, flags);
@@ -43,6 +54,27 @@ bool scheduler_selftest(void) {
     if (!j1 || !j2 || j1 == j2) return false;
     scheduler_stats(&stats);
     if (stats.queued != 2 || stats.total_enqueued != 2) return false;
+    u32 scpus = scheduler_cpu_count();
+    if (scpus == 0 || scpus > SMP_MAX_CPUS) return false;
+    sched_cpu_runtime_info_t rtinfo;
+    if (!scheduler_cpu_runtime_info(0, &rtinfo) || rtinfo.cpu_id != 0) return false;
+    if (!scheduler_request_reschedule(0) || !scheduler_need_resched()) return false;
+    cpu_regs_t kernel_regs_for_request;
+    memset(&kernel_regs_for_request, 0, sizeof(kernel_regs_for_request));
+    kernel_regs_for_request.cs = 0x08;
+    if (!scheduler_tick(&kernel_regs_for_request) || scheduler_need_resched()) return false;
+    scheduler_idle_enter();
+    scheduler_idle_exit();
+    if (!scheduler_cpu_runtime_info(0, &rtinfo) || rtinfo.idle_entries == 0 || rtinfo.idle_ticks == 0) return false;
+    sched_cpu_info_t cinfo;
+    u32 qsum = 0;
+    for (u32 c = 0; c < scpus; ++c) {
+        if (!scheduler_cpu_info(c, &cinfo) || cinfo.cpu_id != c) return false;
+        qsum += cinfo.queued;
+    }
+    if (qsum != 2u) return false;
+    if (scpus > 1u && !scheduler_migrate_job(j2, scpus - 1u)) return false;
+    if (scheduler_balance_queues() > SCHED_QUEUE_CAP) return false;
     if (scheduler_run_ready(1) != 1) return false;
     sched_job_info_t info1;
     sched_job_info_t info2;

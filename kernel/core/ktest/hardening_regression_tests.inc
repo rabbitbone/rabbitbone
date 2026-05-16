@@ -103,6 +103,17 @@ static void test_hardening_logs_and_kctl(void) {
     check(kmsg.found && !kmsg.unsafe_control && kmsg.lines > 0u,
           "log ring dump ctx exposes sanitized /dev/kmsg line without unsafe control bytes");
 
+    check(!log_line_should_emit_serial(LOG_INFO, "[INFO] ktest: [ ok    ] clean pass\n"),
+          "serial VM log filter suppresses info/pass lines");
+    check(log_line_should_emit_serial(LOG_WARN, "[WARN] ktest: [ skip  ] skipped case\n"),
+          "serial VM log filter keeps warnings and skips");
+    check(log_line_should_emit_serial(LOG_ERROR, "[ERROR] ktest: [ fail  ] failing case\n"),
+          "serial VM log filter keeps errors and fails");
+    check(log_line_should_emit_serial(LOG_INFO, "[INFO] ktest: [ ambiguous ] unclear case\n"),
+          "serial VM log filter keeps ambiguous attention markers");
+    check(log_formatted_line_should_emit_serial("[ERROR] ktest: [ result] suite: passed=1 failed=1 skipped=0\n"),
+          "panic VM log ring filter keeps formatted error lines");
+
     log_write(LOG_INFO, "ktest-hardening", "ctx-dump-%u", 304u);
     ktest_log_probe_ctx_t direct = { "ctx-dump-304", false, false, 0 };
     log_dump_ring_ctx(ktest_log_probe_writer, &direct);

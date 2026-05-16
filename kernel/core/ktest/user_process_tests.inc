@@ -22,6 +22,7 @@ static void detail_process_result(const char *label, process_status_t st, const 
 static void test_user_processes(void) {
     suite_begin("gdt/disk-userland/ring3-process");
     check(gdt_selftest(), "GDT has user segments and TSS kernel stack");
+    check(gdt_stack_hardening_selftest(), "GDT TSS and IST stacks have guard pages and canaries");
     vfs_stat_t st;
     check(vfs_stat("/disk0/sbin/init", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "disk-backed /disk0/sbin/init installed in EXT4");
     check(vfs_stat("/disk0/bin/sh", &st) == VFS_OK && st.type == VFS_NODE_FILE && st.size > 64u, "disk-backed /disk0/bin/sh installed in EXT4");

@@ -2,6 +2,7 @@ static void test_process_registry(void) {
     suite_begin("process/registry/contracts");
     usize before = process_table_count();
     check(before > 0, "process registry retained completed user processes");
+    check(process_runtime_selftest(), "process runtime clear keeps per-CPU current buffer valid");
     check(process_table_selftest(), "process registry records completed exec lifecycle");
     process_result_t last;
     const char *argv[] = { "/bin/procstat" };

@@ -174,7 +174,6 @@ static void console_putc_unlocked(char c) {
     vga_begin_update();
     vga_ansi_putc(c);
     vga_end_update();
-    serial_putc(c);
 }
 
 void console_init(void) {
@@ -198,7 +197,6 @@ void console_write_n(const char *s, usize n) {
     vga_begin_update();
     for (usize i = 0; i < n; ++i) vga_ansi_putc(s[i]);
     vga_end_update();
-    serial_write_n(s, n);
     spin_unlock_irqrestore(&console_lock, flags);
 }
 

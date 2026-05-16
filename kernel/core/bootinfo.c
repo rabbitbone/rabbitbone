@@ -112,6 +112,11 @@ void bootinfo_remember(const rabbitbone_bootinfo_t *info) {
     if (bootinfo_validate(info)) g_bootinfo = info;
 }
 
+u64 bootinfo_acpi_rsdp(void) {
+    if (!bootinfo_basic_usable(g_bootinfo)) return 0;
+    return RABBITBONE_BOOT_ACPI_RSDP(g_bootinfo);
+}
+
 const rabbitbone_e820_entry_t *bootinfo_e820(const rabbitbone_bootinfo_t *info, u16 index) {
     if (!bootinfo_validate(info) || index >= info->e820_count) return 0;
     const rabbitbone_e820_entry_t *entries = (const rabbitbone_e820_entry_t *)(uptr)info->e820_addr;
@@ -172,7 +177,8 @@ void bootinfo_format_status(char *out, usize cap) {
               "kernel: lba=%llu sectors=%llu load=0x10000..0x9f000\n"
               "root: device_lba=%llu sectors=%llu mount=/disk0 init=/disk0/sbin/init\n"
               "modules: count=%u addr=%p\n"
-              "cmdline: %s\n",
+              "cmdline: %s\n"
+              "acpi_rsdp: %p\n",
               g_bootinfo->version,
               (g_bootinfo->flags & RABBITBONE_BOOT_FLAG_UEFI) ? "uefi-live-iso" : "bios-int13",
               (unsigned long long)g_bootinfo->boot_drive,
@@ -183,5 +189,6 @@ void bootinfo_format_status(char *out, usize cap) {
               (unsigned long long)g_bootinfo->root_sectors,
               g_bootinfo->module_count,
               (void *)(uptr)g_bootinfo->modules_addr,
-              bootinfo_cmdline(g_bootinfo));
+              bootinfo_cmdline(g_bootinfo),
+              (void *)(uptr)bootinfo_acpi_rsdp());
 }

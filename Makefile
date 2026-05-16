@@ -16,7 +16,7 @@ USER_CFLAGS := --target=x86_64-unknown-none -std=c11 -Oz -fno-unwind-tables -fno
 USER_ASMFLAGS := --target=x86_64-unknown-none -Oz -fno-unwind-tables -fno-asynchronous-unwind-tables -ffreestanding -Wall -Wextra -Werror -MMD -MP
 USER_LDFLAGS := -nostdlib -z max-page-size=0x1000 --gc-sections -s -T user/user.ld
 
-USER_C_PROGS := hello nano fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck rbsh init
+USER_C_PROGS := hello nano fscheck writetest badptr badpath statcheck procstat spawncheck schedcheck preemptcheck fdcheck isolate fdleak forkcheck heapcheck mmapcheck mmapfilecheck mmapsharedcheck procctl execcheck execfdcheck execfdchild execvecheck exectarget pipecheck fdremapcheck pollcheck stdcat termcheck cpuidcheck rbsh init
 USER_ASM_PROGS := regtrash
 USER_PROGS := $(USER_C_PROGS) $(USER_ASM_PROGS)
 USER_ELFS := $(USER_PROGS:%=$(BUILD)/user/%.elf)
@@ -106,7 +106,7 @@ TARFS_SPLIT_SRCS := $(wildcard kernel/vfs/tarfs/*.inc kernel/vfs/tarfs/*.h)
 VFS_SPLIT_SRCS := $(wildcard kernel/vfs/vfs/*.inc kernel/vfs/vfs/*.h)
 
 K_CXX_SRCS := kernel/api/system.cpp
-K_ASM_SRCS := kernel/arch/x86_64/entry.S kernel/arch/x86_64/isr.S kernel/arch/x86_64/user_entry.S
+K_ASM_SRCS := kernel/arch/x86_64/entry.S kernel/arch/x86_64/isr.S kernel/arch/x86_64/smp_trampoline.S kernel/arch/x86_64/user_entry.S
 K_RUST_SRCS := \
   kernel/rust/lib.rs \
   kernel/rust/syscall_dispatch.rs \
@@ -271,11 +271,12 @@ legacy-image: kernellayoutcheck $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)
 bootcheck:
 	python3 scripts/check_boot_sources.py boot/stage1.S boot/stage2.S
 
-ueficheck: $(BUILD)/BOOTX64.EFI scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py vmware/rabbitbone-uefi-live.vmx.example vmware/rabbitbone-uefi-live.vmx
+ueficheck: $(BUILD)/BOOTX64.EFI scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py scripts/check_smp_trampoline_gdt.py vmware/rabbitbone-uefi-live.vmx.example
 	@test -s "$(BUILD)/BOOTX64.EFI"
-	python3 -m py_compile scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py
+	python3 -m py_compile scripts/make_live_iso.py scripts/check_vmware_configs.py scripts/check_uefi_boot_contract.py scripts/check_smp_trampoline_gdt.py
 	python3 scripts/check_uefi_boot_contract.py
-	python3 scripts/check_vmware_configs.py vmware/rabbitbone-uefi-live.vmx.example vmware/rabbitbone-uefi-live.vmx
+	python3 scripts/check_vmware_configs.py vmware/rabbitbone-uefi-live.vmx.example
+	python3 scripts/check_smp_trampoline_gdt.py
 
 releasecheck:
 	python3 scripts/check_release_version.py

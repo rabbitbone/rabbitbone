@@ -23,6 +23,8 @@ void log_dump_ring_ctx(log_line_writer_ctx_fn writer, void *ctx);
 void log_dump_ring_tail_ctx(log_line_writer_ctx_fn writer, void *ctx, usize max_bytes);
 void log_dump_ring(log_line_writer_fn writer);
 const char *log_level_name(log_level_t level);
+bool log_formatted_line_should_emit_serial(const char *formatted_line);
+bool log_line_should_emit_serial(log_level_t level, const char *formatted_line);
 
 #define KLOG(level, component, fmt, ...) log_write((level), (component), (fmt), ##__VA_ARGS__)
 

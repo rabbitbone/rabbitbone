@@ -47,11 +47,11 @@ __pycache__/
 /vmware/nvram
 /vmware/Rabbitbone.vmx
 /vmware/rabbitbone-legacy.vmx
+/vmware/*.vmx
 
 # Keep hand-written VMware helpers
 !/vmware/Makefile
 !/vmware/*.example
-!/vmware/rabbitbone-uefi-live.vmx
 
 # Editor and OS files
 .vscode/

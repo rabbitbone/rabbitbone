@@ -12,7 +12,10 @@ typedef struct ktest_totals {
     u32 suites;
 } ktest_totals_t;
 
+#define RABBITBONE_KTEST_FLAG_SMP_EXPANDED (1u << 0)
+
 bool ktest_run_all(void);
+bool ktest_run_all_flags(u32 flags);
 void ktest_get_last_totals(ktest_totals_t *out);
 
 #if defined(__cplusplus)

@@ -91,7 +91,7 @@ void kernel_main(const rabbitbone_bootinfo_t *bootinfo) {
     kmem_init();
     serial_enable_heap_ring();
     log_enable_heap_ring();
-    if (!gdt_install_dynamic_stacks(64u * 1024u, 8u * 1024u)) {
+    if (!gdt_install_dynamic_stacks(64u * 1024u, 16u * 1024u)) {
         PANIC("failed to install heap-backed TSS stacks");
     }
 
@@ -103,11 +103,15 @@ void kernel_main(const rabbitbone_bootinfo_t *bootinfo) {
     pic_remap(32, 40);
     idt_init();
     pit_init(100);
+    KLOG(LOG_INFO, "kernel", "starting secondary CPUs");
+    smp_start_all_aps();
+    KLOG(LOG_INFO, "kernel", "secondary CPU startup path returned");
     keyboard_init();
     tty_init();
     task_init();
     process_init();
     scheduler_init();
+    (void)apic_local_timer_enable((u8)RABBITBONE_APIC_TIMER_VECTOR, RABBITBONE_APIC_TIMER_INITIAL_COUNT, true);
     pic_clear_mask(0);
     pic_clear_mask(1);
     cpu_sti();

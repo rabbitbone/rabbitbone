@@ -4,28 +4,24 @@ void process_init(void) {
         return;
     }
     process_initialized = true;
-    if (!current_proc_ptr) current_proc_ptr = (active_process_t *)kmalloc(sizeof(active_process_t));
-    if (!current_proc_ptr) PANIC("process current allocation failed");
-    memset(current_proc_ptr, 0, sizeof(*current_proc_ptr));
+    memset(&process_boot_runtime, 0, sizeof(process_boot_runtime));
+    process_boot_runtime.async_slot = -1;
+    if (!process_cpu_runtimes) process_cpu_runtimes = (process_cpu_runtime_t *)kmalloc(sizeof(process_cpu_runtime_t) * SMP_MAX_CPUS);
+    if (!process_cpu_runtimes) PANIC("process per-cpu runtime allocation failed");
+    memset(process_cpu_runtimes, 0, sizeof(process_cpu_runtime_t) * SMP_MAX_CPUS);
+    for (u32 cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) {
+        if (!process_runtime_alloc_buffers(&process_cpu_runtimes[cpu])) PANIC("process per-cpu runtime buffer allocation failed");
+    }
+    (void)process_current_runtime();
     memset(&last_result, 0, sizeof(last_result));
     if (!process_table) process_table = (process_info_t *)kmalloc(sizeof(process_info_t) * PROCESS_TABLE_CAP);
     if (process_table) memset(process_table, 0, sizeof(process_info_t) * PROCESS_TABLE_CAP);
     if (!async_slots) async_slots = (active_process_t *)kmalloc(sizeof(active_process_t) * PROCESS_ASYNC_CAP);
     if (async_slots) memset(async_slots, 0, sizeof(active_process_t) * PROCESS_ASYNC_CAP);
     async_next_rr = 0;
-    current_async_slot = -1;
     async_scheduler_active = false;
-    reschedule_requested = false;
-    exit_requested = false;
-    fork_requested = false;
-    exec_requested = false;
-    if (!exec_replacement) exec_replacement = (active_process_t *)kmalloc(sizeof(active_process_t));
-    if (!exec_replacement) PANIC("process exec replacement allocation failed");
-    memset(exec_replacement, 0, sizeof(*exec_replacement));
-    if (!exec_old_proc) exec_old_proc = (active_process_t *)kmalloc(sizeof(active_process_t));
-    if (!exec_old_proc) PANIC("process exec old-state allocation failed");
-    memset(exec_old_proc, 0, sizeof(*exec_old_proc));
-    requested_exit_code = 0;
+    for (u32 cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) process_runtime_reset(&process_cpu_runtimes[cpu]);
+    (void)process_current_runtime();
     process_table_len = 0;
     process_table_next = 0;
     next_user_pid = 1;
@@ -34,6 +30,7 @@ void process_init(void) {
     if (!shared_anon_objects) PANIC("process shared-anon object table allocation failed");
     memset(shared_anon_objects, 0, sizeof(user_shared_anon_object_t) * USER_SHARED_ANON_OBJECTS);
     spinlock_init(&shared_anon_lock);
+    spinlock_init(&process_sched_lock);
     next_shared_anon_generation = 1;
     tty_foreground_pgrp = 0;
     tty_session_id = 0;
@@ -276,22 +273,38 @@ static void sync_current_handles_to_snapshot(void) {
 static bool sync_current_to_slot(void) {
     if (!resolve_current_async_slot()) return false;
     sync_current_handles_to_snapshot();
+    u64 flags = spin_lock_irqsave(&process_sched_lock);
     async_slots[(usize)current_async_slot] = current_proc;
+    spin_unlock_irqrestore(&process_sched_lock, flags);
     return true;
 }
 
 static void load_slot_to_current(usize idx) {
     current_proc = async_slots[idx];
     current_async_slot = (i32)idx;
+    u32 cpu = smp_current_cpu_id();
+    u32 mask = smp_started_cpu_mask();
+    if (cpu >= SMP_MAX_CPUS || ((mask & (1u << cpu)) == 0u)) cpu = 0;
+    if (current_proc.last_cpu != cpu) {
+        ++current_proc.migration_count;
+        current_proc.last_cpu = cpu;
+    }
     current_proc.state = PROCESS_STATE_RUNNING;
     syscall_load_user_handles(current_proc.fd_snapshot, sizeof(current_proc.fd_snapshot));
 }
 
 static void clear_current_async(void) {
-    if (!current_proc_ptr) current_proc_ptr = (active_process_t *)kmalloc(sizeof(active_process_t));
-    if (!current_proc_ptr) PANIC("process current allocation failed");
-    memset(current_proc_ptr, 0, sizeof(*current_proc_ptr));
-    current_async_slot = -1;
+    process_cpu_runtime_t *rt = process_current_runtime();
+    if (!rt || !rt->current) PANIC("process current runtime missing");
+    memset(rt->current, 0, sizeof(*rt->current));
+    rt->async_slot = -1;
+    rt->req_reschedule = false;
+    rt->req_exit = false;
+    rt->req_fork = false;
+    rt->req_exec = false;
+    rt->req_exit_code = 0;
+    smp_set_current_process(rt->current);
+    smp_set_current_address_space(vmm_kernel_space());
     syscall_reset_user_handles();
 }
 

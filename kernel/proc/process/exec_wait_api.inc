@@ -115,3 +115,65 @@ process_status_t process_request_exec(const char *path, int argc, const char *co
     return process_request_execve(path, argc, argv, 0, 0);
 }
 
+
+bool process_migrate(u32 pid, u32 dst_cpu) {
+    if (!pid || dst_cpu >= SMP_MAX_CPUS) return false;
+    u32 mask = smp_started_cpu_mask();
+    if (mask == 0) mask = 1u;
+    if ((mask & (1u << dst_cpu)) == 0) return false;
+    active_process_t *p = slot_by_pid(pid, 0);
+    if (!p || !p->active || process_state_terminal((u32)p->state)) return false;
+    u32 old = p->home_cpu;
+    p->home_cpu = dst_cpu;
+    p->last_cpu = dst_cpu;
+    p->affinity_mask = mask;
+    if (old != dst_cpu) ++p->migration_count;
+    if (current_proc.active && current_proc.result.pid == pid) {
+        current_proc.home_cpu = p->home_cpu;
+        current_proc.last_cpu = p->last_cpu;
+        current_proc.affinity_mask = p->affinity_mask;
+        current_proc.migration_count = p->migration_count;
+    }
+    return true;
+}
+
+
+bool process_set_affinity(u32 pid, u32 cpu_mask) {
+    if (!pid) return false;
+    u32 started = smp_started_cpu_mask();
+    if (started == 0u) started = 1u;
+    cpu_mask &= started;
+    if (cpu_mask == 0u) return false;
+    active_process_t *p = slot_by_pid(pid, 0);
+    if (!p || !p->active || process_state_terminal((u32)p->state)) return false;
+    u32 old_home = p->home_cpu;
+    if ((cpu_mask & (1u << p->home_cpu)) == 0u) {
+        for (u32 cpu = 0; cpu < SMP_MAX_CPUS; ++cpu) {
+            if (cpu_mask & (1u << cpu)) { p->home_cpu = cpu; break; }
+        }
+    }
+    p->affinity_mask = cpu_mask;
+    if ((cpu_mask & (1u << p->last_cpu)) == 0u) p->last_cpu = p->home_cpu;
+    if (old_home != p->home_cpu) ++p->migration_count;
+    if (current_proc.active && current_proc.result.pid == pid) {
+        current_proc.home_cpu = p->home_cpu;
+        current_proc.last_cpu = p->last_cpu;
+        current_proc.affinity_mask = p->affinity_mask;
+        current_proc.migration_count = p->migration_count;
+    }
+    return true;
+}
+
+bool process_cpu_info(u32 pid, process_cpu_info_t *out) {
+    if (!pid || !out) return false;
+    active_process_t *p = slot_by_pid(pid, 0);
+    if (!p || !p->active) return false;
+    memset(out, 0, sizeof(*out));
+    out->pid = p->result.pid;
+    out->home_cpu = p->home_cpu;
+    out->last_cpu = p->last_cpu;
+    out->affinity_mask = p->affinity_mask;
+    out->migrations = p->migration_count;
+    out->state = (u32)p->state;
+    return true;
+}

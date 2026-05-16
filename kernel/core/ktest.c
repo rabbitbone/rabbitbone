@@ -10,4 +10,6 @@
 #include "ktest/user_process_tests.inc"
 #include "ktest/process_registry_tests.inc"
 #include "ktest/scheduler_contract_tests.inc"
+#include "ktest/smp_tests.inc"
+#include "ktest/smp_deep_tests.inc"
 #include "ktest/coverage_runner.inc"

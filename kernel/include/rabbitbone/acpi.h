@@ -10,10 +10,11 @@ extern "C" {
 #define ACPI_MAX_ISO 16u
 
 typedef struct acpi_cpu_info {
-    u8 acpi_id;
-    u8 apic_id;
+    u32 acpi_id;
+    u32 apic_id;
     u32 flags;
     bool enabled;
+    bool x2apic;
 } acpi_cpu_info_t;
 
 typedef struct acpi_ioapic_info {

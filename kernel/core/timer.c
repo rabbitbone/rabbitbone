@@ -14,10 +14,64 @@
 #define RABBITBONE_PIT_HZ 100ull
 #define TIMER_HPET_CALIBRATION_NS 2000000ull
 #define TIMER_HPET_CALIBRATION_SPIN_LIMIT 1000000u
+#define TIMER_PIT_TSC_CALIBRATION_TICKS 4ull
+#define TIMER_PIT_TSC_SPIN_LIMIT 50000000u
 
 static timer_info_t timer_info_state;
 static u64 tsc_base;
 static u64 ns_base;
+
+static bool timer_irq_enabled(void) {
+#if defined(RABBITBONE_HOST_TEST)
+    return true;
+#else
+    u64 flags = 0;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags) :: "memory");
+    return (flags & (1ull << 9)) != 0;
+#endif
+}
+
+static bool timer_wait_for_pit_tick_change(u64 initial, u64 *out_tick, u32 spin_limit) {
+    for (u32 spin = 0; spin < spin_limit; ++spin) {
+        u64 now = pit_ticks();
+        if (now != initial) {
+            if (out_tick) *out_tick = now;
+            return true;
+        }
+        __asm__ volatile("pause");
+    }
+    return false;
+}
+
+static bool timer_calibrate_tsc_from_pit(void) {
+#if defined(RABBITBONE_HOST_TEST)
+    return false;
+#else
+    if (!timer_info_state.tsc_supported || !timer_info_state.pit_active || !timer_irq_enabled()) return false;
+    u64 tick0 = pit_ticks();
+    u64 start_tick = 0;
+    if (!timer_wait_for_pit_tick_change(tick0, &start_tick, TIMER_PIT_TSC_SPIN_LIMIT)) return false;
+    u64 tsc_a = cpu_read_tsc();
+    u64 target = start_tick + TIMER_PIT_TSC_CALIBRATION_TICKS;
+    for (u32 spin = 0; spin < TIMER_PIT_TSC_SPIN_LIMIT; ++spin) {
+        if (pit_ticks() >= target) break;
+        __asm__ volatile("pause");
+    }
+    u64 end_tick = pit_ticks();
+    u64 tsc_b = cpu_read_tsc();
+    if (end_tick <= start_tick || tsc_b <= tsc_a) return false;
+    u64 ticks_delta = end_tick - start_tick;
+    u64 hz = rabbitbone_u64_mul_div_saturating(tsc_b - tsc_a, timer_info_state.pit_hz, ticks_delta);
+    if (hz == 0 || hz == ~0ull) return false;
+    timer_info_state.tsc_hz = hz;
+    timer_info_state.tsc_calibrated = true;
+    timer_info_state.clocksource = "tsc-pit";
+    tsc_base = cpu_read_tsc();
+    ns_base = pit_ticks() * (1000000000ull / RABBITBONE_PIT_HZ);
+    return true;
+#endif
+}
+
 
 void timer_init_sources(void) {
     memset(&timer_info_state, 0, sizeof(timer_info_state));
@@ -55,6 +109,7 @@ void timer_init_sources(void) {
             }
         }
     }
+    if (!timer_info_state.tsc_calibrated) (void)timer_calibrate_tsc_from_pit();
     KLOG(LOG_INFO, "timer", "clocksource=%s pit=%u hpet=%u tsc_supported=%u tsc_hz=%llu",
          timer_info_state.clocksource, timer_info_state.pit_active ? 1u : 0u,
          timer_info_state.hpet_active ? 1u : 0u, timer_info_state.tsc_supported ? 1u : 0u,

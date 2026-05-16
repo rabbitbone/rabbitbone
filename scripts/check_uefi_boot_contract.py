@@ -29,6 +29,9 @@ if "get_memory_map_dynamic" not in boot or "EFI_BUFFER_TOO_SMALL" not in boot:
 if "EFI_FILE_DIRECTORY" not in boot or "info->Attribute & EFI_FILE_DIRECTORY" not in boot:
     errors.append("boot/uefi/bootx64.c: UEFI loader must reject directories when opening kernel/root files")
 
+if "EFI_ACPI_20_TABLE_GUID" not in boot or "locate_acpi_rsdp" not in boot or "RABBITBONE_BOOT_ACPI_RSDP(bootinfo)" not in boot:
+    errors.append("boot/uefi/bootx64.c: UEFI loader must pass ACPI RSDP through bootinfo for APIC/SMP discovery")
+
 if errors:
     for e in errors:
         print(e, file=sys.stderr)

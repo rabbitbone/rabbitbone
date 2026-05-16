@@ -62,6 +62,7 @@ typedef struct kctl_ktest_stacks {
     void *exec_stack;
     void *tss_stack;
     uptr old_rsp0;
+    u32 flags;
 } kctl_ktest_stacks_t;
 
 static bool kctl_stack_top_checked(void *base, usize size, uptr *top_out) {
@@ -91,7 +92,7 @@ static void kctl_run_full_ktest_body(u64 arg) {
     }
 
     cpu_sti();
-    bool ok_all = ktest_run_all();
+    bool ok_all = ktest_run_all_flags(stacks ? stacks->flags : 0u);
     cpu_cli();
 
     if (stacks) {
@@ -101,7 +102,7 @@ static void kctl_run_full_ktest_body(u64 arg) {
     __builtin_unreachable();
 }
 
-static bool kctl_run_full_ktest_on_private_stack(void) {
+static bool kctl_run_full_ktest_on_private_stack(u32 flags) {
     kctl_ktest_stacks_t stacks;
     memset(&stacks, 0, sizeof(stacks));
 
@@ -115,6 +116,7 @@ static bool kctl_run_full_ktest_on_private_stack(void) {
     memset(stacks.exec_stack, 0, KCTL_KTEST_STACK_SIZE);
     memset(stacks.tss_stack, 0, KCTL_KTEST_TSS_STACK_SIZE);
     stacks.old_rsp0 = gdt_current_kernel_stack();
+    stacks.flags = flags;
 
     uptr exec_top = 0;
     if (!kctl_stack_top_checked(stacks.exec_stack, KCTL_KTEST_STACK_SIZE, &exec_top) ||
@@ -205,6 +207,7 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
     memset(tmp, 0, RABBITBONE_KCTL_OUT_MAX);
     sys_kctl_out_t out = { tmp, RABBITBONE_KCTL_OUT_MAX, 0 };
     syscall_result_t result = err(VFS_ERR_INVAL);
+    char *ktest_arg = 0;
 
     switch (op) {
         case RABBITBONE_KCTL_OP_MEM: {
@@ -251,6 +254,28 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
             break;
         }
         case RABBITBONE_KCTL_OP_KTEST: {
+            u32 ktest_flags = 0u;
+            bool help_only = false;
+            if (arg_ptr) {
+                ktest_arg = copy_string_arg_heap(arg_ptr, 64u);
+                if (!ktest_arg) { result = err(VFS_ERR_INVAL); goto out; }
+                if (strcmp(ktest_arg, "--smp-expanded") == 0 || strcmp(ktest_arg, "--smp-named") == 0) {
+                    ktest_flags |= RABBITBONE_KTEST_FLAG_SMP_EXPANDED;
+                } else if (strcmp(ktest_arg, "--help") == 0 || strcmp(ktest_arg, "help") == 0) {
+                    help_only = true;
+                } else if (ktest_arg[0] != 0) {
+                    result = err(VFS_ERR_INVAL);
+                    goto out;
+                }
+            }
+            if (help_only) {
+                kctl_append_raw(&out, "ktest:\n");
+                kctl_append_raw(&out, "  usage=sudo ktest [--smp-expanded]\n");
+                kctl_append_raw(&out, "  default=honest aggregate SMP deep contracts only\n");
+                kctl_append_raw(&out, "  --smp-expanded=also run legacy expanded requested-name matrix\n");
+                break;
+            }
+
             bool isolated = false;
             bool need_isolation = process_user_active() || process_async_scheduler_active();
             if (need_isolation) {
@@ -258,7 +283,7 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
                 if (!isolated) { result = err(VFS_ERR_INVAL); goto out; }
             }
 
-            bool ok_all = kctl_run_full_ktest_on_private_stack();
+            bool ok_all = kctl_run_full_ktest_on_private_stack(ktest_flags);
 
             if (isolated) process_leave_kernel_test_context();
             cpu_sti();
@@ -269,6 +294,7 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
             kctl_append_raw(&out, "ktest:\n");
             kctl_append_raw(&out, "  mode=full\n");
             kctl_appendf(&out, "  isolated=%u\n", isolated ? 1u : 0u);
+            kctl_appendf(&out, "  flags=0x%x\n", ktest_flags);
             kctl_appendf(&out, "  result=%s\n", ok_all ? "pass" : "fail");
             kctl_appendf(&out, "  suites=%u\n", totals.suites);
             kctl_appendf(&out, "  passed=%u\n", totals.passed);
@@ -368,6 +394,7 @@ syscall_result_t rabbitbone_sys_kctl(u64 op64, u64 out_ptr, u64 out_len64, u64 a
     kctl_finish(&out);
     result = kctl_copy_text(out_ptr, out_len64, tmp, out.len);
 out:
+    if (ktest_arg) kfree(ktest_arg);
     kfree(tmp);
     return result;
 }

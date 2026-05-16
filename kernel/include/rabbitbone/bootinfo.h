@@ -13,6 +13,7 @@
 #define RABBITBONE_BOOT_FB_FORMAT_RGBX 1u
 #define RABBITBONE_BOOT_FB_FORMAT_BGRX 2u
 
+#define RABBITBONE_BOOT_ACPI_RSDP(info) ((info)->reserved1[3])
 #define RABBITBONE_BOOT_FB_BASE(info) ((info)->reserved1[0])
 #define RABBITBONE_BOOT_FB_WIDTH(info) ((u32)(((info)->reserved1[1] >> 32) & 0xffffffffull))
 #define RABBITBONE_BOOT_FB_HEIGHT(info) ((u32)((info)->reserved1[1] & 0xffffffffull))
@@ -49,7 +50,7 @@ typedef struct RABBITBONE_PACKED rabbitbone_bootinfo {
     u64 cmdline_addr;
     u32 cmdline_size;
     u32 reserved0;
-    u64 reserved1[3];
+    u64 reserved1[4];
 } rabbitbone_bootinfo_t;
 
 bool bootinfo_validate(const rabbitbone_bootinfo_t *info);
@@ -60,5 +61,6 @@ const char *bootinfo_cmdline(const rabbitbone_bootinfo_t *info);
 void bootinfo_dump(const rabbitbone_bootinfo_t *info);
 void bootinfo_format_status(char *out, usize cap);
 void bootinfo_remember(const rabbitbone_bootinfo_t *info);
+u64 bootinfo_acpi_rsdp(void);
 
 #endif

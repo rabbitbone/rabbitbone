@@ -36,7 +36,8 @@ static bool cursor_visible_requested;
 static bool hw_cursor_is_visible;
 static u16 hw_cursor_last_pos = 0xffffu;
 static u16 boot_screen_cells[VGA_MAX_ROWS * VGA_MAX_COLS];
-static u16 resize_scratch_cells[VGA_MAX_ROWS * VGA_MAX_COLS];
+static u16 *resize_scratch_cells;
+static usize resize_scratch_capacity;
 static u32 update_depth;
 static bool cursor_update_pending;
 static u64 fb_dirty_rows[(VGA_MAX_ROWS + 63u) / 64u];
@@ -80,7 +81,15 @@ static usize live_cell_index(usize y, usize x) {
     return phys_y * VGA_WIDTH + x;
 }
 static usize cell_count(void) { return VGA_HEIGHT * VGA_WIDTH; }
-static usize max_cell_count(void) { return (usize)VGA_MAX_ROWS * (usize)VGA_MAX_COLS; }
+static bool ensure_resize_scratch(usize required_cells) {
+    if (resize_scratch_cells && resize_scratch_capacity >= required_cells) return true;
+    u16 *new_cells = (u16 *)kmalloc(sizeof(u16) * required_cells);
+    if (!new_cells) return false;
+    if (resize_scratch_cells) kfree(resize_scratch_cells);
+    resize_scratch_cells = new_cells;
+    resize_scratch_capacity = required_cells;
+    return true;
+}
 static usize clamp_dim(usize value, usize min, usize max) {
     if (value < min) return min;
     if (value > max) return max;
@@ -275,6 +284,7 @@ static u16 sanitize_cell(u16 cell) {
 }
 
 static void fb_draw_cell(usize y, usize x, u16 cell);
+static void fb_copy_cell_to_hw(usize y, usize x);
 static void fb_draw_cursor(void);
 static void fb_redraw_cursor_cell(void);
 static void render_view(void);
@@ -388,11 +398,27 @@ static u32 fb_dirty_row_count(void) {
     return count;
 }
 
+
+static void fb_copy_cell_to_hw(usize y, usize x) {
+    if (!fb.active || !fb.pixels || !fb.shadow_pixels || y >= VGA_HEIGHT || x >= VGA_WIDTH) return;
+    u32 px = (u32)x * VGA_FONT_W;
+    u32 py = (u32)y * VGA_FONT_H;
+    if (px + VGA_FONT_W > fb.width || py + VGA_FONT_H > fb.height) return;
+    for (u32 yy = 0; yy < VGA_FONT_H; ++yy) {
+        const u32 *src = fb.shadow_pixels + (usize)(py + yy) * fb.pitch_pixels + px;
+        volatile u32 *dst = fb.pixels + (usize)(py + yy) * fb.pitch_pixels + px;
+        fb_copy_pixels_to_hw(src, dst, VGA_FONT_W);
+    }
+}
+
 static void fb_redraw_cursor_cell(void) {
     if (!fb.active || !fb.cursor_drawn) return;
+    usize old_row = fb.cursor_row;
+    usize old_col = fb.cursor_col;
     fb.cursor_drawn = false;
-    if (fb.cursor_row < VGA_HEIGHT && fb.cursor_col < VGA_WIDTH) {
-        fb_draw_cell(fb.cursor_row, fb.cursor_col, live_get_cell(fb.cursor_row, fb.cursor_col));
+    if (old_row < VGA_HEIGHT && old_col < VGA_WIDTH) {
+        fb_draw_cell(old_row, old_col, live_get_cell(old_row, old_col));
+        fb_copy_cell_to_hw(old_row, old_col);
     }
 }
 
@@ -408,6 +434,7 @@ static void fb_draw_cursor(void) {
     fb.cursor_row = row;
     fb.cursor_col = col;
     fb.cursor_drawn = true;
+    fb_copy_cell_to_hw(row, col);
 }
 static void live_store_cell(usize y, usize x, u16 cell) {
     cell = sanitize_cell(cell);
@@ -792,6 +819,8 @@ void vga_init(void) {
     scrollback_stride = 0;
     scrollback_start = 0;
     scrollback_count = 0;
+    resize_scratch_cells = 0;
+    resize_scratch_capacity = 0;
     viewport_offset = 0;
     update_depth = 0;
     cursor_update_pending = false;
@@ -883,8 +912,13 @@ static void reconfigure_text_grid(usize new_rows, usize new_cols) {
     new_rows = clamp_dim(new_rows, VGA_MIN_ROWS, VGA_MAX_ROWS);
     new_cols = clamp_dim(new_cols, VGA_MIN_COLS, VGA_MAX_COLS);
     if (new_rows == VGA_HEIGHT && new_cols == VGA_WIDTH) return;
+    usize new_count = new_rows * new_cols;
+    if (!ensure_resize_scratch(new_count)) {
+        KLOG(LOG_WARN, "tty", "text grid resize skipped: scratch allocation failed");
+        return;
+    }
     u16 blank = blank_cell();
-    for (usize i = 0; i < max_cell_count(); ++i) resize_scratch_cells[i] = blank;
+    for (usize i = 0; i < new_count; ++i) resize_scratch_cells[i] = blank;
     usize old_rows = VGA_HEIGHT;
     usize old_cols = VGA_WIDTH;
     usize copy_rows = old_rows < new_rows ? old_rows : new_rows;

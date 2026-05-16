@@ -10,6 +10,53 @@ void process_dump_last(void) {
 }
 
 
+
+bool process_runtime_selftest(void) {
+    if (!process_initialized || !process_cpu_runtimes) return false;
+    if (process_user_active()) return false;
+    process_cpu_runtime_t *rt = process_current_runtime();
+    if (!rt || !rt->current) return false;
+    active_process_t *current_buf = rt->current;
+    if (smp_get_current_process() != current_buf) return false;
+
+    memset(current_buf, 0, sizeof(*current_buf));
+    current_buf->active = true;
+    current_buf->state = PROCESS_STATE_RUNNING;
+    current_buf->result.pid = 0x51a5u;
+    rt->async_slot = 3;
+    rt->req_reschedule = true;
+    rt->req_exit = true;
+    rt->req_fork = true;
+    rt->req_exec = true;
+    rt->req_exit_code = 77;
+    smp_set_current_process((void *)(uptr)SMP_TRAMPOLINE_BASE);
+
+    clear_current_async();
+
+    bool ok = rt->current == current_buf && smp_get_current_process() == current_buf && !current_buf->active &&
+              rt->async_slot == -1 && !rt->req_reschedule && !rt->req_exit && !rt->req_fork && !rt->req_exec &&
+              rt->req_exit_code == 0 && process_current_pid() == 0u && !process_user_active() &&
+              vmm_current_space() == vmm_kernel_space();
+
+    active_process_t probe;
+    memset(&probe, 0, sizeof(probe));
+    probe.active = true;
+    probe.state = PROCESS_STATE_READY;
+    probe.space.pml4_physical = 0x200000u;
+    probe.regs.rip = 0x10000000000ull;
+    probe.regs.rsp = 0x10000ffff000ull;
+    ok = ok && ready_slot_has_valid_user_context(&probe);
+    probe.space.pml4_physical = 0;
+    ok = ok && !ready_slot_has_valid_user_context(&probe);
+    fault_invalid_ready_slot_locked(&probe, 123u);
+    ok = ok && probe.state == PROCESS_STATE_FAULTED && probe.result.faulted && probe.result.finished_ticks == 123u;
+
+    memset(current_buf, 0, sizeof(*current_buf));
+    smp_set_current_process(current_buf);
+    smp_set_current_address_space(vmm_kernel_space());
+    return ok;
+}
+
 bool process_table_selftest(void) {
     usize before = process_table_count();
     const char *argv0[] = { "/bin/hello" };

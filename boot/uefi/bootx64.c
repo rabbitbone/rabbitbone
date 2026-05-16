@@ -74,6 +74,8 @@ static const EFI_GUID EFI_LOADED_IMAGE_PROTOCOL_GUID = {0x5B1B31A1u, 0x9562u, 0x
 static const EFI_GUID EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID = {0x964E5B22u, 0x6459u, 0x11D2u, {0x8Eu,0x39u,0x00u,0xA0u,0xC9u,0x69u,0x72u,0x3Bu}};
 static const EFI_GUID EFI_FILE_INFO_ID = {0x09576E92u, 0x6D3Fu, 0x11D2u, {0x8Eu,0x39u,0x00u,0xA0u,0xC9u,0x69u,0x72u,0x3Bu}};
 static const EFI_GUID EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID = {0x9042A9DEu, 0x23DCu, 0x4A38u, {0x96u,0xFBu,0x7Au,0xDEu,0xD0u,0x80u,0x51u,0x6Au}};
+static const EFI_GUID EFI_ACPI_TABLE_GUID = {0xEB9D2D30u, 0x2D88u, 0x11D3u, {0x9Au,0x16u,0x00u,0x90u,0x27u,0x3Fu,0xC1u,0x4Du}};
+static const EFI_GUID EFI_ACPI_20_TABLE_GUID = {0x8868E871u, 0xE4F1u, 0x11D3u, {0xBCu,0x22u,0x00u,0x80u,0xC7u,0x3Cu,0x88u,0x81u}};
 
 typedef struct EFI_TABLE_HEADER {
     UINT64 Signature;
@@ -176,6 +178,11 @@ struct EFI_BOOT_SERVICES {
     EFI_LOCATE_PROTOCOL LocateProtocol;
 };
 
+typedef struct EFI_CONFIGURATION_TABLE {
+    EFI_GUID VendorGuid;
+    void *VendorTable;
+} EFI_CONFIGURATION_TABLE;
+
 typedef struct EFI_SYSTEM_TABLE {
     EFI_TABLE_HEADER Hdr;
     CHAR16 *FirmwareVendor;
@@ -189,7 +196,7 @@ typedef struct EFI_SYSTEM_TABLE {
     void *RuntimeServices;
     EFI_BOOT_SERVICES *BootServices;
     UINTN NumberOfTableEntries;
-    void *ConfigurationTable;
+    EFI_CONFIGURATION_TABLE *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
 typedef struct EFI_LOADED_IMAGE_PROTOCOL {
@@ -331,6 +338,25 @@ static EFI_STATUS enable_nxe_checked(void) {
     lo |= (1u << 11);
     __asm__ volatile("wrmsr" :: "c"(0xc0000080u), "a"(lo), "d"(hi) : "memory");
     return EFI_SUCCESS;
+}
+
+static bool guid_equal(const EFI_GUID *a, const EFI_GUID *b) {
+    if (!a || !b) return false;
+    if (a->Data1 != b->Data1 || a->Data2 != b->Data2 || a->Data3 != b->Data3) return false;
+    for (UINTN i = 0; i < 8u; ++i) if (a->Data4[i] != b->Data4[i]) return false;
+    return true;
+}
+
+static u64 locate_acpi_rsdp(void) {
+    if (!g_st || !g_st->ConfigurationTable) return 0;
+    u64 rsdp_v1 = 0;
+    for (UINTN i = 0; i < g_st->NumberOfTableEntries; ++i) {
+        EFI_CONFIGURATION_TABLE *entry = &g_st->ConfigurationTable[i];
+        if (!entry->VendorTable) continue;
+        if (guid_equal(&entry->VendorGuid, &EFI_ACPI_20_TABLE_GUID)) return (u64)(uptr)entry->VendorTable;
+        if (guid_equal(&entry->VendorGuid, &EFI_ACPI_TABLE_GUID)) rsdp_v1 = (u64)(uptr)entry->VendorTable;
+    }
+    return rsdp_v1;
 }
 
 static UINTN pages_for(UINT64 bytes) {
@@ -650,6 +676,7 @@ EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     bootinfo->root_sectors = (root_size + 511ull) >> 9;
     bootinfo->cmdline_addr = (u64)(uptr)cmd;
     bootinfo->cmdline_size = (u32)(sizeof(cmdline));
+    RABBITBONE_BOOT_ACPI_RSDP(bootinfo) = locate_acpi_rsdp();
     fill_framebuffer_bootinfo(bootinfo);
 
     st = get_memory_map_dynamic(&memory_map_storage, &memory_map_capacity, &memory_map_size,
